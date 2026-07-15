@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from ..credentials import require_text
 from ..models import CapabilitySnapshot
@@ -43,7 +44,7 @@ class UmamiConnector:
         site = binding_site(self.config, request.binding.site_id)
         for metric, series in (("umami.pageviews", pageviews.get("pageviews", [])), ("umami.sessions", pageviews.get("sessions", []))):
             for item in series:
-                day = datetime.fromtimestamp(int(item["x"]) / 1000, UTC).astimezone(request.window.start.tzinfo).date()
+                day = _series_day(item["x"], request.window.timezone)
                 yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider, metric=metric,
                     unit="count", day=day, value=item["y"], timezone=site.timezone)
         stats = self.http.request("GET", f"{root}/stats?{query}", headers=headers)
@@ -54,3 +55,25 @@ class UmamiConnector:
             if value is not None:
                 yield total_point(client_id=site.client_id, site_id=site.id, source=self.provider, metric=metric,
                     unit=unit, start=request.window.start, end=request.window.end, value=value)
+
+
+def _series_day(value, timezone: str) -> date:
+    zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            return date.fromisoformat(stripped)
+        except ValueError:
+            pass
+        try:
+            parsed = datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                value = float(stripped)
+            except ValueError as exc:
+                raise ValueError("Umami returned an unsupported series timestamp") from exc
+        else:
+            return parsed.astimezone(zone).date() if parsed.tzinfo else parsed.date()
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(float(value) / 1000, UTC).astimezone(zone).date()
+    raise ValueError("Umami returned an unsupported series timestamp")

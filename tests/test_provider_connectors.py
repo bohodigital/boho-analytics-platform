@@ -33,9 +33,10 @@ class ProviderConnectorTests(unittest.TestCase):
 
     def test_umami_parses_daily_series_and_summary(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
-        http = QueueHttp([{"pageviews": [{"x": 1782864000000, "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]}, {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120}])
+        http = QueueHttp([{"pageviews": [{"x": "2026-07-01T00:00:00Z", "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]}, {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120}])
         points = list(UmamiConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
-        self.assertEqual(len(points), 6); self.assertIn("startAt=", http.calls[0][1]); self.assertTrue(all("test" not in call[1] for call in http.calls))
+        self.assertEqual(len(points), 6); self.assertEqual({point.start.date().isoformat() for point in points[:2]}, {"2026-07-01"})
+        self.assertIn("startAt=", http.calls[0][1]); self.assertTrue(all("test" not in call[1] for call in http.calls))
 
     def test_cloudflare_parses_adaptive_groups_without_rescaling(self):
         config = self.config("cloudflare")
