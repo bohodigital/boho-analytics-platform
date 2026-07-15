@@ -32,6 +32,15 @@ The installed wheel was served on loopback and exercised in the in-app browser:
 - no browser console errors were recorded;
 - Host rejection, CSP, no-store responses, no permissive CORS, and read-only routes passed tests.
 
+## Private-server validation
+
+The committed feature branch was transferred to the canonical private-server clone and validated
+with Python 3.13. The same 36 tests and public-tree verifier passed. A temporary fixture deployment
+initialized SQLite, synchronized 20 points, rendered the forms CSV subreport, created an online
+backup, and returned `ok` from the database integrity check. The repository remained clean after the
+rehearsal. No service was installed or restarted, because live configuration and credentials remain
+behind the separate connection-test gate.
+
 ## Connection-test gate
 
 Live validation remains intentionally pending. It should connect one provider at a time with a
