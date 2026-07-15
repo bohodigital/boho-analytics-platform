@@ -1,0 +1,61 @@
+schema_version = 2
+
+[platform]
+default_timezone = "UTC"
+state_path = "../var/demo.sqlite3"
+default_sync_days = 30
+
+[web]
+bind_host = "127.0.0.1"
+port = 8787
+allowed_hosts = ["127.0.0.1", "localhost"]
+auth_mode = "none"
+
+[retention]
+hourly_days = 90
+daily_days = 1095
+
+[[clients]]
+id = "demo-client"
+name = "Demo Client"
+
+[[sites]]
+id = "demo-site"
+client_id = "demo-client"
+name = "Demo Site"
+canonical_url = "https://example.com"
+timezone = "UTC"
+
+[[connections]]
+id = "demo-fixture"
+provider = "fixture"
+credential_ref = "none:fixture"
+[connections.options]
+path = "fixtures/demo.json"
+
+[[bindings]]
+site_id = "demo-site"
+connection_id = "demo-fixture"
+resource_type = "website"
+resource_id = "demo"
+metric_groups = ["traffic", "search", "forms"]
+
+[[reports]]
+id = "summary"
+title = "Demo analytics summary"
+client_id = "demo-client"
+site_ids = ["demo-site"]
+metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
+default_window_days = 30
+
+[[reports.subreports]]
+id = "forms"
+title = "Forms delivery"
+metric_ids = ["forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
+default_window_days = 30
+
+[[reports.subreports]]
+id = "search"
+title = "Organic search"
+metric_ids = ["search.clicks"]
+default_window_days = 90

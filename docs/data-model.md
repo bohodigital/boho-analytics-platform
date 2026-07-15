@@ -1,48 +1,41 @@
 # Data model
 
-The logical model separates configuration, provider capability, ingestion state, normalized facts,
-and reporting definitions.
+Configuration schema and SQLite schema evolve independently. V1 database schema version 1 contains:
 
-## Configuration records
+- `metric_facts`: source-labeled aggregate facts with client/site scope, interval, grain, unit,
+  canonical dimensions, completeness, observation time, and a deterministic SHA-256 upsert key.
+- `capability_snapshots`: latest sanitized connector probe result.
+- `sync_runs`: start/end, binding scope, status, point count, and sanitized error category.
+- `sync_locks`: owner and expiry for safe stale-lock takeover.
+- `watermarks`: last completed end instant for each binding.
+- `schema_meta`: installed database version.
 
-- Tenant/client
-- Site
-- Provider connection
-- Provider resource binding
-
-## Capability records
-
-A capability snapshot records connection, provider, probe time, authentication result, discovered
-resources, supported metric groups, available history, quota hints, and sanitized warnings. The UI
-uses this record to explain missing panels.
-
-## Ingestion records
-
-A sync run records connector version, bounded window, attempt, outcome, row counts, retry category,
-data watermark, and sanitized error code. It never stores credentials or private response bodies.
+SQLite runs with foreign keys, WAL, normal synchronous mode, and a busy timeout. The design assumes a
+single scheduled writer and multiple local readers. PostgreSQL is a measured future migration, not a
+V1 requirement.
 
 ## Metric facts
 
-A metric point includes:
+A fact contains no raw provider response. The natural identity is client, site, source, metric,
+unit, interval, grain, and canonical dimensions. Re-collecting the same identity updates value,
+completeness, and observation time without creating duplicates.
 
-- Site and provider source.
-- Stable metric identifier and unit.
-- Start, end, and time grain.
-- Numeric value.
-- Canonical dimension pairs.
-- Completeness state.
-- Observation and provider-update timestamps.
+The [metric catalog](../src/boho_analytics_platform/catalog.py) defines source, unit, aggregation,
+and meaning. Unknown metrics, wrong units, and wrong non-fixture sources fail ingestion.
 
-The natural upsert key is site, source, metric, interval, grain, and canonical dimensions.
+## Aggregation integrity
 
-## Report definitions and cache
+- Additive counts and bytes sum over the requested window.
+- Search Console CTR is recomputed as clicks divided by impressions.
+- Search Console position is weighted by impressions.
+- Latest-state metrics select the newest contributing point.
+- Exact-window Umami summary metrics are used only when their stored interval exactly matches the
+  requested report interval.
 
-Report definitions are versioned, non-executable data. Cached results include the definition version,
-resolved absolute window, filters, tenant scope, and highest contributing data watermark. This makes
-cache invalidation deterministic and reports reproducible.
+These rules prevent ratios, positions, and overlapping unique-user windows from being summed.
 
-## Privacy defaults
+## Privacy
 
-The normalized store does not require IP addresses, user identifiers, session identifiers, or raw
-query strings from page URLs. Search terms and custom event properties can still be commercially or
-personally sensitive, so deployments must apply tenant authorization and retention controls.
+The schema has no fields for credentials, form payloads, message bodies, email addresses, IPs, user
+agents, visitor/session IDs, or Turnstile tokens. Form ID is an optional operational dimension; avoid
+using IDs that themselves contain personal data.

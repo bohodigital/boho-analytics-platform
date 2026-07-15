@@ -39,6 +39,9 @@ jobs:
       - name: Exercise CLI
         run: |
           boho-analytics --version
-          boho-analytics config validate examples/platform.example.toml
+          boho-analytics --config examples/platform.example.toml config validate
+          boho-analytics --config examples/platform.demo.toml db init
+          boho-analytics --config examples/platform.demo.toml sync --start 2026-07-01 --end 2026-07-04
+          boho-analytics --config examples/platform.demo.toml report summary --start 2026-07-01 --end 2026-07-04 --format csv
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir "${RUNNER_TEMP}/wheels"

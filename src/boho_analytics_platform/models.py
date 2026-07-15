@@ -53,10 +53,11 @@ class QueryWindow:
         _require_aware(self.end, "end")
         if self.start >= self.end:
             raise ValueError("start must be earlier than end")
-        try:
-            ZoneInfo(self.timezone)
-        except ZoneInfoNotFoundError as exc:
-            raise ValueError(f"unknown IANA timezone: {self.timezone}") from exc
+        if self.timezone != "UTC":
+            try:
+                ZoneInfo(self.timezone)
+            except ZoneInfoNotFoundError as exc:
+                raise ValueError(f"unknown IANA timezone: {self.timezone}") from exc
 
 
 @dataclass(frozen=True, slots=True)

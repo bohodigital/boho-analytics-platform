@@ -24,12 +24,15 @@ ALLOWED_DIRECTORIES = {
     ("docs",),
     ("docs", "adr"),
     ("examples",),
+    ("examples", "fixtures"),
     ("scripts",),
     ("src",),
     ("src", "boho_analytics_platform"),
+    ("src", "boho_analytics_platform", "connectors"),
+    ("src", "boho_analytics_platform", "migrations"),
     ("tests",),
 }
-ALLOWED_SUFFIXES = {".md", ".py", ".toml", ".txt", ".yaml", ".yml"}
+ALLOWED_SUFFIXES = {".css", ".json", ".md", ".py", ".sql", ".toml", ".txt", ".yaml", ".yml"}
 ALLOWED_NAMES = {"CODEOWNERS", "LICENSE"}
 GENERATED_NAMES = {
     ".mypy_cache",

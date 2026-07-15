@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boho-analytics-platform"
-version = "0.1.0a0"
+version = "0.1.0b1"
 description = "Lightweight, auditable multi-source website analytics platform"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,9 @@ dependencies = [
   "tzdata>=2025.2; platform_system == 'Windows'",
 ]
 
+[project.optional-dependencies]
+google = ["google-auth>=2.40,<3"]
+
 [project.urls]
 Homepage = "https://github.com/bohodigital/boho-analytics-platform"
 Documentation = "https://github.com/bohodigital/boho-analytics-platform#readme"
@@ -39,3 +42,6 @@ boho-analytics = "boho_analytics_platform.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+boho_analytics_platform = ["migrations/*.sql"]

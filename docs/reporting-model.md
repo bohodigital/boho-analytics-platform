@@ -1,64 +1,46 @@
 # Reporting model
 
-The reporting system is designed around questions and reusable definitions, not fixed dashboard
-screens. Custom time windows and focused sub-reports are first-class requirements.
+V1 reports are saved, non-executable TOML definitions. Each specifies client scope, sites, metric
+IDs, and a default window. Subreports narrow metrics and may add exact canonical-dimension filters,
+such as `form_id = "contact"`.
 
-## Report request
+## Windows and comparisons
 
-Every report request resolves to:
+CLI and API requests resolve to an inclusive start and exclusive end at local midnight in the
+configured reporting timezone. `--days N` ends at the start of today, so it represents complete
+days. The previous comparison uses an immediately preceding window of identical duration.
 
-- Tenant/client and one or more sites.
-- Absolute `start` and `end` instants plus a reporting timezone.
-- Grain such as hour, day, week, or month.
-- Completeness policy: realtime, provisional, final, or best available.
-- Comparison window: previous period, previous year, or an explicit range.
-- Metric identifiers from the catalog.
-- Dimension filters and grouping.
-- Named sections and an output format.
+Absolute windows make results reproducible:
 
-Relative windows such as `last_7_complete_days` are conveniences. They are converted to an absolute
-window before querying so results can be reproduced later.
+```bash
+boho-analytics --config /private/platform.toml report summary \
+  --start 2026-04-01 --end 2026-07-01 --format json
+```
 
-## Saved reports
+The web form and `/api/v1/report` use the same calculation. `/api/v1/report.csv` exports the same row
+set. Browser requests never initiate syncs.
 
-A saved report is versioned configuration containing a title, permitted site scope, default window,
-sections, metrics, groupings, filters, and display hints. It contains no SQL and no provider query.
+## Output contract
 
-The same definition can render HTML, JSON, CSV, or a print-oriented document. Presentation metadata
-must not change metric calculation.
+JSON includes schema version, report/subreport IDs, applied filters, resolved current and comparison
+windows, generation time, rows, per-source observation freshness, forms-pipeline reconciliation,
+warnings, and completeness. Each row includes metric, site, source, unit, current value, prior value,
+and percentage change.
 
-## Sub-reports
+CSV contains the flat row columns. It deliberately excludes credentials, resource IDs, configuration,
+form/message content, and provider payloads.
 
-Sub-reports are normal report definitions with a narrower scope, such as:
+## Semantics
 
-- Organic-search landing pages.
-- Conversion events by acquisition channel.
-- Cache misses and server errors for one site.
-- Content performance for a path prefix.
-- Mobile search visibility for a custom date window.
+Metric catalog rules determine aggregation. Additive counts/bytes sum; Search Console CTR and
+position are weighted; latest-state metrics select the newest point; exact-window unique/summary
+metrics never sum overlapping sync windows. Cross-provider visitor measures remain separate.
 
-A report bundle may link reports and sub-reports into a navigation tree. Calculations remain
-independent and cycle-free; a sub-report does not inherit hidden SQL or mutate its parent definition.
-Shared filters are explicit inputs.
+`complete = false` and a warning mean at least one configured metric has no stored contribution in
+the requested window. Zero is emitted only when a provider explicitly returned zero.
 
-## Large-history strategy
+## Scale path
 
-- Store normalized hourly and daily aggregates rather than every raw provider event.
-- Keep recent fine-grained data for a configurable period and retain daily rollups longer.
-- Backfill in bounded chunks and checkpoint progress.
-- Cache report results by tenant scope, definition version, absolute window, filters, and data
-  watermark.
-- Run expensive exports as queued jobs only after synchronous query latency proves insufficient.
-- Add PostgreSQL partitioning only after measurements justify the migration.
-
-Arbitrary custom windows are computed from retained facts and rollups. The platform does not
-precompute every possible report window.
-
-## Metric integrity
-
-Each output displays its provider, definition, window, timezone, last successful sync, completeness,
-and important provider limitations. Metrics with incompatible meanings are shown side-by-side rather
-than merged.
-
-Derived metrics declare their formula, units, input sources, null behavior, and version. Changing a
-formula creates a new definition version so historical reports remain explainable.
+V1 queries indexed daily/hourly aggregates in SQLite. Retention is configurable. Backfills remain
+bounded and restart-safe. Add report caching, queued large exports, rollups, or PostgreSQL only when
+measured dataset size, write contention, or report latency exceeds the documented SQLite envelope.
