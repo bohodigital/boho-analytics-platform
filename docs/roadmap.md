@@ -1,59 +1,39 @@
 # Roadmap
 
-Roadmap phases are exit-gated. A later phase does not start merely because files for it exist.
+## Delivered in the connection-ready V1 beta
 
-## Phase 0: Public foundation
+- Public/private boundary, threat model, strict configuration, release verification, and CI.
+- SQLite migrations, catalog, idempotent ingestion, ledgers, capabilities, locks, retention,
+  integrity, backup, and restore.
+- Fixture-tested adapters for Umami, Cloudflare traffic, GA4, Search Console, forms D1, and forms
+  inbox delivery evidence.
+- Custom absolute windows, comparisons, saved reports, filtered subreports, JSON, CSV, forms
+  reconciliation, and a hardened loopback-first web interface.
 
-- Public/private boundary and threat model.
-- Configuration and domain contracts.
-- Release-tree verification and CI.
-- Public repository and canonical server clone.
+## V1 live-validation gate
 
-Exit: clean public history, tests pass, anonymous clone verified, and no private deployment data.
+- Connect one real least-privilege credential at a time.
+- Confirm provider endpoint/version, resource discovery, account scopes, quotas, date boundaries,
+  sampling/finality, and metric meaning.
+- Compare a known provider window with platform output.
+- Validate forms D1 counts against independent inbox evidence without inspecting content.
+- Install as private-server service/timer, exercise backup/restore, and record a capacity baseline.
 
-## Phase 1: Storage and ingestion kernel
+Exit: bounded live reports are reproducible, service restart is proven, and no secret/PII enters the
+store, logs, exports, Git, or browser.
 
-- Versioned SQLite migrations and repository implementation.
-- Sync ledger, locks, watermarks, retry categories, and retention.
-- Metric catalog and capability persistence.
-- Sanitized fixture harness for connector tests.
+## Operational maturity
 
-Exit: idempotent restart-safe ingestion kernel with backup/restore tests.
+- Capability and stale-data status page, alerts, scheduled rollups, performance benchmarks, and a
+  measured SQLite capacity envelope.
+- More provider dimensions and cursor pagination where live accounts prove they are needed.
+- Print/PDF report rendering only after HTML/CSV report contracts stabilize.
+- PostgreSQL migration rehearsal only after evidence of write contention or data-volume pressure.
 
-## Phase 2: Provider vertical slices
+## Optional client access
 
-- Umami read-only connector and view-only access guidance.
-- Google Analytics and Search Console connectors.
-- Cloudflare GraphQL analytics and operational-resource connector.
-- Capability discovery, quotas, backfills, and provider-semantic documentation.
+- Authenticated HTTPS origin, tenant roles, independent authorization tests, audit events, rate
+  limiting, export controls, and incident-response runbook.
+- Client report bundles and scheduled delivery workflow with separate human approval.
 
-Exit: the same bounded report can be reproduced from fixtures and validated against live provider
-interfaces without exposing credentials.
-
-## Phase 3: Reporting and internal web application
-
-- Metric queries, comparisons, saved reports, and sub-reports.
-- Portfolio and per-site views.
-- Source, freshness, completeness, and capability indicators.
-- CSV, JSON, and print-oriented outputs.
-- Loopback authentication and web hardening.
-
-Exit: private server deployment survives restart, provider outages, expired access, and restore.
-
-## Phase 4: Operations and scale proof
-
-- Scheduled rollups, report cache, retention enforcement, and performance benchmarks.
-- Custom-window and large-history load tests.
-- Alerting hooks and operational status reports.
-- Measured SQLite-to-PostgreSQL decision gate.
-
-Exit: documented capacity envelope and migration rehearsal.
-
-## Phase 5: Optional client access
-
-- Authenticated HTTPS deployment.
-- Tenant-aware roles, audit events, and export controls.
-- Client report bundles and delivery workflow.
-- Security review and public-deployment runbook.
-
-Exit: independent authorization and data-isolation tests plus explicit deployment approval.
+Client access is not a V1 deployment mode and requires an explicit security review.

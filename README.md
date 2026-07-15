@@ -1,87 +1,100 @@
 # Boho Analytics Platform
 
-Boho Analytics Platform is a lightweight, auditable foundation for consolidating website
-analytics from Umami, Cloudflare, Google Analytics, and Google Search Console.
+Boho Analytics Platform is a lightweight, public-first website analytics dashboard for Umami,
+Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
+Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 
-> **Project status: pre-alpha architecture foundation.** The repository currently provides
-> configuration validation, domain contracts, release-safety checks, and the durable design
-> for the platform. It does not yet collect provider data or serve a production dashboard.
+> **Status: connection-ready V1 beta.** Provider adapters and local workflows are implemented and
+fixture-tested. Live account compatibility and least-privilege access still need to be validated
+before this is called a stable release.
 
-The project is public-first: provider adapters, storage, reporting, and the web interface will
-remain inspectable and reusable. Real property identifiers, client mappings, credentials,
-private deployment files, and operational data belong in a separate local configuration lane.
+The browser only reads normalized local aggregates. Provider credentials stay server-side, syncs
+are explicit or scheduled, and every metric remains source-labeled. The public repository contains
+no client mappings, live resource IDs, credentials, submission content, or mailbox content.
 
-## Design goals
+## V1 capabilities
 
-- Run comfortably on a small Linux server while remaining portable to Windows and macOS.
-- Keep provider credentials out of browser code, configuration files, logs, and Git history.
-- Preserve each provider's metric semantics instead of inventing misleading combined totals.
-- Cache normalized aggregates locally so dashboards are fast and provider quotas are respected.
-- Support arbitrary report windows, reusable report definitions, and focused sub-reports.
-- Start as a modular monolith with stable internal boundaries and a clear PostgreSQL migration path.
-- Fail visibly when an account, scope, metric, or provider is unavailable.
+- Read-only connectors for self-hosted Umami, Cloudflare GraphQL traffic analytics, GA4 Data API,
+  Search Console, Cloudflare D1 form state, and the existing comms-platform SQLite mail index.
+- Configurable form monitoring that compares durable D1 submissions and notification state with
+  independently observed inbox delivery counts. It never ingests form payloads or message bodies.
+- Strict schema-v2 TOML configuration with environment, systemd, and no-credential references.
+- SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
+  retention, integrity checks, online backup, and guarded restore.
+- Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
+  windows, previous-period comparisons, JSON, and CSV.
+- A responsive, server-rendered dashboard with no JavaScript requirement, loopback binding by
+  default, Host validation, restrictive CSP, no permissive CORS, and optional Basic authentication.
+- Failure isolation: one unavailable provider does not erase successful results from another.
 
-## What exists today
-
-- `boho-analytics --version`
-- `boho-analytics config validate <path>`
-- Versioned, strict TOML configuration parsing.
-- Typed contracts for connectors, credential providers, metric stores, capabilities, sync requests,
-  query windows, report definitions, and normalized metric points.
-- Public-tree verification that rejects unexpected files, generated directories, internal paths,
-  and common secret patterns.
-- Architecture, threat model, reporting model, configuration, deployment, and roadmap documents.
-
-## Quick start
-
-Python 3.11 or newer is required.
+## Quick start with safe demo data
 
 ```bash
 python -m venv .venv
 python -m pip install --editable .
-boho-analytics --version
-boho-analytics config validate examples/platform.example.toml
-python -m unittest discover -s tests -v
-python scripts/verify_release.py
+boho-analytics --config examples/platform.demo.toml config validate
+boho-analytics --config examples/platform.demo.toml db init
+boho-analytics --config examples/platform.demo.toml sync --start 2026-07-01 --end 2026-07-04
+boho-analytics --config examples/platform.demo.toml report summary --start 2026-07-01 --end 2026-07-04
+boho-analytics --config examples/platform.demo.toml serve
 ```
 
-## Planned provider ownership
+Open `http://127.0.0.1:8787`, or forward that loopback port over SSH from a private server.
+
+The end date is exclusive. The example above reports July 1 through July 3. Use `--days 30` for
+the last 30 complete local days. A browser request never triggers a provider sync.
+
+## Configure real connections
+
+Copy `examples/platform.example.toml` to a private, ignored location and replace placeholders with
+the resource IDs actually available to the account. Put credentials in environment variables or
+systemd credentials as JSON objects; never put values in TOML.
+
+```json
+{"api_token":"replace-at-runtime"}
+```
+
+Then initialize, probe, and sync one connection at a time:
+
+```bash
+boho-analytics --config /private/platform.toml db init
+boho-analytics --config /private/platform.toml probe --connection example-umami
+boho-analytics --config /private/platform.toml sync --connection example-umami --days 30
+```
+
+See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md), and
+[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live data.
+
+## Metric ownership
 
 | Question | Primary source |
 | --- | --- |
-| Visits, pages, referrers, devices, privacy-focused events | Umami |
-| Edge requests, bytes, cache, status, and security signals | Cloudflare |
-| Google acquisition, engagement, and configured key events | Google Analytics |
-| Search queries, impressions, clicks, CTR, and position | Google Search Console |
+| Visits, pages, sessions, privacy-focused usage | Umami |
+| Edge requests, visits, and response bytes | Cloudflare |
+| Google acquisition, engagement, and key events | Google Analytics |
+| Search impressions, clicks, CTR, and position | Google Search Console |
+| Accepted submissions and notification state | Cloudflare D1 forms database |
+| Notification messages observed in a mailbox | Forms inbox adapter |
 
-Metrics from different sources will remain source-labeled. Visitor and user counts will not be
-silently summed or deduplicated across providers.
+Cloudflare traffic is not treated as a substitute for browser analytics. Visitor/user counts from
+different providers are never silently summed or deduplicated.
 
-## Architecture
+## Security boundary
 
-Start with [the architecture](docs/architecture.md), then read:
+Keep the web service on loopback and reach it with an SSH port forward. For future remote access,
+put it behind an authenticated HTTPS proxy, keep the origin private, and add tenant authorization
+before exposing client data. Basic authentication is only a small deployment control; it is not a
+replacement for HTTPS or an identity-aware proxy.
 
-- [Reporting model](docs/reporting-model.md)
-- [Configuration](docs/configuration.md)
-- [Data model](docs/data-model.md)
-- [Threat model](docs/threat-model.md)
-- [Deployment model](docs/deployment.md)
-- [Roadmap](docs/roadmap.md)
+Read [SECURITY.md](SECURITY.md) and the [threat model](docs/threat-model.md). Architecture and data
+contracts are documented under [docs](docs/architecture.md).
 
-Architectural decisions are recorded under [`docs/adr`](docs/adr).
+## Development
 
-## Security
+```bash
+python -m unittest discover -s tests -v
+python scripts/verify_release.py
+python -m pip wheel . --no-deps --wheel-dir dist
+```
 
-Do not put credentials in the platform TOML file. Configuration contains only credential
-references; a credential provider resolves those references at runtime. See [SECURITY.md](SECURITY.md)
-for vulnerability reporting and [the threat model](docs/threat-model.md) for design controls.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md). New provider work must include capability discovery,
-fixture-based contract tests, explicit metric definitions, quota behavior, redaction tests, and
-failure-mode documentation.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md). The project is MIT licensed.

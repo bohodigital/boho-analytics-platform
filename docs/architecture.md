@@ -9,9 +9,9 @@ web surface can evolve independently without paying the operational cost of micr
 The browser reads the local analytics store. It never queries providers directly.
 
 ```text
-provider APIs -> connectors -> normalization -> metric store -> report engine -> web/API
+provider APIs -> explicit sync -> connectors -> catalog validation -> SQLite -> reports -> web/API
                        ^                ^               ^
-                 credentials       sync ledger      report cache
+                 credentials       sync ledger       absolute windows
 ```
 
 ## Public core and private deployment
@@ -68,9 +68,10 @@ Cross-provider metrics remain separate unless an explicitly documented derived m
 
 ### Ingestion
 
-Scheduled syncs use idempotent upserts, bounded rolling refresh windows, per-connector locks,
-pagination, exponential backoff with jitter, and a durable sync ledger. A browser request never
-triggers an unbounded provider sync.
+Scheduled syncs use idempotent upserts, bounded rolling refresh windows, a lease-based writer lock,
+bounded retry/backoff, watermarks, and a durable sync ledger. Provider endpoints whose selected V1
+grain can exceed one response must add explicit pagination before that scope is enabled. A browser
+request never triggers a provider sync.
 
 ### Storage
 
@@ -87,9 +88,18 @@ query systems. See [`reporting-model.md`](reporting-model.md).
 
 ### Web and API
 
-The first UI is server-rendered HTML with small progressive enhancements and locally vendored chart
-assets. A versioned read-only API serves the same report engine. Production API documentation is
-disabled unless explicitly enabled.
+The first UI is server-rendered HTML and same-origin CSS with no JavaScript requirement. A versioned
+read-only API serves the same report engine. Production API documentation is disabled.
+
+V1 uses no client-side JavaScript and performs no state-changing web operations. `/api/v1/report`
+and `/api/v1/report.csv` accept saved report IDs, optional subreport IDs, and absolute dates. Provider
+sync remains a CLI/timer operation.
+
+### Forms monitoring
+
+Cloudflare D1 submission state is authoritative for accepted forms. The mailbox adapter is separate
+delivery evidence. Both connectors aggregate at source and are structurally prevented from placing
+submission or message content in the metric store. See [`forms-monitoring.md`](forms-monitoring.md).
 
 ## Deployment modes
 

@@ -1,8 +1,21 @@
-schema_version = 1
+schema_version = 2
 
 [platform]
 default_timezone = "UTC"
-state_path = "./var/analytics.sqlite3"
+state_path = "../var/analytics.sqlite3"
+default_sync_days = 30
+http_timeout_seconds = 30
+max_response_bytes = 5000000
+
+[web]
+bind_host = "127.0.0.1"
+port = 8787
+allowed_hosts = ["127.0.0.1", "localhost"]
+auth_mode = "none"
+
+[retention]
+hourly_days = 90
+daily_days = 1095
 
 [[clients]]
 id = "example-client"
@@ -19,12 +32,104 @@ timezone = "UTC"
 id = "example-umami"
 provider = "umami"
 credential_ref = "env:UMAMI_REPORTING_CREDENTIAL"
-
 [connections.options]
-base_url = "http://127.0.0.1:3000"
+base_url = "https://analytics.example.com"
+
+[[connections]]
+id = "example-cloudflare"
+provider = "cloudflare"
+credential_ref = "env:CLOUDFLARE_ANALYTICS_CREDENTIAL"
+
+[[connections]]
+id = "example-google"
+provider = "google-analytics"
+credential_ref = "env:GOOGLE_ANALYTICS_CREDENTIAL"
+
+[[connections]]
+id = "example-search"
+provider = "search-console"
+credential_ref = "env:GOOGLE_SEARCH_CONSOLE_CREDENTIAL"
+
+[[connections]]
+id = "example-forms"
+provider = "cloudflare-forms"
+credential_ref = "env:CLOUDFLARE_FORMS_READ_CREDENTIAL"
+[connections.options]
+account_id = "replace-with-account-id"
+database_id = "replace-with-d1-database-id"
+
+[[connections]]
+id = "example-forms-inbox"
+provider = "forms-inbox"
+credential_ref = "none:local-read-only"
+[connections.options]
+database_path = "/path/to/read-only/mail.db"
 
 [[bindings]]
 site_id = "example-site"
 connection_id = "example-umami"
 resource_type = "website"
-resource_id = "replace-with-provider-resource-id"
+resource_id = "replace-with-umami-website-id"
+metric_groups = ["traffic"]
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-cloudflare"
+resource_type = "zone"
+resource_id = "replace-with-cloudflare-zone-tag"
+metric_groups = ["traffic"]
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-google"
+resource_type = "property"
+resource_id = "replace-with-ga4-property-id"
+metric_groups = ["traffic"]
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-search"
+resource_type = "site"
+resource_id = "sc-domain:example.com"
+metric_groups = ["search"]
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-forms"
+resource_type = "forms-site"
+resource_id = "replace-with-worker-site-id"
+metric_groups = ["forms"]
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-forms-inbox"
+resource_type = "mailbox"
+resource_id = "replace-with-mailbox-key"
+metric_groups = ["forms"]
+[bindings.options]
+mailbox_key = "replace-with-mailbox-key"
+sender_contains = "forms-sender.example"
+subject_contains = "Form submission"
+
+[[reports]]
+id = "summary"
+title = "Website summary"
+client_id = "example-client"
+site_ids = ["example-site"]
+metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "google.active-users", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
+default_window_days = 30
+
+[[reports.subreports]]
+id = "forms"
+title = "Forms delivery"
+metric_ids = ["forms.submissions", "forms.sent", "forms.pending", "forms.failed", "forms.inbox-deliveries", "forms.inbox-unread"]
+default_window_days = 30
+# Optional dimension filters make form-specific subreports possible.
+[reports.subreports.filters]
+form_id = "contact"
+
+[[reports.subreports]]
+id = "search"
+title = "Organic search"
+metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position"]
+default_window_days = 90

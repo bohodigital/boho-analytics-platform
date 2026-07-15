@@ -7,8 +7,14 @@ the first stable release.
 
 ### Added
 
-- Public architecture, security, reporting, configuration, and roadmap documents.
-- Typed domain and connector contracts for future providers and stores.
-- Versioned TOML configuration validation with inline-secret rejection.
-- A minimal cross-platform CLI and public-tree release verifier.
-- CI across supported Python versions.
+- Connection-ready V1 beta with Umami, Cloudflare traffic, GA4, Search Console, Cloudflare D1
+  forms, read-only forms inbox, and sanitized fixture connectors.
+- SQLite migrations, WAL mode, idempotent metrics, capability snapshots, sync ledgers, watermarks,
+  stale-lock recovery, retention, integrity checks, backup, and guarded restore.
+- Schema-v2 TOML configuration for reports, subreports, dimension filters, web policy, retention,
+  provider bindings, and forms inbox monitoring.
+- Saved reports with custom absolute windows, previous-period comparisons, weighted Search Console
+  calculations, provider freshness, forms-pipeline reconciliation, JSON, and CSV.
+- Server-rendered loopback dashboard and read-only V1 API with Host validation, CSP, no permissive
+  CORS, no-store responses, and optional credential-referenced Basic authentication.
+- Metric catalog enforcement, public-tree verification, and CI across supported Python versions.
