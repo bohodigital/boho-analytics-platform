@@ -40,6 +40,8 @@ class ReportingTests(unittest.TestCase):
         report = ReportService(self.config, self.store).render("summary", self.window)
         values = {row["metric"]: row["value"] for row in report["rows"]}
         self.assertEqual(values["search.ctr"], .15); self.assertEqual(values["search.position"], 3)
+        ctr = next(series for series in report["series"] if series["metric"] == "search.ctr")
+        self.assertEqual([point["value"] for point in ctr["points"]], [.1, .2])
 
     def test_subreport_dimension_filter_is_applied(self):
         root = Path(self.temporary.name); text = (root / "platform.toml").read_text(encoding="utf-8")
@@ -49,6 +51,10 @@ class ReportingTests(unittest.TestCase):
         self.store.upsert([metric("forms.submissions", 2, 1, "count", (("form_id", "contact"),)), metric("forms.submissions", 8, 1, "count", (("form_id", "quote"),))])
         report = ReportService(config, self.store).render("summary", self.window, "forms")
         self.assertEqual(report["filters"], {"form_id": "contact"}); self.assertEqual(report["rows"][0]["value"], 2)
+
+    def test_site_scope_must_belong_to_report(self):
+        with self.assertRaisesRegex(ValueError, "site is unavailable"):
+            ReportService(self.config, self.store).render("summary", self.window, site_id="unknown-site")
 
 
 if __name__ == "__main__": unittest.main()

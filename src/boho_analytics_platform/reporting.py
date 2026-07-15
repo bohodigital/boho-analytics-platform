@@ -8,6 +8,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .catalog import METRICS
 from .models import QueryWindow
@@ -66,13 +67,76 @@ class ReportService:
             for key, value in sorted(output.items()) if key[0] in requested_metrics]
         return rows, {key: value.astimezone(UTC).isoformat() for key, value in sorted(freshness.items())}
 
-    def render(self, report_id: str, window: QueryWindow, subreport_id: str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _series(points, window, requested_metrics):
+        """Build compact daily series without changing provider aggregation semantics."""
+
+        zone = UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
+        daily: dict[tuple[str, str, str, str, str], Decimal] = defaultdict(Decimal)
+        latest: dict[tuple[str, str, str, str, str], object] = {}
+        grouped = defaultdict(dict)
+        requested = set(requested_metrics)
+        for point in points:
+            day = point.start.astimezone(zone).date().isoformat()
+            definition = METRICS[point.metric]
+            key = (point.metric, point.site_id, point.source, point.unit, day)
+            if point.metric in requested:
+                if definition.aggregation == "sum":
+                    daily[key] += point.value
+                elif definition.aggregation == "latest":
+                    previous = latest.get(key)
+                    if previous is None or (point.end, point.observed_at) > (previous.end, previous.observed_at):
+                        latest[key] = point
+            grouped[(point.site_id, point.source, day, point.dimensions)][point.metric] = point.value
+        for key, point in latest.items():
+            daily[key] = point.value
+
+        clicks: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
+        impressions: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
+        positions: dict[tuple[str, str, str], tuple[Decimal, Decimal]] = {}
+        for (site_id, source, day, _dimensions), values in grouped.items():
+            key = (site_id, source, day)
+            clicks[key] += values.get("search.clicks", Decimal())
+            impressions[key] += values.get("search.impressions", Decimal())
+            if "search.position" in values and "search.impressions" in values:
+                numerator, denominator = positions.get(key, (Decimal(), Decimal()))
+                positions[key] = (
+                    numerator + values["search.position"] * values["search.impressions"],
+                    denominator + values["search.impressions"],
+                )
+        if "search.ctr" in requested:
+            for (site_id, source, day), count in impressions.items():
+                if count:
+                    daily[("search.ctr", site_id, source, "ratio", day)] = clicks[(site_id, source, day)] / count
+        if "search.position" in requested:
+            for (site_id, source, day), (numerator, denominator) in positions.items():
+                if denominator:
+                    daily[("search.position", site_id, source, "position", day)] = numerator / denominator
+
+        output: dict[tuple[str, str, str, str], list[dict[str, object]]] = defaultdict(list)
+        for (metric, site_id, source, unit, day), value in sorted(daily.items()):
+            output[(metric, site_id, source, unit)].append({"date": day, "value": _number(value)})
+        return [
+            {"metric": key[0], "site_id": key[1], "source": key[2], "unit": key[3], "points": values}
+            for key, values in sorted(output.items())
+        ]
+
+    def render(
+        self,
+        report_id: str,
+        window: QueryWindow,
+        subreport_id: str | None = None,
+        site_id: str | None = None,
+    ) -> dict[str, Any]:
         report, metrics, title, filters = self.definition(report_id, subreport_id)
+        if site_id is not None and site_id not in report.site_ids:
+            raise ValueError(f"site is unavailable in report: {site_id}")
+        site_ids = (site_id,) if site_id else report.site_ids
         duration = window.end - window.start
         previous = QueryWindow(window.start - duration, window.start, window.timezone, window.completeness)
         query_metrics = tuple(dict.fromkeys((*metrics, *(("search.clicks", "search.impressions") if any(item in metrics for item in ("search.ctr", "search.position")) else ()))))
-        current_points = self.store.query(client_id=report.client_id, site_ids=report.site_ids, metric_ids=query_metrics, window=window)
-        previous_points = self.store.query(client_id=report.client_id, site_ids=report.site_ids, metric_ids=query_metrics, window=previous)
+        current_points = self.store.query(client_id=report.client_id, site_ids=site_ids, metric_ids=query_metrics, window=window)
+        previous_points = self.store.query(client_id=report.client_id, site_ids=site_ids, metric_ids=query_metrics, window=previous)
         if filters:
             required = dict(filters)
             current_points = [point for point in current_points if all(dict(point.dimensions).get(key) == value for key, value in required.items())]
@@ -95,11 +159,12 @@ class ReportService:
                 "delivery_gap": _number(Decimal(str(stored - delivered))), "pending": _number(Decimal(str(metric_totals.get("forms.pending", 0)))),
                 "failed": _number(Decimal(str(metric_totals.get("forms.failed", 0))))}
             if stored != delivered: warnings.append("Form storage and inbox-delivery counts differ; inspect the notification pipeline.")
-        return {"schema_version": 1, "report_id": report.id, "subreport_id": subreport_id, "title": title,
+        return {"schema_version": 1, "report_id": report.id, "subreport_id": subreport_id, "site_id": site_id, "title": title,
             "window": {"start": window.start.isoformat(), "end": window.end.isoformat(), "timezone": window.timezone},
             "comparison_window": {"start": previous.start.isoformat(), "end": previous.end.isoformat()},
             "filters": dict(filters),
             "generated_at": datetime.now(UTC).isoformat(), "rows": current, "freshness": freshness,
+            "series": self._series(current_points, window, metrics),
             "forms_pipeline": forms, "warnings": warnings, "complete": not missing}
 
 

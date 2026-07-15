@@ -17,15 +17,17 @@ boho-analytics --config /private/platform.toml report summary \
   --start 2026-04-01 --end 2026-07-01 --format json
 ```
 
-The web form and `/api/v1/report` use the same calculation. `/api/v1/report.csv` exports the same row
-set. Browser requests never initiate syncs.
+The web form and `/api/v1/report` use the same calculation. An optional `site` parameter narrows a
+saved report to one of its configured sites. `/api/v1/report.csv` downloads the same row set. Browser
+requests never initiate syncs.
 
 ## Output contract
 
-JSON includes schema version, report/subreport IDs, applied filters, resolved current and comparison
-windows, generation time, rows, per-source observation freshness, forms-pipeline reconciliation,
-warnings, and completeness. Each row includes metric, site, source, unit, current value, prior value,
-and percentage change.
+JSON includes schema version, report/subreport/site scope, applied filters, resolved current and
+comparison windows, generation time, rows, compact daily series, per-source observation freshness,
+forms-pipeline reconciliation, warnings, and completeness. Each row includes metric, site, source,
+unit, current value, prior value, and percentage change. Series preserve provider labels and include
+only returned dates; the dashboard does not invent zeroes for omitted dates.
 
 CSV contains the flat row columns. It deliberately excludes credentials, resource IDs, configuration,
 form/message content, and provider payloads.

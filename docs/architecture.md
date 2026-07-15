@@ -88,8 +88,9 @@ query systems. See [`reporting-model.md`](reporting-model.md).
 
 ### Web and API
 
-The first UI is server-rendered HTML and same-origin CSS with no JavaScript requirement. A versioned
-read-only API serves the same report engine. Production API documentation is disabled.
+The first UI is server-rendered HTML and same-origin CSS with no JavaScript requirement. KPI cards,
+daily bar charts, freshness, comparison tables, and report tools are all rendered from the same
+provider-neutral result used by the versioned read-only API. Production API documentation is disabled.
 
 V1 uses no client-side JavaScript and performs no state-changing web operations. `/api/v1/report`
 and `/api/v1/report.csv` accept saved report IDs, optional subreport IDs, and absolute dates. Provider

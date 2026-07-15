@@ -34,19 +34,35 @@ class WebTests(unittest.TestCase):
 
     def test_dashboard_is_server_rendered_and_has_security_headers(self):
         status, headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
-        self.assertEqual(status, 200); self.assertIn("Forms pipeline", body); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertEqual(status, 200); self.assertIn("Forms delivery", body); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertNotIn("<script", body)
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 
     def test_json_and_csv_share_report_rows(self):
-        self.assertIn('"umami.pageviews"', self.request("/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02")[2])
-        self.assertIn("umami.pageviews", self.request("/api/v1/report.csv?report=summary&start=2026-07-01&end=2026-07-02")[2])
+        json_body = self.request("/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02")[2]
+        self.assertIn('"umami.pageviews"', json_body); self.assertIn('"series"', json_body)
+        status, headers, csv_body = self.request("/api/v1/report.csv?report=summary&start=2026-07-01&end=2026-07-02")
+        self.assertEqual(status, 200); self.assertIn("umami.pageviews", csv_body); self.assertIn("attachment", headers["Content-Disposition"])
 
     def test_subreport_navigation_and_form_preserve_scope_and_window(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
-        self.assertIn('name=subreport value="forms"', body)
-        self.assertIn("subreport=forms&amp;start=2026-07-01&amp;end=2026-07-02", body)
+        self.assertIn('name="subreport" value="forms"', body)
+        self.assertIn("subreport=forms", body); self.assertIn("start=2026-07-01", body); self.assertIn("end=2026-07-02", body)
+
+    def test_site_scope_is_validated_and_preserved(self):
+        path = "/?report=summary&site=example-site&start=2026-07-01&end=2026-07-02"
+        status, _headers, body = self.request(path)
+        self.assertEqual(status, 200); self.assertIn('<option value="example-site" selected>', body)
+        self.assertIn("site=example-site", body)
+        self.assertEqual(self.request("/?report=summary&site=unknown&start=2026-07-01&end=2026-07-02")[0], 400)
+
+    def test_css_charts_need_no_inline_style_permission(self):
+        status, _headers, body = self.request("/assets/app.css")
+        self.assertEqual(status, 200); self.assertIn(".h-50{height:100%}", body)
+        page_headers = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")[1]
+        self.assertNotIn("unsafe-inline", page_headers["Content-Security-Policy"])
 
 
 if __name__ == "__main__": unittest.main()

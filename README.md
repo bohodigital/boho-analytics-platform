@@ -22,9 +22,11 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
   retention, integrity checks, online backup, and guarded restore.
 - Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
-  windows, previous-period comparisons, JSON, and CSV.
-- A responsive, server-rendered dashboard with no JavaScript requirement, loopback binding by
-  default, Host validation, restrictive CSP, no permissive CORS, and optional Basic authentication.
+  windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
+- A responsive, server-rendered dashboard with portfolio KPI cards, accessible daily bar charts,
+  source freshness, quick date presets, and no JavaScript or chart-library requirement.
+- Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
+  Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
 
 ## Quick start with safe demo data
