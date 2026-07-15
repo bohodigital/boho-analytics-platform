@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boho-analytics-platform"
+version = "0.1.0a0"
+description = "Lightweight, auditable multi-source website analytics platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Boho Analytics Platform contributors"}]
+keywords = ["analytics", "umami", "cloudflare", "google-analytics", "search-console"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Internet :: Log Analysis",
+]
+dependencies = [
+  "tzdata>=2025.2; platform_system == 'Windows'",
+]
+
+[project.urls]
+Homepage = "https://github.com/bohodigital/boho-analytics-platform"
+Documentation = "https://github.com/bohodigital/boho-analytics-platform#readme"
+Repository = "https://github.com/bohodigital/boho-analytics-platform"
+Issues = "https://github.com/bohodigital/boho-analytics-platform/issues"
+
+[project.scripts]
+boho-analytics = "boho_analytics_platform.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

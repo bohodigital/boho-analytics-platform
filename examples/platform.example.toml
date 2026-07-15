@@ -1,0 +1,30 @@
+schema_version = 1
+
+[platform]
+default_timezone = "UTC"
+state_path = "./var/analytics.sqlite3"
+
+[[clients]]
+id = "example-client"
+name = "Example Client"
+
+[[sites]]
+id = "example-site"
+client_id = "example-client"
+name = "Example Site"
+canonical_url = "https://example.com"
+timezone = "UTC"
+
+[[connections]]
+id = "example-umami"
+provider = "umami"
+credential_ref = "env:UMAMI_REPORTING_CREDENTIAL"
+
+[connections.options]
+base_url = "http://127.0.0.1:3000"
+
+[[bindings]]
+site_id = "example-site"
+connection_id = "example-umami"
+resource_type = "website"
+resource_id = "replace-with-provider-resource-id"
