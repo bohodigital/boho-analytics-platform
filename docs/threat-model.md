@@ -37,7 +37,7 @@ in the public example or logs.
 
 - Loopback bind is the default; unauthenticated non-loopback bind fails configuration.
 - Host allowlisting mitigates DNS rebinding and untrusted Host routing.
-- CSP denies all resources except same-origin CSS; framing, sniffing, referrers, and caching are
+- CSP denies all resources except same-origin CSS, JavaScript, and API fetches; framing, sniffing, referrers, and caching are
   restricted; permissive CORS is absent.
 - Web routes are read-only. Provider sync, restore, and configuration mutation have no HTTP route.
 - Basic authentication uses constant-time comparison and credential references.

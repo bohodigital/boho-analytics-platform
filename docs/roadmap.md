@@ -1,6 +1,6 @@
 # Roadmap
 
-## Delivered in the connection-ready V1 beta
+## Delivered in v0.1.0
 
 - Public/private boundary, threat model, strict configuration, release verification, and CI.
 - SQLite migrations, catalog, idempotent ingestion, ledgers, capabilities, locks, retention,
@@ -10,17 +10,17 @@
 - Custom absolute windows, comparisons, saved reports, filtered subreports, JSON, CSV, forms
   reconciliation, and a hardened loopback-first web interface.
 
-## V1 live-validation gate
+## Production validation completed for v0.1.0
 
-- Connect one real least-privilege credential at a time.
-- Confirm provider endpoint/version, resource discovery, account scopes, quotas, date boundaries,
-  sampling/finality, and metric meaning.
-- Compare a known provider window with platform output.
-- Validate forms D1 counts against independent inbox evidence without inspecting content.
-- Install as private-server service/timer, exercise backup/restore, and record a capacity baseline.
+- A private Pi installation runs the web dashboard and bounded syncs from loopback-only systemd
+  services with configuration and credentials outside the public repository.
+- Release validation covers configuration, database integrity, backup, bounded provider sync,
+  service restart, health checks, and browser rendering through an SSH tunnel.
+- Public screenshots remain fixture-only. Private names, resource IDs, credentials, form content,
+  mailbox content, and live metric values are not release artifacts.
 
-Exit: bounded live reports are reproducible, service restart is proven, and no secret/PII enters the
-store, logs, exports, Git, or browser.
+Provider availability and historical depth remain account-specific. Operators must validate scopes,
+quotas, date boundaries, sampling or finality, and metric meaning for every new account.
 
 ## Operational maturity
 

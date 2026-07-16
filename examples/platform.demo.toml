@@ -45,7 +45,7 @@ id = "summary"
 title = "Demo analytics summary"
 client_id = "demo-client"
 site_ids = ["demo-site"]
-metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
+metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "google.sessions", "search.clicks", "search.impressions", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
 default_window_days = 30
 
 [[reports.subreports]]
@@ -56,6 +56,6 @@ default_window_days = 30
 
 [[reports.subreports]]
 id = "search"
-title = "Organic search"
-metric_ids = ["search.clicks"]
+title = "Google Search Console"
+metric_ids = ["search.clicks", "search.impressions"]
 default_window_days = 90

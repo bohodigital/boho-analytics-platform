@@ -23,6 +23,7 @@ ALLOWED_DIRECTORIES = {
     (".github", "workflows"),
     ("docs",),
     ("docs", "adr"),
+    ("docs", "images"),
     ("examples",),
     ("examples", "fixtures"),
     ("scripts",),
@@ -32,7 +33,8 @@ ALLOWED_DIRECTORIES = {
     ("src", "boho_analytics_platform", "migrations"),
     ("tests",),
 }
-ALLOWED_SUFFIXES = {".css", ".json", ".md", ".py", ".sql", ".toml", ".txt", ".yaml", ".yml"}
+ALLOWED_SUFFIXES = {".css", ".json", ".md", ".py", ".sh", ".sql", ".toml", ".txt", ".yaml", ".yml"}
+ALLOWED_BINARY_SUFFIXES = {".png"}
 ALLOWED_NAMES = {"CODEOWNERS", "LICENSE"}
 GENERATED_NAMES = {
     ".mypy_cache",
@@ -82,12 +84,16 @@ def main() -> int:
         if (
             not allowed_root_file
             and path.name not in ALLOWED_NAMES
-            and path.suffix not in ALLOWED_SUFFIXES
+            and path.suffix not in ALLOWED_SUFFIXES | ALLOWED_BINARY_SUFFIXES
         ):
             failures.append(f"unexpected file type: {relative}")
             continue
         if path.stat().st_size > MAX_FILE_BYTES:
             failures.append(f"file exceeds {MAX_FILE_BYTES} bytes: {relative}")
+            continue
+        if path.suffix in ALLOWED_BINARY_SUFFIXES:
+            if path.suffix == ".png" and not path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"):
+                failures.append(f"invalid PNG signature: {relative}")
             continue
         try:
             text = path.read_text(encoding="utf-8")

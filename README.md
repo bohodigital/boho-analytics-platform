@@ -4,9 +4,14 @@ Boho Analytics Platform is a lightweight, public-first website analytics dashboa
 Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
 Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 
-> **Status: connection-ready V1 beta.** Provider adapters and local workflows are implemented and
-fixture-tested. Live account compatibility and least-privilege access still need to be validated
-before this is called a stable release.
+> **Status: stable v0.1.0.** Public fixtures, multi-version CI, a private Pi deployment, bounded
+live syncs, backup and integrity checks, and the loopback dashboard have been validated. Each
+installation must still use account-specific least-privilege credentials and verify provider access.
+
+![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
+
+_Headlessly generated from the checked-in demo fixture. No live analytics profile or private
+configuration is used._
 
 The browser only reads normalized local aggregates. Provider credentials stay server-side, syncs
 are explicit or scheduled, and every metric remains source-labeled. The public repository contains
@@ -22,10 +27,17 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
   retention, integrity checks, online backup, and guarded restore.
 - Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
-  windows, previous-period comparisons, JSON, and CSV.
-- A responsive, server-rendered dashboard with no JavaScript requirement, loopback binding by
-  default, Host validation, restrictive CSP, no permissive CORS, and optional Basic authentication.
+  windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
+- A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
+  and previous-period controls. Every selected series is also available as versioned JSON or flat CSV.
+- A responsive, server-rendered dashboard with portfolio KPI cards, interactive same-origin canvas
+  charts, accessible daily-value fallbacks, source freshness, and quick date presets. No chart library
+  or third-party browser asset is required.
+- Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
+  Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
+
+![Boho Analytics summary dashboard using public example data](docs/images/boho-analytics-dashboard.png)
 
 ## Quick start with safe demo data
 
@@ -40,6 +52,10 @@ boho-analytics --config examples/platform.demo.toml serve
 ```
 
 Open `http://127.0.0.1:8787`, or forward that loopback port over SSH from a private server.
+
+Use **Plot Builder** to select the stored data source, metric, site, dates, visual style, and optional
+previous-period overlay. The browser fetches only normalized series from the local service; it never
+contacts Umami, Cloudflare, or Google directly.
 
 The end date is exclusive. The example above reports July 1 through July 3. Use `--days 30` for
 the last 30 complete local days. A browser request never triggers a provider sync.
@@ -63,7 +79,8 @@ boho-analytics --config /private/platform.toml sync --connection example-umami -
 ```
 
 See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md), and
-[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live data.
+[provider behavior](docs/providers.md), [deployment](docs/deployment.md), and the reproducible
+[headless screenshot workflow](docs/screenshots.md) before connecting live data.
 
 ## Metric ownership
 
