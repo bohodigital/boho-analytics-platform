@@ -15,6 +15,8 @@ from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
+from .site_graph.dashboard import SiteGraphReportService
+from .site_graph.storage import SiteGraphStore
 
 
 SECURITY_HEADERS = {
@@ -108,20 +110,22 @@ FORMS_SUMMARY = (
 
 BASE_CSS = """
 :root{--ink:#17201d;--ink-2:#26312d;--paper:#f4f2ec;--surface:#fff;--line:#deddd5;--muted:#6d746f;--accent:#e86d3d;--accent-soft:#fff0e8;--green:#1f7a5a;--green-soft:#e7f5ef;--amber:#a55c12;--amber-soft:#fff4dc;--red:#a43f35;--red-soft:#fdebe8;--shadow:0 12px 35px rgba(25,35,31,.07)}
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit}button,input,select{font:inherit}.skip-link{position:fixed;left:12px;top:-80px;z-index:20;background:#fff;padding:10px 14px;border-radius:8px}.skip-link:focus{top:12px}
+*{box-sizing:border-box}html{max-width:100%;overflow-x:hidden;scroll-behavior:smooth}body{max-width:100%;margin:0;overflow-x:hidden;background:var(--paper);color:var(--ink);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit}button,input,select{font:inherit}.skip-link{position:fixed;left:12px;top:-80px;z-index:20;background:#fff;padding:10px 14px;border-radius:8px}.skip-link:focus{top:12px}
 .topbar{background:var(--ink);color:#fff}.topbar-inner{max-width:1240px;margin:auto;padding:18px 28px;display:flex;justify-content:space-between;gap:24px;align-items:center}.brand{display:flex;align-items:center;gap:12px}.brand-mark{display:grid;place-items:center;width:38px;height:38px;border:1px solid rgba(255,255,255,.28);border-radius:11px;color:#ffd4c2;font-weight:800;letter-spacing:-.04em}.brand strong{display:block;font-size:15px}.brand span{display:block;color:#aeb9b4;font-size:12px}.live-state{display:flex;align-items:center;gap:8px;color:#dfe9e5;font-size:13px}.live-dot{width:8px;height:8px;border-radius:50%;background:#4fd49c;box-shadow:0 0 0 4px rgba(79,212,156,.12)}
-.shell{max-width:1240px;margin:auto;padding:34px 28px 48px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;margin-bottom:22px}.eyebrow{margin:0 0 7px;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.hero h1{margin:0;font-size:clamp(29px,4vw,46px);line-height:1.08;letter-spacing:-.045em}.hero-copy{max-width:720px;margin:11px 0 0;color:var(--muted);font-size:16px}.coverage-badge{align-self:start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border-radius:999px;background:var(--green-soft);color:var(--green);font-size:13px;font-weight:750}.coverage-badge.partial{background:var(--amber-soft);color:var(--amber)}
+.shell{max-width:1240px;margin:auto;padding:34px 28px 48px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;margin-bottom:22px}.eyebrow{margin:0 0 7px;overflow-wrap:anywhere;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.hero h1{margin:0;font-size:clamp(29px,4vw,46px);line-height:1.08;letter-spacing:-.045em}.hero-copy{max-width:720px;margin:11px 0 0;color:var(--muted);font-size:16px}.coverage-badge{align-self:start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border-radius:999px;background:var(--green-soft);color:var(--green);font-size:13px;font-weight:750}.coverage-badge.partial{background:var(--amber-soft);color:var(--amber)}
 .report-nav,.subnav,.quick-links{display:flex;flex-wrap:wrap;gap:8px}.report-nav{margin:0 0 12px}.report-nav a,.subnav a,.quick-links a{padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.6);color:var(--ink-2);font-size:13px;font-weight:700;text-decoration:none}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{background:#fff;border-color:#b9bab4}.report-nav a.active,.subnav a.active{background:var(--ink);border-color:var(--ink);color:#fff}.subnav{margin-bottom:16px}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}.control-panel{padding:18px;margin-bottom:18px}.panel-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:14px}.panel-heading h2{margin:0;font-size:18px;letter-spacing:-.02em}.panel-heading p{margin:3px 0 0;color:var(--muted);font-size:13px}.filter-form{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end}.field{display:grid;gap:6px}.field span{font-size:12px;font-weight:750;color:var(--ink-2)}input,select{width:100%;min-height:42px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(232,109,61,.28);outline-offset:2px;border-color:var(--accent)}button{min-height:42px;padding:9px 16px;border:1px solid var(--ink);border-radius:9px;background:var(--ink);color:#fff;font-weight:800;cursor:pointer}button:hover{background:#283530}.tools-row{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #ecebe5}.tools-label{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
+.panel{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}.control-panel{padding:18px;margin-bottom:18px}.panel-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:14px}.panel-heading h2{margin:0;font-size:18px;letter-spacing:-.02em}.panel-heading p{margin:3px 0 0;color:var(--muted);font-size:13px}.filter-form{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end}.field{display:grid;min-width:0;gap:6px}fieldset.field{min-width:0;margin:0}.field span{font-size:12px;font-weight:750;color:var(--ink-2)}input,select{width:100%;min-height:42px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(232,109,61,.28);outline-offset:2px;border-color:var(--accent)}button{min-height:42px;padding:9px 16px;border:1px solid var(--ink);border-radius:9px;background:var(--ink);color:#fff;font-weight:800;cursor:pointer}button:hover{background:#283530}.tools-row{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #ecebe5}.tools-label{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
 .alerts{display:grid;gap:9px;margin:0 0 18px}.alert{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid #f0d7b4;border-radius:11px;background:var(--amber-soft);color:#77440f}.alert-mark{display:grid;place-items:center;flex:0 0 22px;height:22px;border-radius:50%;background:#d98627;color:#fff;font-size:12px;font-weight:900}
 .kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}
 .chart-panel{padding:20px;margin-bottom:18px}.chart-panel .panel-heading{margin-bottom:18px}.metric-description{max-width:650px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:linear-gradient(180deg,#fff,#fbfaf7)}.chart-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px}.chart-card h3{margin:0;font-size:14px}.chart-total{color:var(--muted);font-size:12px;font-weight:750}.chart-scroll{overflow-x:auto;padding:4px 0 0}.bar-grid{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);align-items:end;gap:4px;height:205px;min-width:100%;border-bottom:1px solid #cfd1cc;background:repeating-linear-gradient(to top,transparent 0,transparent 50px,#ecece7 51px)}.bar-grid.density-mid{grid-auto-columns:minmax(9px,1fr)}.bar-grid.density-wide{grid-auto-columns:minmax(6px,1fr)}.bar-slot{height:100%;display:flex;align-items:end;justify-content:center}.bar{display:block;width:72%;min-height:2px;border-radius:5px 5px 2px 2px;background:var(--accent)}.bar.tone-1{background:#357a68}.bar.tone-2{background:#6772a8}.bar.tone-3{background:#ba8b32}.axis-labels{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--muted);font-size:11px}.chart-data{margin-top:10px;color:var(--muted);font-size:12px}.chart-data summary{cursor:pointer;font-weight:700}.empty-state{padding:34px;border:1px dashed #cacbc5;border-radius:12px;text-align:center;color:var(--muted)}
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
+.graph-form{grid-template-columns:minmax(180px,1fr) minmax(220px,1.4fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.5;opacity:.75}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 @media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
-@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.tools-row,.footer{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}}
-@media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}}
+@media(max-width:980px){.graph-form{grid-template-columns:1fr 1fr}.graph-form button{grid-column:span 2}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form{grid-template-columns:1fr}.filter-form button,.graph-form button{grid-column:auto}.tools-row,.footer{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
+@media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}.live-state{max-width:100%;overflow-wrap:anywhere}}
 """
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
@@ -521,8 +525,80 @@ def _metrics_table(result, site_names):
     return "".join(rows)
 
 
+def _site_graph_svg(payload):
+    nodes = payload["visualization"]["nodes"]
+    edges = payload["visualization"]["edges"]
+    if not nodes:
+        return '<div class="empty-state">No pages match this bounded view.</div>'
+    columns = min(6, max(1, len(nodes)))
+    rows = (len(nodes) + columns - 1) // columns
+    width = 960
+    height = max(280, 120 + rows * 105)
+    positions = {}
+    for index, node in enumerate(nodes):
+        column = index % columns
+        row = index // columns
+        positions[node["route"]] = (
+            int((column + 0.5) * width / columns),
+            70 + row * 105,
+        )
+    edge_html = []
+    for edge in edges:
+        source = positions.get(edge["source"])
+        destination = positions.get(edge["destination"])
+        if not source or not destination:
+            continue
+        edge_html.append(
+            f'<line class="graph-edge {_e(edge["layer"])}" x1="{source[0]}" y1="{source[1]}" '
+            f'x2="{destination[0]}" y2="{destination[1]}" marker-end="url(#arrow)"><title>'
+            f'{_e(edge["source"])} to {_e(edge["destination"])}; {_e(edge["layer"])}; anchor {_e(edge["anchor"] or "unlabeled")}'
+            f'</title></line>'
+        )
+    node_html = []
+    for node in nodes:
+        x, y = positions[node["route"]]
+        distance = node["goal_distance"]
+        state = "selected" if node["selected"] else "goal" if distance == 0 else "unreachable" if distance < 0 else ""
+        label = node["route"] if len(node["route"]) <= 24 else node["route"][:21] + "..."
+        distance_label = "goal" if distance == 0 else "unreachable" if distance < 0 else f"{distance} hop"
+        node_html.append(
+            f'<g><circle class="graph-node {state}" cx="{x}" cy="{y}" r="27"><title>'
+            f'{_e(node["route"])}; {distance_label}; authority {node["authority"]:.4f}'
+            f'</title></circle><text class="graph-label" x="{x}" y="{y + 45}">{_e(label)}</text></g>'
+        )
+    return (
+        f'<div class="graph-stage"><svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
+        'aria-labelledby="graph-title graph-description"><title id="graph-title">Site Graph structural overview</title>'
+        '<desc id="graph-description">A bounded structural map of pages and selected internal link layers. '
+        'An equivalent table follows the graphic.</desc><defs><marker id="arrow" markerWidth="8" markerHeight="8" '
+        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker></defs>'
+        + "".join(edge_html) + "".join(node_html) + '</svg></div>'
+    )
+
+
+def _site_graph_table(payload):
+    rows = "".join(
+        f'<tr><td><a href="{_e("/site-graph?" + urlencode({"site": payload["site"]["key"], "page": node["route"]}))}">{_e(node["route"])}</a></td>'
+        f'<td>{"Goal" if node["goal_distance"] == 0 else "Unreachable" if node["goal_distance"] < 0 else str(node["goal_distance"])}</td>'
+        f'<td>{node["authority"]:.4f}</td><td>{"Selected" if node["selected"] else ""}</td></tr>'
+        for node in payload["visualization"]["nodes"]
+    )
+    edge_rows = "".join(
+        f'<tr><td>{_e(edge["source"])}</td><td>{_e(edge["destination"])}</td><td>{_e(edge["layer"])}</td><td>{_e(edge["anchor"] or "Unlabeled")}</td></tr>'
+        for edge in payload["visualization"]["edges"]
+    )
+    return (
+        '<details class="chart-fallback" open><summary>Graph nodes and edges</summary>'
+        '<div class="table-scroll"><table><caption class="sr-only">Bounded graph nodes</caption><thead><tr><th>Page</th><th>Goal distance</th><th>Authority</th><th>State</th></tr></thead><tbody>'
+        + (rows or '<tr><td colspan="4">No nodes.</td></tr>') + '</tbody></table></div>'
+        '<div class="table-scroll"><table><caption class="sr-only">Bounded graph edges</caption><thead><tr><th>Source</th><th>Destination</th><th>Layer</th><th>Anchor</th></tr></thead><tbody>'
+        + (edge_rows or '<tr><td colspan="4">No edges in this view.</td></tr>') + '</tbody></table></div></details>'
+    )
+
+
 def handler_factory(config, store, credentials=None):
     reports = ReportService(config, store)
+    graph_reports = SiteGraphReportService(SiteGraphStore(store.path))
     credential_provider = credentials or ReferenceCredentialProvider()
     password = None
     if config.web.auth_mode == "basic":
@@ -580,13 +656,103 @@ def handler_factory(config, store, credentials=None):
             try:
                 if parsed.path == "/":
                     return self._dashboard(parse_qs(parsed.query))
+                if parsed.path == "/site-graph":
+                    return self._site_graph(parse_qs(parsed.query))
+                if parsed.path == "/api/v1/site-graph":
+                    return self._site_graph_api(parse_qs(parsed.query))
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
                     return self._api(parsed.path, parse_qs(parsed.query))
                 self.send_error(404)
             except (ValueError, KeyError):
-                self._send(400, "application/json", '{"error":"invalid report request"}')
+                message = "invalid site graph request" if parsed.path in {"/site-graph", "/api/v1/site-graph"} else "invalid report request"
+                self._send(400, "application/json", json.dumps({"error": message}, sort_keys=True))
+
+        @staticmethod
+        def _graph_layers(query):
+            layers = tuple(query.get("layer", []))
+            return layers or ("contextual", "related", "action")
+
+        def _site_graph_payload(self, query):
+            site_key = query.get("site", [None])[0]
+            selected_page = query.get("page", [None])[0]
+            return graph_reports.summary(
+                site_key=site_key,
+                selected_page=selected_page,
+                layers=self._graph_layers(query),
+            )
+
+        def _site_graph_api(self, query):
+            return self._send(200, "application/json", json.dumps(self._site_graph_payload(query), sort_keys=True))
+
+        def _site_graph(self, query):
+            payload = self._site_graph_payload(query)
+            if payload["empty"]:
+                site_links = "".join(
+                    f'<a href="{_e("/site-graph?" + urlencode({"site": site["key"]}))}">{_e(site["key"])}</a>'
+                    for site in payload["sites"]
+                )
+                page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a>{site_links}</div>
+<section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p></section></main></body></html>"""
+                return self._send(200, "text/html; charset=utf-8", page)
+
+            site_options = "".join(
+                f'<option value="{_e(site["key"])}"{" selected" if site["key"] == payload["site"]["key"] else ""}>{_e(site["key"])}</option>'
+                for site in payload["sites"]
+            )
+            selected_page = payload["neighborhood"]["selected_page"] or ""
+            selected_layers = set(payload["selected_layers"])
+            layer_controls = "".join(
+                f'<label><input type="checkbox" name="layer" value="{layer}"{" checked" if layer in selected_layers else ""}>{layer.title()}</label>'
+                for layer in ("contextual", "related", "action", "menu", "breadcrumb", "utility")
+            )
+            overview = payload["overview"]
+            cards = (
+                ("Pages", payload["coverage"]["pages"], "Repository pages with immutable facts"),
+                ("Selected edges", overview["projection_edges"], "Distinct link occurrences in selected layers"),
+                ("Menu dependence", overview["menu_dependent_pages"], "Pages without structural routes in the contextual projection"),
+                ("Dead ends", overview["contextual_dead_ends"], "Non-goal pages with no contextual route onward"),
+            )
+            cards_html = "".join(
+                f'<article class="kpi-card"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span></div><strong class="kpi-value">{value}</strong><p class="kpi-note">{_e(note)}</p></article>'
+                for label, value, note in cards
+            )
+            bucket_html = "".join(
+                f'<div class="distance-item"><b>{payload["goal_distance_buckets"][key]}</b><span>{_e(key.title())}</span></div>'
+                for key in ("goal", "1", "2", "3", "4+", "menu-only", "unreachable")
+            )
+            component_rows = "".join(
+                f'<tr><td>{_e(component["key"])}</td><td>{len(component["nodes"])}</td><td>{component["internal_edges"]}</td><td>{_e(", ".join(component["nodes"][:8]))}</td></tr>'
+                for component in payload["components"]
+            ) or '<tr><td colspan="4">No components available.</td></tr>'
+            finding_rows = "".join(
+                f'<tr><td>{_e(item["type"].replace("_", " ").title())}</td><td>{_e(item["severity"].title())}</td><td>{_e(", ".join(item["nodes"]))}</td></tr>'
+                for item in payload["finding_details"]
+            ) or '<tr><td colspan="3">No structural findings in this projection.</td></tr>'
+            revision = payload["revision"][:12]
+            graph_table = _site_graph_table(payload)
+            page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head>
+<body><a class="skip-link" href="#main">Skip to graph dashboard</a>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a></div>
+<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Explore bounded internal-link structure, goal distance, strongly connected components, and evidence-backed findings without loading a full-site graph into the browser.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
+<div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
+<section class="panel control-panel"><div class="panel-heading"><div><h2>Graph controls</h2><p>Contextual, related, and action links are shown by default. Browser controls are read-only.</p></div></div>
+<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Neighborhood page route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></section>
+<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Structural evidence</strong><br>{_e(payload["structural_evidence_notice"])}</div></div></aside>
+<section class="kpi-grid" aria-label="Graph overview">{cards_html}</section>
+<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Bounded structural overview'}</h2><p>{len(payload["visualization"]["nodes"])} of at most {payload["visualization"]["node_limit"]} nodes; {len(payload["visualization"]["edges"])} of at most {payload["visualization"]["edge_limit"]} link occurrences.</p></div><span class="source-chip">{_e(", ".join(payload["selected_layers"]))}</span></div>{_site_graph_svg(payload)}<p class="graph-caption">Arrows represent stored, crawlable internal link occurrences in the selected layers. Node color marks goals, unreachable pages, and the selected page.</p>{graph_table}</section>
+<section class="panel section-panel"><div class="panel-heading"><div><h2>Goal distance</h2><p>Shortest structural path to a configured goal in the compiled contextual projection.</p></div></div><div class="distance-grid">{bucket_html}</div></section>
+<div class="split-grid"><section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Deterministic Kosaraju components; these are structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section>
+<section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Evidence-linked structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section></div>
+<footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Read-only - loopback-first - no browser ingest, build, compile, or provider sync</span></footer></main></body></html>"""
+            return self._send(200, "text/html; charset=utf-8", page)
 
         def _request(self, query, *, force_overview=False):
             report_id = query.get("report", [config.reports[0].id])[0]
@@ -750,6 +916,7 @@ def handler_factory(config, store, credentials=None):
             )
             plot_url = "/?" + urlencode({"report": report.id, "view": "plot", "start": start, "end": end})
             report_nav += f'<a class="plot-mode {"active" if is_plot else ""}" href="{_e(plot_url)}">Plot Builder</a>'
+            report_nav += '<a href="/site-graph">Site Graph</a>'
             if is_plot:
                 source_defaults = {
                     source: next(

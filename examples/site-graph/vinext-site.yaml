@@ -1,0 +1,64 @@
+schema_version: 1
+site:
+  key: example-vinext
+  display_name: Example vinext Site
+  canonical_hosts:
+    - example.invalid
+repository:
+  local_path: /absolute/path/to/vinext-site
+  expected_remote: https://github.com/example/vinext-site.git
+  ref: main
+  expected_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  require_clean: true
+analysis:
+  mode: source-only
+  adapter: vinext
+  include_drafts: false
+  maximum_pages: 500
+build:
+  enabled: false
+  adapter_command: null
+  output_directory: null
+cloudflare_pages:
+  enabled: false
+  account_id_ref: null
+  project_name: null
+  expected_production_branch: null
+routes:
+  include:
+    - /**
+  exclude:
+    - /admin/**
+canonicalization:
+  normalize_trailing_slash: true
+  strip_fragments: true
+  remove_query_parameters: true
+page_rules:
+  - id: homepage
+    path_regex: ^/$
+    roles: [homepage]
+    journey_stage: 1
+  - id: service
+    path_regex: ^/services/
+    roles: [service]
+    journey_stage: 3
+  - id: contact
+    path_regex: ^/contact/$
+    roles: [contact]
+    journey_stage: 5
+link_layers:
+  explicit_attribute: data-link-layer
+  selectors:
+    menu: [header nav a]
+    breadcrumb: ['[aria-label="Breadcrumb"] a']
+    contextual: [main article a]
+    related: ['[data-related-content] a']
+    action: ['[data-cta] a']
+    utility: [footer a]
+goals:
+  - id: contact-page
+    kind: page
+    paths: [/contact/]
+  - id: service-role
+    kind: role
+    roles: [service]

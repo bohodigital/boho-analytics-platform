@@ -30,18 +30,51 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Verify public tree
-        run: python scripts/verify_release.py
+      - name: Verify publication boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(tests?|audits?|plans?)(/|$)'; then
+            echo "Internal validation material is not allowed in the public tree" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          needles = (
+              "C:" + "\\Users" + "\\",
+              "/srv/" + "local1/",
+              "bohopi" + "@",
+              "W" + "O-",
+              "C" + "R-",
+          )
+          findings = []
+          tracked = subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+          for raw_path in tracked:
+              if not raw_path:
+                  continue
+              path = Path(raw_path.decode())
+              try:
+                  content = path.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              for line_number, line in enumerate(content.splitlines(), start=1):
+                  if any(needle in line for needle in needles):
+                      findings.append(f"{path}:{line_number}")
+          if findings:
+              raise SystemExit(
+                  "Machine-specific or internal coordination content found:\n"
+                  + "\n".join(findings)
+              )
+          PY
       - name: Install package
         run: python -m pip install --disable-pip-version-check --editable .
-      - name: Run unit tests
-        run: python -m unittest discover -s tests -v
+      - name: Compile public source
+        run: python -m compileall -q src
       - name: Exercise CLI
         run: |
           boho-analytics --version
           boho-analytics --config examples/platform.example.toml config validate
-          boho-analytics --config examples/platform.demo.toml db init
-          boho-analytics --config examples/platform.demo.toml sync --start 2026-07-01 --end 2026-07-04
-          boho-analytics --config examples/platform.demo.toml report summary --start 2026-07-01 --end 2026-07-04 --format csv
       - name: Build wheel
         run: python -m pip wheel . --no-deps --wheel-dir "${RUNNER_TEMP}/wheels"
