@@ -23,7 +23,7 @@ class CliTests(unittest.TestCase):
         with redirect_stdout(output): status = main(["--config", str(self.config), *args])
         return status, output.getvalue()
 
-    def test_version_is_beta(self): self.assertEqual(__version__, "0.1.0b1")
+    def test_version_is_stable(self): self.assertEqual(__version__, "0.1.0")
 
     def test_config_init_sync_and_report(self):
         self.assertEqual(self.call("config", "validate")[0], 0)

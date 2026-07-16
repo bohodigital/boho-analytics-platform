@@ -4,9 +4,9 @@ Boho Analytics Platform is a lightweight, public-first website analytics dashboa
 Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
 Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 
-> **Status: connection-ready V1 beta.** Provider adapters and local workflows are implemented and
-fixture-tested. Live account compatibility and least-privilege access still need to be validated
-before this is called a stable release.
+> **Status: stable v0.1.0.** Public fixtures, multi-version CI, a private Pi deployment, bounded
+live syncs, backup and integrity checks, and the loopback dashboard have been validated. Each
+installation must still use account-specific least-privilege credentials and verify provider access.
 
 ![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
 
