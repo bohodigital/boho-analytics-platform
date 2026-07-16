@@ -23,8 +23,11 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
   retention, integrity checks, online backup, and guarded restore.
 - Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
   windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
-- A responsive, server-rendered dashboard with portfolio KPI cards, accessible daily bar charts,
-  source freshness, quick date presets, and no JavaScript or chart-library requirement.
+- A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
+  and previous-period controls. Every selected series is also available as versioned JSON or flat CSV.
+- A responsive, server-rendered dashboard with portfolio KPI cards, interactive same-origin canvas
+  charts, accessible daily-value fallbacks, source freshness, and quick date presets. No chart library
+  or third-party browser asset is required.
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
@@ -42,6 +45,10 @@ boho-analytics --config examples/platform.demo.toml serve
 ```
 
 Open `http://127.0.0.1:8787`, or forward that loopback port over SSH from a private server.
+
+Use **Plot Builder** to select the stored data source, metric, site, dates, visual style, and optional
+previous-period overlay. The browser fetches only normalized series from the local service; it never
+contacts Umami, Cloudflare, or Google directly.
 
 The end date is exclusive. The example above reports July 1 through July 3. Use `--days 30` for
 the last 30 complete local days. A browser request never triggers a provider sync.

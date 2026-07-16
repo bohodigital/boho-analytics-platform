@@ -8,7 +8,7 @@ from pathlib import Path
 
 from boho_analytics_platform.config import load_config
 from boho_analytics_platform.models import Completeness, MetricPoint, QueryWindow, TimeGrain
-from boho_analytics_platform.reporting import ReportService
+from boho_analytics_platform.reporting import ReportService, to_series_csv
 from boho_analytics_platform.storage import SQLiteMetricStore
 from support import config_text, write_fixture
 
@@ -55,6 +55,23 @@ class ReportingTests(unittest.TestCase):
     def test_site_scope_must_belong_to_report(self):
         with self.assertRaisesRegex(ValueError, "site is unavailable"):
             ReportService(self.config, self.store).render("summary", self.window, site_id="unknown-site")
+
+    def test_daily_comparison_series_and_flat_csv_are_available(self):
+        previous_start = datetime(2026, 6, 30, tzinfo=UTC)
+        self.store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "search-console", "search.impressions", "count",
+                previous_start, previous_start + timedelta(days=1), TimeGrain.DAY, Decimal("4"), (),
+                Completeness.FINAL, previous_start + timedelta(hours=12),
+            ),
+            metric("search.impressions", 9, 1, "count"),
+        ])
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        previous = next(item for item in report["comparison_series"] if item["metric"] == "search.impressions")
+        self.assertEqual(previous["points"], [{"date": "2026-06-30", "value": 4}])
+        csv_body = to_series_csv(report, include_comparison=True)
+        self.assertIn("comparison,2026-06-30,search.impressions", csv_body)
+        self.assertIn("current,2026-07-01,search.impressions", csv_body)
 
 
 if __name__ == "__main__": unittest.main()

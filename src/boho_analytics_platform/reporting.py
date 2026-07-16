@@ -165,6 +165,7 @@ class ReportService:
             "filters": dict(filters),
             "generated_at": datetime.now(UTC).isoformat(), "rows": current, "freshness": freshness,
             "series": self._series(current_points, window, metrics),
+            "comparison_series": self._series(previous_points, previous, metrics),
             "forms_pipeline": forms, "warnings": warnings, "complete": not missing}
 
 
@@ -172,4 +173,29 @@ def to_csv(report: dict[str, Any]) -> str:
     output = io.StringIO(newline=""); fields = ["metric", "site_id", "source", "unit", "value", "previous_value", "change_percent"]
     writer = csv.DictWriter(output, fieldnames=fields); writer.writeheader()
     for row in report["rows"]: writer.writerow({key: row.get(key) for key in fields})
+    return output.getvalue()
+
+
+def to_series_csv(report: dict[str, Any], *, include_comparison: bool = False) -> str:
+    """Flatten selected daily series into a portable, versioned CSV shape."""
+
+    output = io.StringIO(newline="")
+    fields = ["period", "date", "metric", "site_id", "source", "unit", "value"]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    groups = [("current", report.get("series", []))]
+    if include_comparison:
+        groups.append(("comparison", report.get("comparison_series", [])))
+    for period, series_items in groups:
+        for series in series_items:
+            for point in series["points"]:
+                writer.writerow({
+                    "period": period,
+                    "date": point["date"],
+                    "metric": series["metric"],
+                    "site_id": series["site_id"],
+                    "source": series["source"],
+                    "unit": series["unit"],
+                    "value": point["value"],
+                })
     return output.getvalue()

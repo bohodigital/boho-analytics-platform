@@ -21,16 +21,22 @@ The web form and `/api/v1/report` use the same calculation. An optional `site` p
 saved report to one of its configured sites. `/api/v1/report.csv` downloads the same row set. Browser
 requests never initiate syncs.
 
+The Plot Builder uses `/api/v1/series` and `/api/v1/series.csv`. It accepts the same report, site,
+start, and end scope plus `source`, `metric`, `style`, and optional `compare=1`. Style affects only
+presentation; the JSON and CSV values are identical across line, area, and bar views. The series CSV
+uses stable columns: `period,date,metric,site_id,source,unit,value`.
+
 ## Output contract
 
-JSON includes schema version, report/subreport/site scope, applied filters, resolved current and
-comparison windows, generation time, rows, compact daily series, per-source observation freshness,
+Report JSON includes schema version, report/subreport/site scope, applied filters, resolved current and
+comparison windows, generation time, rows, compact current and comparison daily series, per-source observation freshness,
 forms-pipeline reconciliation, warnings, and completeness. Each row includes metric, site, source,
 unit, current value, prior value, and percentage change. Series preserve provider labels and include
 only returned dates; the dashboard does not invent zeroes for omitted dates.
 
-CSV contains the flat row columns. It deliberately excludes credentials, resource IDs, configuration,
-form/message content, and provider payloads.
+Report CSV contains the flat aggregate-row columns. Series CSV contains one daily value per row and
+labels current versus comparison periods. Both deliberately exclude credentials, resource IDs,
+configuration, form/message content, and provider payloads.
 
 ## Semantics
 

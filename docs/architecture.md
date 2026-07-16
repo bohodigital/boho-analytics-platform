@@ -88,13 +88,14 @@ query systems. See [`reporting-model.md`](reporting-model.md).
 
 ### Web and API
 
-The first UI is server-rendered HTML and same-origin CSS with no JavaScript requirement. KPI cards,
-daily bar charts, freshness, comparison tables, and report tools are all rendered from the same
-provider-neutral result used by the versioned read-only API. Production API documentation is disabled.
+The UI is server-rendered HTML with same-origin CSS and a small same-origin canvas renderer. KPI cards,
+interactive plots, accessible daily-value fallbacks, freshness, comparison tables, and report tools
+are all rendered from the same provider-neutral result used by the versioned read-only API. The page
+remains usable when JavaScript is disabled. Production API documentation is disabled.
 
-V1 uses no client-side JavaScript and performs no state-changing web operations. `/api/v1/report`
-and `/api/v1/report.csv` accept saved report IDs, optional subreport IDs, and absolute dates. Provider
-sync remains a CLI/timer operation.
+The web layer performs no state-changing operations. `/api/v1/report` and `/api/v1/report.csv` expose
+aggregate reports; `/api/v1/series` and `/api/v1/series.csv` expose a selected stored daily series and
+optional preceding-period comparison. Provider sync remains a CLI/timer operation.
 
 ### Forms monitoring
 

@@ -35,7 +35,8 @@ class WebTests(unittest.TestCase):
     def test_dashboard_is_server_rendered_and_has_security_headers(self):
         status, headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
         self.assertEqual(status, 200); self.assertIn("Forms delivery", body); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
-        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertNotIn("<script", body)
+        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
+        self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
@@ -45,6 +46,29 @@ class WebTests(unittest.TestCase):
         self.assertIn('"umami.pageviews"', json_body); self.assertIn('"series"', json_body)
         status, headers, csv_body = self.request("/api/v1/report.csv?report=summary&start=2026-07-01&end=2026-07-02")
         self.assertEqual(status, 200); self.assertIn("umami.pageviews", csv_body); self.assertIn("attachment", headers["Content-Disposition"])
+
+    def test_plot_builder_filters_series_and_exports_portable_csv(self):
+        path = "/?report=summary&view=plot&source=umami&metric=umami.pageviews&style=area&compare=1&start=2026-07-01&end=2026-07-02"
+        status, _headers, body = self.request(path)
+        self.assertEqual(status, 200); self.assertIn("Time-series Plot Builder", body)
+        self.assertIn('name="source"', body); self.assertIn('name="style"', body); self.assertIn('name="compare"', body)
+        self.assertIn("Load series JSON", body); self.assertIn("Download series CSV", body)
+
+        api = "/api/v1/series?report=summary&view=plot&source=umami&metric=umami.pageviews&style=area&start=2026-07-01&end=2026-07-02"
+        status, _headers, json_body = self.request(api)
+        self.assertEqual(status, 200); self.assertIn('"metric": "umami.pageviews"', json_body)
+        self.assertIn('"style": "area"', json_body); self.assertIn('"value": 12', json_body)
+
+        status, headers, csv_body = self.request(api.replace("/series?", "/series.csv?"))
+        self.assertEqual(status, 200); self.assertIn("period,date,metric,site_id,source,unit,value", csv_body)
+        self.assertIn("current,2026-07-01,umami.pageviews", csv_body)
+        self.assertIn("attachment", headers["Content-Disposition"])
+
+    def test_script_asset_is_same_origin_and_invalid_plot_source_is_rejected(self):
+        status, _headers, body = self.request("/assets/app.js")
+        self.assertEqual(status, 200); self.assertIn("ResizeObserver", body); self.assertIn("fetch(canvas.dataset.seriesUrl", body)
+        invalid = "/api/v1/series?report=summary&source=search-console&metric=umami.pageviews&start=2026-07-01&end=2026-07-02"
+        self.assertEqual(self.request(invalid)[0], 400)
 
     def test_subreport_navigation_and_form_preserve_scope_and_window(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]

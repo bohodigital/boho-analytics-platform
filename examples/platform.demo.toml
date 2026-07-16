@@ -56,6 +56,6 @@ default_window_days = 30
 
 [[reports.subreports]]
 id = "search"
-title = "Organic search"
+title = "Google Search Console"
 metric_ids = ["search.clicks"]
 default_window_days = 90

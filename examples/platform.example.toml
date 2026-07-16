@@ -130,6 +130,6 @@ form_id = "contact"
 
 [[reports.subreports]]
 id = "search"
-title = "Organic search"
+title = "Google Search Console"
 metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position"]
 default_window_days = 90

@@ -14,11 +14,11 @@ from zoneinfo import ZoneInfo
 from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .models import QueryWindow
-from .reporting import ReportService, to_csv
+from .reporting import ReportService, to_csv, to_series_csv
 
 
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -58,7 +58,7 @@ SOURCE_LABELS = {
     "umami": "Umami",
     "cloudflare": "Cloudflare",
     "google-analytics": "Google Analytics",
-    "search-console": "Search Console",
+    "search-console": "Google Search Console",
     "cloudflare-forms": "Forms database",
     "forms-inbox": "Forms inbox",
 }
@@ -117,13 +117,184 @@ BASE_CSS = """
 .chart-panel{padding:20px;margin-bottom:18px}.chart-panel .panel-heading{margin-bottom:18px}.metric-description{max-width:650px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:linear-gradient(180deg,#fff,#fbfaf7)}.chart-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px}.chart-card h3{margin:0;font-size:14px}.chart-total{color:var(--muted);font-size:12px;font-weight:750}.chart-scroll{overflow-x:auto;padding:4px 0 0}.bar-grid{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);align-items:end;gap:4px;height:205px;min-width:100%;border-bottom:1px solid #cfd1cc;background:repeating-linear-gradient(to top,transparent 0,transparent 50px,#ecece7 51px)}.bar-grid.density-mid{grid-auto-columns:minmax(9px,1fr)}.bar-grid.density-wide{grid-auto-columns:minmax(6px,1fr)}.bar-slot{height:100%;display:flex;align-items:end;justify-content:center}.bar{display:block;width:72%;min-height:2px;border-radius:5px 5px 2px 2px;background:var(--accent)}.bar.tone-1{background:#357a68}.bar.tone-2{background:#6772a8}.bar.tone-3{background:#ba8b32}.axis-labels{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--muted);font-size:11px}.chart-data{margin-top:10px;color:var(--muted);font-size:12px}.chart-data summary{cursor:pointer;font-weight:700}.empty-state{padding:34px;border:1px dashed #cacbc5;border-radius:12px;text-align:center;color:var(--muted)}
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
-@media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
-@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.tools-row,.footer{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}}
+.plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
+@media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
+@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.tools-row,.footer{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}}
 @media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}}
 """
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
 CSS = BASE_CSS + HEIGHT_CLASSES
+
+JS = r"""
+(() => {
+  const colors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
+  const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+
+  function updateMetricOptions() {
+    const source = document.querySelector('select[name="source"]');
+    const metric = document.querySelector('select[name="metric"]');
+    if (!source || !metric) return;
+    let first = null;
+    for (const option of metric.options) {
+      const visible = option.dataset.source === source.value;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (visible && first === null) first = option;
+    }
+    if (metric.selectedOptions[0]?.disabled && first) first.selected = true;
+  }
+
+  function drawChart(canvas, payload) {
+    const series = payload.series || [];
+    const comparison = payload.comparison_series || [];
+    const status = document.getElementById("chart-status");
+    const legend = document.getElementById("chart-legend");
+    if (!series.length) {
+      status.textContent = "No stored daily values match this selection.";
+      canvas.dataset.rendered = "empty";
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(320, Math.round(rect.width));
+    const height = Math.max(280, Math.round(rect.height));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const margin = {left: 58, right: 24, top: 52, bottom: 42};
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const allValues = [...series, ...comparison].flatMap(item => item.points.map(point => Number(point.value)));
+    let min = Math.min(0, ...allValues);
+    let max = Math.max(0, ...allValues);
+    if (min === max) max = min + 1;
+    const padding = (max - min) * .08;
+    if (max > 0) max += padding;
+    if (min < 0) min -= padding;
+    const dateMs = value => Date.parse(value + "T00:00:00Z");
+    const currentStart = dateMs(payload.window.start.slice(0, 10));
+    const currentEnd = dateMs(payload.window.end.slice(0, 10));
+    const comparisonStart = dateMs(payload.comparison_window.start.slice(0, 10));
+    const dayCount = Math.max(1, Math.round((currentEnd - currentStart) / 86400000));
+    const xIndex = index => margin.left + (dayCount === 1 ? plotWidth / 2 : index / (dayCount - 1) * plotWidth);
+    const xPoint = (point, startMs) => xIndex(Math.round((dateMs(point.date) - startMs) / 86400000));
+    const y = value => margin.top + (max - value) / (max - min) * plotHeight;
+
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.strokeStyle = "#e4e4de";
+    ctx.fillStyle = "#727974";
+    ctx.lineWidth = 1;
+    for (let step = 0; step <= 4; step++) {
+      const value = max - (max - min) * step / 4;
+      const py = margin.top + plotHeight * step / 4;
+      ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(width - margin.right, py); ctx.stroke();
+      ctx.textAlign = "right"; ctx.fillText(format.format(value), margin.left - 9, py);
+    }
+    const dateAt = index => new Date(currentStart + index * 86400000).toISOString().slice(0, 10);
+    const tickIndexes = [...new Set([0, Math.floor((dayCount - 1) / 2), dayCount - 1])];
+    ctx.textBaseline = "top";
+    for (const index of tickIndexes) {
+      ctx.textAlign = index === 0 ? "left" : index === dayCount - 1 ? "right" : "center";
+      ctx.fillText(dateAt(index), xIndex(index), height - margin.bottom + 13);
+    }
+
+    function path(item, color, dashed, fill) {
+      if (!item.points.length) return;
+      const startMs = dashed ? comparisonStart : currentStart;
+      ctx.beginPath();
+      item.points.forEach((point, index) => {
+        const px = xPoint(point, startMs), py = y(Number(point.value));
+        if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      });
+      if (fill && item.points.length > 1) {
+        ctx.lineTo(xPoint(item.points[item.points.length - 1], startMs), y(min));
+        ctx.lineTo(xPoint(item.points[0], startMs), y(min)); ctx.closePath();
+        const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
+        gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
+        ctx.fillStyle = gradient; ctx.fill();
+        ctx.beginPath();
+        item.points.forEach((point, index) => { const px=xPoint(point,startMs),py=y(Number(point.value)); if(index===0)ctx.moveTo(px,py);else ctx.lineTo(px,py); });
+      }
+      ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
+      ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      if (!dashed && item.points.length <= 45) {
+        ctx.fillStyle = color;
+        item.points.forEach(point => { ctx.beginPath(); ctx.arc(xPoint(point,startMs), y(Number(point.value)), 3, 0, Math.PI * 2); ctx.fill(); });
+      }
+    }
+
+    if (payload.style === "bar") {
+      const groupWidth = Math.max(2, Math.min(18, plotWidth / dayCount * .7));
+      const barWidth = Math.max(1.5, groupWidth / series.length);
+      series.forEach((item, seriesIndex) => {
+        ctx.fillStyle = colors[seriesIndex % colors.length];
+        item.points.forEach(point => {
+          const valueY = y(Number(point.value));
+          const zeroY = y(0);
+          ctx.fillRect(xPoint(point,currentStart) - groupWidth / 2 + seriesIndex * barWidth, Math.min(valueY, zeroY), barWidth - 1, Math.max(1, Math.abs(zeroY - valueY)));
+        });
+      });
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
+    } else {
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
+      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false, payload.style === "area"));
+    }
+
+    if (legend) {
+      legend.replaceChildren();
+      series.forEach((item, index) => {
+        const li = document.createElement("li");
+        const swatch = document.createElement("span"); swatch.className = `legend-swatch legend-tone-${index % colors.length}`;
+        li.append(swatch, document.createTextNode(payload.site_names[item.site_id] || item.site_id)); legend.append(li);
+      });
+      if (comparison.length) {
+        const li = document.createElement("li"); li.textContent = "Dashed = previous period"; legend.append(li);
+      }
+    }
+    const rangeText = `${dateAt(0)} through ${dateAt(dayCount - 1)}`;
+    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`;
+    canvas.dataset.rendered = "true";
+    canvas.onpointermove = event => {
+      const bounds = canvas.getBoundingClientRect();
+      const index = Math.max(0, Math.min(dayCount - 1, Math.round((event.clientX - bounds.left - margin.left) / plotWidth * (dayCount - 1))));
+      const selectedDate = dateAt(index);
+      const values = series.map(item => {
+        const point = item.points.find(candidate => candidate.date === selectedDate);
+        return `${payload.site_names[item.site_id] || item.site_id}: ${point ? format.format(Number(point.value)) : "no value"}`;
+      });
+      status.textContent = `${selectedDate} - ${values.join(" - ")}`;
+    };
+    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`; };
+  }
+
+  async function loadChart() {
+    const canvas = document.getElementById("time-series-chart");
+    if (!canvas) return;
+    const status = document.getElementById("chart-status");
+    try {
+      const response = await fetch(canvas.dataset.seriesUrl, {headers: {Accept: "application/json"}, credentials: "same-origin"});
+      if (!response.ok) throw new Error(`Series request failed (${response.status})`);
+      const payload = await response.json();
+      canvas._payload = payload;
+      drawChart(canvas, payload);
+      new ResizeObserver(() => drawChart(canvas, canvas._payload)).observe(canvas);
+    } catch (error) {
+      status.textContent = error.message;
+      canvas.dataset.rendered = "error";
+    }
+  }
+
+  const source = document.querySelector('select[name="source"]');
+  if (source) { updateMetricOptions(); source.addEventListener("change", updateMetricOptions); }
+  loadChart();
+})();
+"""
 
 
 def _window(query, timezone, default_days):
@@ -403,21 +574,25 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "application/json", '{"ok":true}')
             if parsed.path == "/assets/app.css":
                 return self._send(200, "text/css; charset=utf-8", CSS)
+            if parsed.path == "/assets/app.js":
+                return self._send(200, "text/javascript; charset=utf-8", JS)
             try:
                 if parsed.path == "/":
                     return self._dashboard(parse_qs(parsed.query))
-                if parsed.path in {"/api/v1/report", "/api/v1/report.csv"}:
+                if parsed.path in {
+                    "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
+                }:
                     return self._api(parsed.path, parse_qs(parsed.query))
                 self.send_error(404)
             except (ValueError, KeyError):
                 self._send(400, "application/json", '{"error":"invalid report request"}')
 
-        def _request(self, query):
+        def _request(self, query, *, force_overview=False):
             report_id = query.get("report", [config.reports[0].id])[0]
             report = next((item for item in config.reports if item.id == report_id), None)
             if report is None:
                 raise ValueError("unknown report")
-            subreport_id = query.get("subreport", [None])[0]
+            subreport_id = None if force_overview else query.get("subreport", [None])[0]
             default_days = report.default_window_days
             if subreport_id:
                 subreport = next((item for item in report.subreports if item.id == subreport_id), None)
@@ -428,7 +603,74 @@ def handler_factory(config, store, credentials=None):
             window = _window(query, config.platform.default_timezone, default_days)
             return reports.render(report_id, window, subreport_id, site_id), report
 
+        def _series_payload(self, query):
+            is_plot = query.get("view", [""])[0] == "plot"
+            report, definition = self._request(query, force_overview=is_plot)
+            candidates = tuple(
+                metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
+                if metric in METRICS and METRICS[metric].aggregation != "window"
+            )
+            requested_metric = query.get("metric", [None])[0]
+            metric = requested_metric if requested_metric in candidates else next(
+                (item for item in CHART_PRIORITY if item in candidates), candidates[0] if candidates else ""
+            )
+            requested_source = query.get("source", [None])[0]
+            source = requested_source or (METRICS[metric].source if metric else "")
+            if source not in SOURCE_LABELS or (metric and METRICS[metric].source != source):
+                raise ValueError("invalid series source")
+            style = query.get("style", ["line"])[0]
+            if style not in {"line", "area", "bar"}:
+                raise ValueError("invalid chart style")
+            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
+
+            def selected(items):
+                return [
+                    item for item in items
+                    if item["metric"] == metric and item["source"] in {source, "fixture"}
+                ]
+
+            current = selected(report["series"])
+            previous = selected(report["comparison_series"]) if compare else []
+            if not current:
+                report["warnings"] = [*report["warnings"], "No stored daily values match this plot selection."]
+            return {
+                "schema_version": 1,
+                "report_id": report["report_id"],
+                "subreport_id": report["subreport_id"],
+                "site_id": report["site_id"],
+                "source": source,
+                "source_label": _source_label(source),
+                "metric": metric,
+                "metric_label": _metric_label(metric) if metric else "Daily series",
+                "style": style,
+                "compare": compare,
+                "window": report["window"],
+                "comparison_window": report["comparison_window"],
+                "series": current,
+                "comparison_series": previous,
+                "site_names": {site.id: site.name for site in config.sites if site.id in definition.site_ids},
+                "warnings": report["warnings"],
+            }
+
+        @staticmethod
+        def _active_metrics(definition, report):
+            if not report["subreport_id"]:
+                return definition.metric_ids
+            subreport = next(item for item in definition.subreports if item.id == report["subreport_id"])
+            return subreport.metric_ids
+
         def _api(self, path, query):
+            if path in {"/api/v1/series", "/api/v1/series.csv"}:
+                payload = self._series_payload(query)
+                if path.endswith(".csv"):
+                    filename = f'{payload["report_id"]}-{payload["metric"]}-{payload["window"]["start"][:10]}-{payload["window"]["end"][:10]}.csv'
+                    return self._send(
+                        200,
+                        "text/csv; charset=utf-8",
+                        to_series_csv(payload, include_comparison=payload["compare"]),
+                        {"Content-Disposition": f'attachment; filename="{filename}"'},
+                    )
+                return self._send(200, "application/json", json.dumps(payload, sort_keys=True))
             report, _definition = self._request(query)
             if path.endswith(".csv"):
                 filename = f'{report["report_id"]}-{report["window"]["start"][:10]}-{report["window"]["end"][:10]}.csv'
@@ -441,20 +683,54 @@ def handler_factory(config, store, credentials=None):
             return self._send(200, "application/json", json.dumps(report, sort_keys=True))
 
         def _dashboard(self, query):
-            result, report = self._request(query)
+            view = query.get("view", ["dashboard"])[0]
+            if view not in {"dashboard", "plot"}:
+                raise ValueError("invalid view")
+            is_plot = view == "plot"
+            result, report = self._request(query, force_overview=is_plot)
             start = result["window"]["start"][:10]
             end = result["window"]["end"][:10]
             site_names = {site.id: site.name for site in config.sites}
-            available_metrics = {series["metric"] for series in result["series"]}
-            requested_metric = query.get("metric", [None])[0]
-            selected_metric = requested_metric if requested_metric in available_metrics else next(
-                (metric for metric in CHART_PRIORITY if metric in available_metrics),
-                sorted(available_metrics)[0] if available_metrics else "",
+            active_definition = next(
+                (item for item in report.subreports if item.id == result["subreport_id"]),
+                None,
             )
+            expected_metrics = report.metric_ids if is_plot else (
+                active_definition.metric_ids if active_definition else report.metric_ids
+            )
+            available_metrics = tuple(
+                metric for metric in expected_metrics
+                if metric in METRICS and METRICS[metric].aggregation != "window"
+            )
+            requested_metric = query.get("metric", [None])[0]
+            represented_sources = tuple(
+                source for source in SOURCE_LABELS
+                if any(METRICS[metric].source == source for metric in available_metrics)
+            )
+            requested_source = query.get("source", [None])[0]
+            inferred_source = METRICS[requested_metric].source if requested_metric in available_metrics else None
+            selected_source = requested_source if requested_source in represented_sources else (
+                inferred_source or (represented_sources[0] if represented_sources else "")
+            )
+            source_metrics = tuple(metric for metric in available_metrics if METRICS[metric].source == selected_source)
+            selected_metric = requested_metric if requested_metric in source_metrics else next(
+                (metric for metric in CHART_PRIORITY if metric in source_metrics),
+                source_metrics[0] if source_metrics else "",
+            )
+            style = query.get("style", ["line"])[0]
+            if style not in {"line", "area", "bar"}:
+                raise ValueError("invalid chart style")
+            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
 
             def route(path="/", **overrides):
                 params = {"report": report.id, "start": start, "end": end}
-                if result["subreport_id"]:
+                if is_plot:
+                    params["view"] = "plot"
+                    params["source"] = selected_source
+                    params["style"] = style
+                    if compare:
+                        params["compare"] = "1"
+                elif result["subreport_id"]:
                     params["subreport"] = result["subreport_id"]
                 if result["site_id"]:
                     params["site"] = result["site_id"]
@@ -468,24 +744,43 @@ def handler_factory(config, store, credentials=None):
                 return path + "?" + urlencode(params)
 
             report_nav = "".join(
-                f'<a class="{"active" if item.id == report.id else ""}" href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
+                f'<a class="{"active" if not is_plot and item.id == report.id else ""}" href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
                 for item in config.reports
             )
-            subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None))}">Overview</a>'
-            subnav += "".join(
-                f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id))}">{_e(item.title)}</a>'
-                for item in report.subreports
-            )
+            plot_url = "/?" + urlencode({"report": report.id, "view": "plot", "start": start, "end": end})
+            report_nav += f'<a class="plot-mode {"active" if is_plot else ""}" href="{_e(plot_url)}">Plot Builder</a>'
+            if is_plot:
+                source_defaults = {
+                    source: next(
+                        (metric for metric in CHART_PRIORITY if metric in available_metrics and METRICS[metric].source == source),
+                        next(metric for metric in available_metrics if METRICS[metric].source == source),
+                    )
+                    for source in represented_sources
+                }
+                subnav = "".join(
+                    f'<a class="{"active" if source == selected_source else ""}" href="{_e(route(source=source, metric=source_defaults[source]))}">{_e(_source_label(source))}</a>'
+                    for source in represented_sources
+                )
+            else:
+                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None))}">Overview</a>'
+                subnav += "".join(
+                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id))}">{_e(item.title)}</a>'
+                    for item in report.subreports
+                )
             site_options = '<option value="">All sites</option>' + "".join(
                 f'<option value="{_e(site_id)}"{" selected" if site_id == result["site_id"] else ""}>{_e(site_names.get(site_id, site_id))}</option>'
                 for site_id in report.site_ids
             )
             metric_order = [metric for metric in CHART_PRIORITY if metric in available_metrics]
-            metric_order += sorted(available_metrics - set(metric_order))
+            metric_order += sorted(set(available_metrics) - set(metric_order))
             metric_options = "".join(
-                f'<option value="{_e(metric)}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
+                f'<option value="{_e(metric)}" data-source="{_e(METRICS[metric].source)}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
                 for metric in metric_order
             ) or '<option value="">No daily series</option>'
+            source_options = "".join(
+                f'<option value="{_e(source)}"{" selected" if source == selected_source else ""}>{_e(_source_label(source))}</option>'
+                for source in represented_sources
+            )
             hidden_subreport = (
                 f'<input type="hidden" name="subreport" value="{_e(result["subreport_id"])}">'
                 if result["subreport_id"] else ""
@@ -494,49 +789,91 @@ def handler_factory(config, store, credentials=None):
             end_date = datetime.fromisoformat(end).date()
             presets = "".join(
                 f'<a href="{_e(route(start=(end_date - timedelta(days=days)).isoformat()))}">{days} days</a>'
-                for days in (7, 30, 90)
+                for days in (7, 30, 90, 365)
             )
             export_params = {"report": report.id, "start": start, "end": end}
-            if result["subreport_id"]:
+            if is_plot:
+                export_params.update({"view": "plot", "source": selected_source, "metric": selected_metric, "style": style})
+                if compare:
+                    export_params["compare"] = "1"
+            elif result["subreport_id"]:
                 export_params["subreport"] = result["subreport_id"]
             if result["site_id"]:
                 export_params["site"] = result["site_id"]
-            csv_url = "/api/v1/report.csv?" + urlencode(export_params)
-            json_url = "/api/v1/report?" + urlencode(export_params)
-            quick_links = presets + f'<a href="{_e(csv_url)}">Download CSV</a><a href="{_e(json_url)}">JSON API</a>'
-
-            active_definition = next(
-                (item for item in report.subreports if item.id == result["subreport_id"]),
-                None,
-            )
-            expected_metrics = active_definition.metric_ids if active_definition else report.metric_ids
+            endpoint = "/api/v1/series" if is_plot else "/api/v1/report"
+            csv_url = endpoint + ".csv?" + urlencode(export_params)
+            json_url = endpoint + "?" + urlencode(export_params)
+            export_name = "series" if is_plot else "report"
+            quick_links = presets + f'<a href="{_e(csv_url)}">Download {export_name} CSV</a><a href="{_e(json_url)}">Load {export_name} JSON</a>'
+            if is_plot:
+                full_report_url = "/api/v1/report?" + urlencode({"report": report.id, "start": start, "end": end})
+                quick_links += f'<a href="{_e(full_report_url)}">Full report JSON</a>'
             status_class = "" if result["complete"] else " partial"
             status_text = "Complete coverage" if result["complete"] else "Partial coverage"
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
             freshness_count = len(result["freshness"])
+            page_title = "Time-series Plot Builder" if is_plot else result["title"]
+            hero_copy = (
+                "Select a source, metric, site, exact date window, and chart style. Every plot is built from stored local snapshots."
+                if is_plot else
+                "A read-only view of traffic, search visibility, and form-delivery evidence across the portfolio."
+            )
+            form_class = "filter-form plot-form" if is_plot else "filter-form"
+            view_input = '<input type="hidden" name="view" value="plot">' if is_plot else ""
+            source_field = (
+                f'<label class="field"><span>Data source</span><select name="source">{source_options}</select></label>'
+                if is_plot else ""
+            )
+            style_field = ""
+            if is_plot:
+                style_options = "".join(
+                    f'<option value="{item}"{" selected" if item == style else ""}>{item.title()}</option>'
+                    for item in ("line", "area", "bar")
+                )
+                checked = " checked" if compare else ""
+                style_field = (
+                    f'<label class="field"><span>Chart style</span><select name="style">{style_options}</select></label>'
+                    f'<label class="field"><span>Comparison</span><span class="check-field"><input type="checkbox" name="compare" value="1"{checked}><span>Previous period</span></span></label>'
+                )
+            series_params = dict(export_params)
+            if not is_plot and result["subreport_id"]:
+                series_params["subreport"] = result["subreport_id"]
+            series_params.update({"metric": selected_metric, "source": selected_source, "style": style})
+            if compare:
+                series_params["compare"] = "1"
+            series_url = "/api/v1/series?" + urlencode(series_params)
+            summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            if is_plot:
+                supporting_html = _health_html(result, expected_metrics)
+            else:
+                supporting_html = (
+                    f'<div class="split-grid">{_forms_html(result["forms_pipeline"])}{_health_html(result, expected_metrics)}</div>'
+                    f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
+                )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_e(result['title'])} · Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head>
+<title>{_e(page_title)} - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot · {freshness_count} sources reporting</div></div></header>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
-<section class="hero"><div><p class="eyebrow">{_e(window_label)} · End date exclusive</p><h1>{_e(result['title'])}</h1><p class="hero-copy">A read-only view of traffic, search visibility, and form-delivery evidence across the portfolio.</p></div><span class="coverage-badge{status_class}">{_e(status_text)}</span></section>
+<section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div><span class="coverage-badge{status_class}">{_e(status_text)}</span></section>
 <nav class="subnav" aria-label="Report sections">{subnav}</nav>
-<section class="panel control-panel"><div class="panel-heading"><div><h2>Report tools</h2><p>Choose a site, metric, or exact reporting window. Browser requests never trigger provider syncs.</p></div></div>
-<form class="filter-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{hidden_subreport}
+<section class="panel control-panel"><div class="panel-heading"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>Choose from locally stored data. Browser requests never trigger provider syncs.</p></div></div>
+<form class="{form_class}" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{view_input}{hidden_subreport}
 <label class="field"><span>Start date</span><input type="date" name="start" value="{_e(start)}" required></label>
 <label class="field"><span>End date</span><input type="date" name="end" value="{_e(end)}" required></label>
-<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>
-<label class="field"><span>Graph metric</span><select name="metric">{metric_options}</select></label><button type="submit">Update dashboard</button></form>
+{source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
+<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></section>
-{_warnings_html(result['warnings'])}{_summary_cards(result, expected_metrics)}
-<section class="panel chart-panel"><div class="panel-heading"><div><h2>{_e(_metric_label(selected_metric)) if selected_metric else 'Daily trend'}</h2><p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div><span class="source-chip">Daily series</span></div>{_chart_html(result, selected_metric, site_names)}</section>
-<div class="split-grid">{_forms_html(result['forms_pipeline'])}{_health_html(result, expected_metrics)}</div>
-<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>
-<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only · loopback-first · no browser credentials</span></footer></main></body></html>"""
+{_warnings_html(result['warnings'])}{summary_html}
+<section class="panel chart-panel"><div class="panel-heading"><div><h2>{_e(_metric_label(selected_metric)) if selected_metric else 'Daily trend'}</h2><p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div><span class="source-chip">{_e(_source_label(selected_source)) if selected_source else 'Daily series'}</span></div>
+<div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else 'Daily time series'}"></canvas></div><ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>
+<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p><details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>
+{supporting_html}
+<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 
     return Handler
