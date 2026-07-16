@@ -51,6 +51,7 @@ def _window(args, timezone: str, default_days: int) -> QueryWindow:
     else:
         days = args.days if args.days is not None else default_days
         if days < 1 or days > 3650: raise ValueError("--days must be from 1 to 3650")
+        today = datetime.now(zone).date()
         end_date = today; start_date = end_date - timedelta(days=days)
     return QueryWindow(datetime.combine(start_date, time.min, zone), datetime.combine(end_date, time.min, zone), timezone)
 

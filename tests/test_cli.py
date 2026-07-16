@@ -38,5 +38,10 @@ class CliTests(unittest.TestCase):
         status, output = self.call("report", "summary", "--start", "2026-07-01", "--end", "2026-07-02", "--format", "csv")
         self.assertEqual(status, 0); self.assertTrue(output.startswith("metric,site_id,source"))
 
+    def test_relative_days_window_uses_current_local_date(self):
+        status, output = self.call("sync", "--days", "30")
+        self.assertEqual(status, 0)
+        self.assertIn('"status": "success"', output)
+
 
 if __name__ == "__main__": unittest.main()
