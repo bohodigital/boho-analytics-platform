@@ -8,6 +8,11 @@ Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 fixture-tested. Live account compatibility and least-privilege access still need to be validated
 before this is called a stable release.
 
+![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
+
+_Headlessly generated from the checked-in demo fixture. No live analytics profile or private
+configuration is used._
+
 The browser only reads normalized local aggregates. Provider credentials stay server-side, syncs
 are explicit or scheduled, and every metric remains source-labeled. The public repository contains
 no client mappings, live resource IDs, credentials, submission content, or mailbox content.
@@ -31,6 +36,8 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
+
+![Boho Analytics summary dashboard using public example data](docs/images/boho-analytics-dashboard.png)
 
 ## Quick start with safe demo data
 
@@ -72,7 +79,8 @@ boho-analytics --config /private/platform.toml sync --connection example-umami -
 ```
 
 See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md), and
-[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live data.
+[provider behavior](docs/providers.md), [deployment](docs/deployment.md), and the reproducible
+[headless screenshot workflow](docs/screenshots.md) before connecting live data.
 
 ## Metric ownership
 
