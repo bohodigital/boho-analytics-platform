@@ -681,149 +681,253 @@ def _site_graph_display_name(route: str) -> str:
     return " ".join(replacements.get(word.casefold(), word.title()) for word in words) or route
 
 
-def _site_graph_cluster_key(route: str) -> tuple[int, str]:
-    first = _site_graph_section(route)
-    order = {
-        "home": 0,
-        "services": 1,
-        "industries": 2,
-        "learn": 3,
-        "resources": 4,
-        "tools": 5,
-        "company": 6,
-        "next": 7,
-        "policy": 8,
-    }
-    return order.get(first, 99), route
-
-
-def _site_graph_section(route: str) -> str:
-    if route == "/":
-        return "home"
-    first = route.strip("/").split("/", 1)[0]
-    if first in {"about"}:
-        return "company"
-    if first in {"contact", "emergency", "start"}:
-        return "next"
-    if first in {"accessibility", "privacy", "terms"}:
-        return "policy"
-    return first or "home"
-
-
 def _site_graph_stable_unit(value: str, salt: str) -> float:
     digest = hashlib.blake2s(f"{salt}:{value}".encode("utf-8"), digest_size=4).hexdigest()
     return int(digest, 16) / 0xFFFFFFFF
 
 
-def _site_graph_cluster_specs(width: int, height: int) -> dict[str, dict[str, float | str]]:
-    return {
-        "home": {"x": width * 0.48, "y": height * 0.47, "angle": -1.1, "spread": 68, "label": "Core"},
-        "services": {"x": width * 0.73, "y": height * 0.48, "angle": -0.08, "spread": 150, "label": "Services"},
-        "industries": {"x": width * 0.33, "y": height * 0.63, "angle": 2.34, "spread": 145, "label": "Industries"},
-        "learn": {"x": width * 0.58, "y": height * 0.25, "angle": -1.46, "spread": 132, "label": "Learn"},
-        "resources": {"x": width * 0.31, "y": height * 0.35, "angle": -2.72, "spread": 112, "label": "Resources"},
-        "tools": {"x": width * 0.49, "y": height * 0.78, "angle": 1.46, "spread": 108, "label": "Tools"},
-        "company": {"x": width * 0.18, "y": height * 0.52, "angle": 3.12, "spread": 84, "label": "Company"},
-        "next": {"x": width * 0.83, "y": height * 0.74, "angle": 0.83, "spread": 96, "label": "Next steps"},
-        "policy": {"x": width * 0.19, "y": height * 0.82, "angle": 2.15, "spread": 82, "label": "Policy"},
-    }
+def _site_graph_label_width(route: str, node: dict[str, object]) -> float:
+    label = str(node.get("pretty_name") or _site_graph_display_name(route))
+    return float(min(230, max(88, len(label) * 7.2 + 42)))
 
 
-def _site_graph_positions(nodes):
-    width = 1240
-    height = max(720, min(1040, 650 + len(nodes) * 11))
+def _site_graph_topology_label(node: dict[str, object], route: str) -> str:
+    distance = int(node.get("goal_distance", -1))
+    if node.get("selected") or distance == 0:
+        return "Focus / goal"
+    if route == "/":
+        return "Entry page"
+    if distance == 1:
+        return "One click away"
+    if distance == 2:
+        return "Two-click support"
+    if distance > 2:
+        return "Longer path"
+    return "Disconnected here"
+
+
+def _site_graph_components(routes: list[str], adjacency: dict[str, dict[str, float]]) -> list[list[str]]:
+    unseen = set(routes)
+    components: list[list[str]] = []
+    while unseen:
+        start = min(unseen)
+        stack = [start]
+        unseen.remove(start)
+        component: list[str] = []
+        while stack:
+            route = stack.pop()
+            component.append(route)
+            for neighbor in adjacency.get(route, {}):
+                if neighbor in unseen:
+                    unseen.remove(neighbor)
+                    stack.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+def _site_graph_positions(nodes, edges):
+    node_by_route = {str(node["route"]): node for node in nodes}
+    routes = sorted(node_by_route)
+    node_count = max(1, len(routes))
+    layout_columns = max(4, math.ceil(math.sqrt(node_count) * 1.28))
+    layout_rows = max(1, math.ceil(node_count / layout_columns))
+    width = int(min(2600, max(1500, layout_columns * 280)))
+    height = int(min(1900, max(920, layout_rows * 245 + 360)))
     center_x = width / 2
-    center_y = height * 0.49
+    center_y = height * 0.48
     authority_values = [node.get("authority", 0) for node in nodes]
     authority_min = min(authority_values, default=0)
     authority_span = max(authority_values, default=0) - authority_min or 1
-    sections: dict[str, list[dict[str, object]]] = {}
-    for node in nodes:
-        sections.setdefault(_site_graph_section(str(node["route"])), []).append(node)
-    specs = _site_graph_cluster_specs(width, height)
+
+    layer_weight = {
+        "contextual": 2.8,
+        "action": 2.6,
+        "related": 2.3,
+        "breadcrumb": 1.7,
+        "menu": 1.1,
+        "utility": 0.8,
+    }
+    adjacency: dict[str, dict[str, float]] = {route: {} for route in routes}
+    edge_forces: list[tuple[str, str, float, str]] = []
+    for edge in edges:
+        source = str(edge.get("source", ""))
+        destination = str(edge.get("destination", ""))
+        if source not in node_by_route or destination not in node_by_route or source == destination:
+            continue
+        layer = str(edge.get("layer", "contextual"))
+        occurrences = int(edge.get("occurrence_count", 1) or 1)
+        weight = layer_weight.get(layer, 1.0) + min(occurrences, 8) * 0.08
+        adjacency[source][destination] = adjacency[source].get(destination, 0.0) + weight
+        adjacency[destination][source] = adjacency[destination].get(source, 0.0) + weight * 0.9
+        edge_forces.append((source, destination, weight, layer))
+
+    components = _site_graph_components(routes, adjacency)
+    focus_routes = {
+        route for route, node in node_by_route.items()
+        if node.get("selected") or int(node.get("goal_distance", -1)) == 0
+    }
+    if not focus_routes and "/" in node_by_route:
+        focus_routes = {"/"}
+    focus_components = {
+        index for index, component in enumerate(components)
+        if any(route in focus_routes for route in component)
+    }
+    component_order = sorted(
+        range(len(components)),
+        key=lambda index: (0 if index in focus_components else 1, -len(components[index]), components[index][0]),
+    )
+    component_slot = {component_index: slot for slot, component_index in enumerate(component_order)}
+    component_rank: dict[str, int] = {}
+    component_size: dict[str, int] = {}
+    for index, component in enumerate(components):
+        for rank, route in enumerate(component):
+            component_rank[route] = rank
+            component_size[route] = len(component)
+
     positioned: dict[str, dict[str, float | int | bool]] = {}
-    for section, section_nodes in sections.items():
-        spec = specs.get(section, {"x": center_x, "y": center_y, "angle": 0.0, "spread": 120, "label": "Other"})
-        ordered = sorted(section_nodes, key=lambda item: _site_graph_cluster_key(str(item["route"])))
-        count = len(ordered)
-        angle_step = min(0.72, 2.65 / max(1, count))
-        for index, node in enumerate(ordered):
-            route = str(node["route"])
-            distance = int(node["goal_distance"])
-            ring = 0 if distance == 0 else 4 if distance < 0 else min(distance, 3)
-            authority_norm = (float(node.get("authority", 0)) - authority_min) / authority_span
-            route_parts = [part for part in route.strip("/").split("/") if part]
-            route_depth = max(0, len(route_parts) - 1)
-            jitter_x = (_site_graph_stable_unit(route, "x") - 0.5) * 72
-            jitter_y = (_site_graph_stable_unit(route, "y") - 0.5) * 58
-            angle = float(spec["angle"]) + (index - (count - 1) / 2) * angle_step
-            angle += (_site_graph_stable_unit(route, "angle") - 0.5) * 0.42
-            spread = float(spec["spread"]) + min(80, count * 5) + route_depth * 18 + ring * 24
-            anchor_x = float(spec["x"])
-            anchor_y = float(spec["y"])
-            if distance == 0 or node.get("selected"):
-                x = center_x + jitter_x * 0.38
-                y = center_y + jitter_y * 0.32
-                pinned = True
-            elif route == "/":
-                x = center_x - 130 + jitter_x * 0.2
-                y = center_y - 18 + jitter_y * 0.2
-                pinned = False
-            else:
-                orbit_x = spread * (0.78 + route_depth * 0.12)
-                orbit_y = spread * (0.52 + route_depth * 0.09)
-                x = anchor_x + math.cos(angle) * orbit_x + jitter_x
-                y = anchor_y + math.sin(angle) * orbit_y + jitter_y
-                if route_depth == 0 and ring <= 1:
-                    x = x * 0.72 + center_x * 0.28
-                    y = y * 0.72 + center_y * 0.28
-                if ring == 4:
-                    y = max(y, height * 0.83 + jitter_y * 0.4)
-                pinned = False
-            node_radius = 22 + authority_norm * 8 + (4 if distance == 0 else 0)
-            positioned[route] = {
-                "x": x,
-                "y": y,
-                "r": int(round(node_radius)),
-                "ring": ring,
-                "anchor_x": anchor_x,
-                "anchor_y": anchor_y,
-                "pinned": pinned,
-            }
+    total_components = max(1, len(component_order))
+    component_arc = (math.tau / total_components) if total_components > 1 else math.tau
+    for route in routes:
+        node = node_by_route[route]
+        distance = int(node.get("goal_distance", -1))
+        ring = 0 if node.get("selected") or distance == 0 else 5 if distance < 0 else min(distance, 4)
+        authority_norm = (float(node.get("authority", 0)) - authority_min) / authority_span
+        route_depth = max(0, len([part for part in route.strip("/").split("/") if part]) - 1)
+        component_index = next(index for index, component in enumerate(components) if route in component)
+        slot = component_slot[component_index]
+        rank = component_rank.get(route, 0)
+        count = max(1, component_size.get(route, 1))
+        rank_offset = ((rank + 0.5) / count - 0.5) * min(component_arc * 0.72, 1.9)
+        jitter_angle = (_site_graph_stable_unit(route, "angle") - 0.5) * 0.48
+        if total_components == 1:
+            angle = -math.pi / 2 + ((rank + 0.5) / count) * math.tau + jitter_angle
+        else:
+            angle = -math.pi / 2 + slot * component_arc + component_arc / 2 + rank_offset + jitter_angle
+        base_radius = min(width, height) * 0.16
+        ring_gap = min(width, height) * 0.105
+        orbit = base_radius + ring * ring_gap + route_depth * 24
+        if ring == 0:
+            x = center_x + (_site_graph_stable_unit(route, "x") - 0.5) * 40
+            y = center_y + (_site_graph_stable_unit(route, "y") - 0.5) * 28
+            anchor_x, anchor_y = center_x, center_y
+            pinned = True
+        elif route == "/":
+            x = center_x - orbit * 0.74
+            y = center_y + (_site_graph_stable_unit(route, "entry-y") - 0.5) * 70
+            anchor_x, anchor_y = x, y
+            pinned = False
+        elif ring == 5:
+            disconnected_angle = math.pi * (0.23 + _site_graph_stable_unit(route, "disconnected") * 0.54)
+            orbit = min(width, height) * (0.39 + _site_graph_stable_unit(route, "outer") * 0.08)
+            x = center_x + math.cos(disconnected_angle) * orbit
+            y = center_y + abs(math.sin(disconnected_angle)) * orbit * 0.86
+            anchor_x, anchor_y = x, y
+            pinned = False
+        else:
+            x = center_x + math.cos(angle) * orbit
+            y = center_y + math.sin(angle) * orbit * 0.82
+            anchor_x, anchor_y = x, y
+            pinned = False
+        node_radius = 24 + authority_norm * 10 + (5 if ring == 0 else 0)
+        positioned[route] = {
+            "x": x,
+            "y": y,
+            "r": int(round(node_radius)),
+            "ring": ring,
+            "anchor_x": anchor_x,
+            "anchor_y": anchor_y,
+            "pinned": pinned,
+            "label_width": _site_graph_label_width(route, node),
+            "group_label": _site_graph_topology_label(node, route),
+        }
     margin = 54
-    for _ in range(72):
-        values = list(positioned.values())
-        for item in values:
-            if not item["pinned"]:
-                item["x"] = float(item["x"]) + (float(item["anchor_x"]) - float(item["x"])) * 0.006
-                item["y"] = float(item["y"]) + (float(item["anchor_y"]) - float(item["y"])) * 0.006
-        for index, left in enumerate(values):
-            for right in values[index + 1 :]:
+    for iteration in range(180):
+        displacement = {route: [0.0, 0.0] for route in positioned}
+        for route, item in positioned.items():
+            anchor_strength = 0.052 if item["pinned"] else 0.018 if int(item["ring"]) == 5 else 0.012
+            displacement[route][0] += (float(item["anchor_x"]) - float(item["x"])) * anchor_strength
+            displacement[route][1] += (float(item["anchor_y"]) - float(item["y"])) * anchor_strength
+        for source, destination, weight, layer in edge_forces:
+            source_item = positioned[source]
+            destination_item = positioned[destination]
+            dx = float(destination_item["x"]) - float(source_item["x"])
+            dy = float(destination_item["y"]) - float(source_item["y"])
+            distance = math.hypot(dx, dy)
+            if distance < 0.1:
+                angle = _site_graph_stable_unit(f"{source}->{destination}", "edge") * math.tau
+                dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+            desired = 185 + abs(int(source_item["ring"]) - int(destination_item["ring"])) * 24
+            if layer in {"menu", "utility"}:
+                desired += 48
+            force = (distance - desired) * min(0.038, 0.009 * weight)
+            unit_x, unit_y = dx / distance, dy / distance
+            displacement[source][0] += unit_x * force
+            displacement[source][1] += unit_y * force
+            displacement[destination][0] -= unit_x * force
+            displacement[destination][1] -= unit_y * force
+        route_items = list(positioned.items())
+        for index, (left_route, left) in enumerate(route_items):
+            for right_route, right in route_items[index + 1 :]:
                 dx = float(right["x"]) - float(left["x"])
                 dy = float(right["y"]) - float(left["y"])
-                distance = max(0.1, math.hypot(dx, dy))
-                minimum = int(left["r"]) + int(right["r"]) + 46
+                distance = math.hypot(dx, dy)
+                if distance < 0.1:
+                    angle = _site_graph_stable_unit(f"{left_route}:{right_route}", "repel") * math.tau
+                    dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+                label_clearance = (float(left["label_width"]) + float(right["label_width"])) * 0.24
+                minimum = int(left["r"]) + int(right["r"]) + max(74, label_clearance)
+                force = 0.0
+                if distance < minimum:
+                    force = (minimum - distance) * 0.46
+                elif distance < 310:
+                    force = (310 - distance) * 0.006
+                if not force:
+                    continue
+                unit_x, unit_y = dx / distance, dy / distance
+                left_factor = 0.28 if left["pinned"] else 1.0
+                right_factor = 0.28 if right["pinned"] else 1.0
+                displacement[left_route][0] -= unit_x * force * left_factor
+                displacement[left_route][1] -= unit_y * force * left_factor
+                displacement[right_route][0] += unit_x * force * right_factor
+                displacement[right_route][1] += unit_y * force * right_factor
+        max_step = 42 - min(32, iteration * 0.16)
+        for route, item in positioned.items():
+            dx, dy = displacement[route]
+            length = math.hypot(dx, dy)
+            if length > max_step:
+                dx *= max_step / length
+                dy *= max_step / length
+            item["x"] = min(width - margin, max(margin, float(item["x"]) + dx))
+            item["y"] = min(height - margin, max(margin, float(item["y"]) + dy))
+    for _ in range(100):
+        moved = False
+        route_items = list(positioned.items())
+        for index, (left_route, left) in enumerate(route_items):
+            for right_route, right in route_items[index + 1 :]:
+                dx = float(right["x"]) - float(left["x"])
+                dy = float(right["y"]) - float(left["y"])
+                distance = math.hypot(dx, dy)
+                if distance < 0.1:
+                    angle = _site_graph_stable_unit(f"{left_route}:{right_route}", "final") * math.tau
+                    dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+                label_clearance = (float(left["label_width"]) + float(right["label_width"])) * 0.24
+                minimum = int(left["r"]) + int(right["r"]) + max(82, label_clearance)
                 if distance >= minimum:
                     continue
-                push = (minimum - distance) / distance
-                offset_x = dx * push * 0.5
-                offset_y = dy * push * 0.5
-                if left["pinned"] and right["pinned"]:
-                    continue
-                if left["pinned"]:
-                    right["x"] = float(right["x"]) + offset_x * 1.4
-                    right["y"] = float(right["y"]) + offset_y * 1.4
-                elif right["pinned"]:
-                    left["x"] = float(left["x"]) - offset_x * 1.4
-                    left["y"] = float(left["y"]) - offset_y * 1.4
-                else:
-                    left["x"] = float(left["x"]) - offset_x
-                    left["y"] = float(left["y"]) - offset_y
-                    right["x"] = float(right["x"]) + offset_x
-                    right["y"] = float(right["y"]) + offset_y
-        for item in values:
+                moved = True
+                push = (minimum - distance) * 0.52
+                unit_x, unit_y = dx / distance, dy / distance
+                left_factor = 0.18 if left["pinned"] else 1.0
+                right_factor = 0.18 if right["pinned"] else 1.0
+                left["x"] = float(left["x"]) - unit_x * push * left_factor
+                left["y"] = float(left["y"]) - unit_y * push * left_factor
+                right["x"] = float(right["x"]) + unit_x * push * right_factor
+                right["y"] = float(right["y"]) + unit_y * push * right_factor
+        for item in positioned.values():
             item["x"] = min(width - margin, max(margin, float(item["x"])))
             item["y"] = min(height - margin, max(margin, float(item["y"])))
+        if not moved:
+            break
     positions = {}
     for route, item in positioned.items():
         positions[route] = {
@@ -833,17 +937,28 @@ def _site_graph_positions(nodes):
             "depth": (float(item["y"]) - center_y) / max(1, height / 2),
             "ring": int(item["ring"]),
         }
+    label_groups: dict[str, list[str]] = {}
+    for route, item in positioned.items():
+        label_groups.setdefault(str(item["group_label"]), []).append(route)
+    label_order = {
+        "Focus / goal": 0,
+        "Entry page": 1,
+        "One click away": 2,
+        "Two-click support": 3,
+        "Longer path": 4,
+        "Disconnected here": 5,
+    }
     cluster_labels = []
-    for section, section_nodes in sorted(sections.items(), key=lambda item: _site_graph_cluster_key("/" + item[0] + "/")):
-        spec = specs.get(section)
-        if not spec:
-            continue
+    for label, label_routes in sorted(label_groups.items(), key=lambda item: (label_order.get(item[0], 99), item[0])):
+        group_positions = [positions[route] for route in label_routes]
+        x = sum(item["x"] for item in group_positions) / len(group_positions)
+        y = min(item["y"] for item in group_positions) - 58
         cluster_labels.append(
             {
-                "label": str(spec["label"]),
-                "count": len(section_nodes),
-                "x": int(round(float(spec["x"]))),
-                "y": int(round(max(36, float(spec["y"]) - float(spec["spread"]) * 0.62))),
+                "label": label,
+                "count": len(label_routes),
+                "x": int(round(min(width - 80, max(80, x)))),
+                "y": int(round(min(height - 42, max(42, y)))),
             }
         )
     return width, height, positions, cluster_labels
@@ -875,7 +990,7 @@ def _site_graph_svg(payload):
     edges = payload["visualization"]["edges"]
     if not nodes:
         return '<div class="empty-state">No pages match this bounded view.</div>'
-    width, height, positions, cluster_labels = _site_graph_positions(nodes)
+    width, height, positions, cluster_labels = _site_graph_positions(nodes, edges)
     edge_html = []
     edge_priority = {"menu": 0, "utility": 1, "breadcrumb": 2, "contextual": 3, "related": 4, "action": 5}
     for edge in sorted(edges, key=lambda item: edge_priority.get(item["layer"], 9)):
@@ -943,10 +1058,10 @@ def _site_graph_svg(payload):
     )
     return (
         '<div class="graph-stage" data-site-graph-stage><div class="graph-map">'
-        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and nearby circles belong to the same part of the site.</p>'
+        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and placement follows link relationships plus click distance from the focus page.</p>'
         f'<svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
         'aria-labelledby="graph-title graph-description"><title id="graph-title">Site Graph structural overview</title>'
-        f'<desc id="graph-description">An organic topic-cluster map of pages and '
+        f'<desc id="graph-description">An organic topology map of pages and '
         f'aggregated internal-link relationships in the selected layers. An equivalent table follows the graphic.</desc>'
         '<defs><marker id="arrow" markerWidth="8" markerHeight="8" '
         'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker>'

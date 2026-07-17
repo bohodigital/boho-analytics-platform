@@ -102,6 +102,20 @@ The adapter is source-first. It records bounded structural evidence from TypeScr
 TSX, and MDX files, but it does not claim that a route was deployed, crawled, visited, or converted.
 Source-only classifications are labeled as bounded heuristics with confidence values.
 
+The extractor searches common internal-link forms without executing project code:
+
+- route-like object fields such as `slug`, `path`, `href`, `to`, `url`, `action`, and `formAction`;
+- JSX attributes such as `href`, `to`, `action`, and `formAction`;
+- simple string constants and one-level route maps referenced by JSX attributes;
+- router-style calls such as `push`, `replace`, `prefetch`, `navigate`, `redirect`, and
+  `permanentRedirect`;
+- markdown and MDX inline links.
+
+This is intentionally a static best-effort parser. Dynamic route construction, deeply nested route
+objects, runtime feature flags, CMS data, and links created by external packages require either
+explicit source literals or a future bounded build-output adapter before they can be treated as
+complete evidence.
+
 ### `auto`
 
 `auto` selects a supported adapter from the repository shape. It prefers vinext when App Router
@@ -220,19 +234,24 @@ Content Security Policy.
 
 The current layout is deterministic and organic:
 
-1. Routes are grouped into topic clusters such as core, services, industries, learn, resources,
-   tools, company, next steps, and policy.
-2. Each cluster has a stable anchor on a wide canvas.
-3. A stable hash-based jitter prevents grid-like placement while keeping refreshes repeatable.
-4. A collision-relaxation pass spreads nodes apart.
-5. Key pages stay labeled; secondary labels appear through hover, focus, and inspector behavior.
-6. Curved directed paths preserve arrows while reducing visual overlap.
-7. Menu, breadcrumb, and utility layers are visually quieter than contextual, related, and action
+1. Nodes are placed from graph topology, not source-folder or route-prefix buckets.
+2. Connected components are separated first, with the selected page or goal component treated as the
+   focus region.
+3. Hop distance from the focus/goal creates intuitive role bands such as focus, entry page, one
+   click away, two-click support, longer path, and disconnected in the current projection.
+4. Edge springs pull related pages together while menu and utility edges exert weaker visual force
+   than contextual, related, and action edges.
+5. Collision passes account for node radius and estimated label width so circles do not stack on top
+   of each other.
+6. Stable hash-based jitter prevents grid-like placement while keeping refreshes repeatable.
+7. Key pages stay labeled; secondary labels appear through hover, focus, and inspector behavior.
+8. Curved directed paths preserve arrows while reducing visual overlap.
+9. Menu, breadcrumb, and utility layers are visually quieter than contextual, related, and action
    layers.
 
-The map includes plain-language guidance: circles are pages, arrows are internal links, and nearby
-circles belong to the same part of the site. Exact route values remain available in inspector,
-tables, JSON, and CSV even when the visual label uses a human-readable name.
+The map includes plain-language guidance: circles are pages, arrows are internal links, and placement
+follows link relationships plus click distance from the focus page. Exact route values remain
+available in inspector, tables, JSON, and CSV even when the visual label uses a human-readable name.
 
 ## Human-readable names
 
