@@ -75,7 +75,8 @@ boho-analytics --config platform.toml serve
 
 The browser route is read-only: it cannot ingest a repository, run a build, compile a graph, or sync
 a provider. See [site graph architecture](docs/site-graph/architecture.md) for the provenance and
-projection model and [repository ingestion](docs/site-graph/ingestion.md) for adapter behavior.
+projection model, [site graph engine](docs/site-graph/engine.md) for the full engine behavior, and
+[repository ingestion](docs/site-graph/ingestion.md) for adapter behavior.
 
 Date-window end values are exclusive. Use `--days 30` for the last 30 complete local days. A browser
 request never triggers a provider sync.

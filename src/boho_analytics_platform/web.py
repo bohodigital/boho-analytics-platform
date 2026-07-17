@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import html
 import json
+import math
 from datetime import UTC, datetime, time, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -15,7 +17,7 @@ from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
-from .site_graph.dashboard import SiteGraphReportService
+from .site_graph.reporting import SiteGraphDisplayReportService
 from .site_graph.storage import SiteGraphStore
 
 
@@ -28,6 +30,8 @@ SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Cross-Origin-Resource-Policy": "same-origin",
 }
+
+SITE_GRAPH_LAYERS = ("contextual", "related", "action", "menu", "breadcrumb", "utility")
 
 
 METRIC_LABELS = {
@@ -121,10 +125,12 @@ BASE_CSS = """
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
-.graph-form{grid-template-columns:minmax(180px,1fr) minmax(220px,1.4fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.5;opacity:.75}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
+.graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
+.graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
+.graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.site-graph-svg{min-height:430px}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
 @media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
-@media(max-width:980px){.graph-form{grid-template-columns:1fr 1fr}.graph-form button{grid-column:span 2}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form{grid-template-columns:1fr}.filter-form button,.graph-form button{grid-column:auto}.tools-row,.footer{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
+@media(max-width:980px){.graph-form,.edge-tools{grid-template-columns:1fr 1fr}.graph-form button,.edge-tools button{grid-column:span 2}.graph-stage,.graph-view-grid{grid-template-columns:1fr}.graph-disclosure{grid-template-columns:1fr 1fr}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form,.edge-tools{grid-template-columns:1fr}.filter-form button,.graph-form button,.edge-tools button{grid-column:auto}.tools-row,.footer,.pager{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.graph-disclosure{grid-template-columns:1fr}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
 @media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}.live-state{max-width:100%;overflow-wrap:anywhere}}
 """
 
@@ -295,9 +301,143 @@ JS = r"""
     }
   }
 
+  function initSiteGraph() {
+    const stage = document.querySelector("[data-site-graph-stage]");
+    if (!stage) return;
+    const inspector = stage.querySelector("[data-graph-inspector]");
+    const svg = stage.querySelector(".site-graph-svg");
+    const nodes = Array.from(stage.querySelectorAll("[data-graph-node]"));
+    const edges = Array.from(stage.querySelectorAll("[data-graph-edge]"));
+    if (!inspector || !svg || (!nodes.length && !edges.length)) return;
+
+    function isPinned() {
+      return stage.dataset.graphPinned === "true";
+    }
+
+    function setInspector(title, lines, pinned) {
+      inspector.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      inspector.append(strong);
+      for (const line of lines) {
+        const p = document.createElement("p");
+        p.textContent = line;
+        inspector.append(p);
+      }
+      inspector.classList.toggle("is-pinned", Boolean(pinned));
+    }
+
+    function edgeTouchesRoute(edge, route) {
+      return edge.dataset.source === route || edge.dataset.destination === route;
+    }
+
+    function edgeConnects(edge, routeA, routeB) {
+      return (edge.dataset.source === routeA && edge.dataset.destination === routeB) ||
+        (edge.dataset.source === routeB && edge.dataset.destination === routeA);
+    }
+
+    function clearGraph() {
+      for (const node of nodes) node.classList.remove("is-active", "is-related", "is-dimmed");
+      for (const edge of edges) edge.classList.remove("is-active", "is-related", "is-dimmed");
+      stage.dataset.graphPinned = "false";
+      setInspector("No graph selection", [
+        "Focus or hover a node or edge to inspect it. Click to pin a selection; Escape or empty graph space clears it."
+      ], false);
+    }
+
+    function focusNode(node, pinned) {
+      const route = node.dataset.graphNodeRoute || "";
+      const name = node.dataset.graphNodeName || route || "Page";
+      for (const candidate of nodes) {
+        const candidateRoute = candidate.dataset.graphNodeRoute || "";
+        const active = candidate === node;
+        const related = !active && edges.some(edge => edgeConnects(edge, route, candidateRoute));
+        candidate.classList.toggle("is-active", active);
+        candidate.classList.toggle("is-related", related);
+        candidate.classList.toggle("is-dimmed", !active && !related);
+      }
+      for (const edge of edges) {
+        const related = edgeTouchesRoute(edge, route);
+        edge.classList.toggle("is-active", false);
+        edge.classList.toggle("is-related", related);
+        edge.classList.toggle("is-dimmed", !related);
+      }
+      stage.dataset.graphPinned = pinned ? "true" : "false";
+      setInspector(name, [
+        `Route: ${route || "unknown"}`,
+        `Goal distance: ${node.dataset.goalDistance || "unknown"}`,
+        `Authority: ${node.dataset.authority || "unknown"}`,
+        `${pinned ? "Pinned" : "Focused"} page; connected edges and neighbor pages are highlighted.`
+      ], pinned);
+    }
+
+    function focusEdge(edge, pinned) {
+      const source = edge.dataset.source || "";
+      const destination = edge.dataset.destination || "";
+      const sourceName = edge.dataset.sourceName || source;
+      const destinationName = edge.dataset.destinationName || destination;
+      for (const node of nodes) {
+        const route = node.dataset.graphNodeRoute || "";
+        const related = route === source || route === destination;
+        node.classList.toggle("is-active", false);
+        node.classList.toggle("is-related", related);
+        node.classList.toggle("is-dimmed", !related);
+      }
+      for (const candidate of edges) {
+        const active = candidate === edge;
+        const related = !active && (
+          edgeTouchesRoute(candidate, source) ||
+          edgeTouchesRoute(candidate, destination)
+        );
+        candidate.classList.toggle("is-active", active);
+        candidate.classList.toggle("is-related", related);
+        candidate.classList.toggle("is-dimmed", !active && !related);
+      }
+      stage.dataset.graphPinned = pinned ? "true" : "false";
+      setInspector(`${sourceName} -> ${destinationName}`, [
+        `Routes: ${source} -> ${destination}`,
+        `Layer: ${edge.dataset.layer || "unknown"}`,
+        `Occurrences: ${edge.dataset.occurrences || "1"}`,
+        `Anchor sample: ${edge.dataset.anchor || "unlabeled"}`,
+        `${pinned ? "Pinned" : "Focused"} edge; endpoints and adjacent edges are highlighted.`
+      ], pinned);
+    }
+
+    function bindInteractiveElement(element, focusFn) {
+      element.addEventListener("pointerenter", () => { if (!isPinned()) focusFn(element, false); });
+      element.addEventListener("focus", () => { if (!isPinned()) focusFn(element, false); });
+      element.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        focusFn(element, true);
+      });
+      element.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          focusFn(element, true);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          clearGraph();
+        }
+      });
+    }
+
+    for (const node of nodes) bindInteractiveElement(node, focusNode);
+    for (const edge of edges) bindInteractiveElement(edge, focusEdge);
+    stage.addEventListener("pointerleave", () => { if (!isPinned()) clearGraph(); });
+    stage.addEventListener("click", event => {
+      if (event.target === stage || event.target === svg) clearGraph();
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape" && stage.contains(document.activeElement)) clearGraph();
+    });
+    clearGraph();
+  }
+
   const source = document.querySelector('select[name="source"]');
   if (source) { updateMetricOptions(); source.addEventListener("change", updateMetricOptions); }
   loadChart();
+  initSiteGraph();
 })();
 """
 
@@ -525,80 +665,663 @@ def _metrics_table(result, site_names):
     return "".join(rows)
 
 
+def _site_graph_display_name(route: str) -> str:
+    if route == "/":
+        return "Home"
+    leaf = route.rstrip("/").rsplit("/", 1)[-1]
+    words = leaf.replace("-", " ").replace("_", " ").strip().split()
+    replacements = {
+        "seo": "SEO",
+        "b2b": "B2B",
+        "ai": "AI",
+        "api": "API",
+        "ga4": "GA4",
+        "d1": "D1",
+    }
+    return " ".join(replacements.get(word.casefold(), word.title()) for word in words) or route
+
+
+def _site_graph_cluster_key(route: str) -> tuple[int, str]:
+    first = _site_graph_section(route)
+    order = {
+        "home": 0,
+        "services": 1,
+        "industries": 2,
+        "learn": 3,
+        "resources": 4,
+        "tools": 5,
+        "company": 6,
+        "next": 7,
+        "policy": 8,
+    }
+    return order.get(first, 99), route
+
+
+def _site_graph_section(route: str) -> str:
+    if route == "/":
+        return "home"
+    first = route.strip("/").split("/", 1)[0]
+    if first in {"about"}:
+        return "company"
+    if first in {"contact", "emergency", "start"}:
+        return "next"
+    if first in {"accessibility", "privacy", "terms"}:
+        return "policy"
+    return first or "home"
+
+
+def _site_graph_stable_unit(value: str, salt: str) -> float:
+    digest = hashlib.blake2s(f"{salt}:{value}".encode("utf-8"), digest_size=4).hexdigest()
+    return int(digest, 16) / 0xFFFFFFFF
+
+
+def _site_graph_cluster_specs(width: int, height: int) -> dict[str, dict[str, float | str]]:
+    return {
+        "home": {"x": width * 0.48, "y": height * 0.47, "angle": -1.1, "spread": 68, "label": "Core"},
+        "services": {"x": width * 0.73, "y": height * 0.48, "angle": -0.08, "spread": 150, "label": "Services"},
+        "industries": {"x": width * 0.33, "y": height * 0.63, "angle": 2.34, "spread": 145, "label": "Industries"},
+        "learn": {"x": width * 0.58, "y": height * 0.25, "angle": -1.46, "spread": 132, "label": "Learn"},
+        "resources": {"x": width * 0.31, "y": height * 0.35, "angle": -2.72, "spread": 112, "label": "Resources"},
+        "tools": {"x": width * 0.49, "y": height * 0.78, "angle": 1.46, "spread": 108, "label": "Tools"},
+        "company": {"x": width * 0.18, "y": height * 0.52, "angle": 3.12, "spread": 84, "label": "Company"},
+        "next": {"x": width * 0.83, "y": height * 0.74, "angle": 0.83, "spread": 96, "label": "Next steps"},
+        "policy": {"x": width * 0.19, "y": height * 0.82, "angle": 2.15, "spread": 82, "label": "Policy"},
+    }
+
+
+def _site_graph_positions(nodes):
+    width = 1240
+    height = max(720, min(1040, 650 + len(nodes) * 11))
+    center_x = width / 2
+    center_y = height * 0.49
+    authority_values = [node.get("authority", 0) for node in nodes]
+    authority_min = min(authority_values, default=0)
+    authority_span = max(authority_values, default=0) - authority_min or 1
+    sections: dict[str, list[dict[str, object]]] = {}
+    for node in nodes:
+        sections.setdefault(_site_graph_section(str(node["route"])), []).append(node)
+    specs = _site_graph_cluster_specs(width, height)
+    positioned: dict[str, dict[str, float | int | bool]] = {}
+    for section, section_nodes in sections.items():
+        spec = specs.get(section, {"x": center_x, "y": center_y, "angle": 0.0, "spread": 120, "label": "Other"})
+        ordered = sorted(section_nodes, key=lambda item: _site_graph_cluster_key(str(item["route"])))
+        count = len(ordered)
+        angle_step = min(0.72, 2.65 / max(1, count))
+        for index, node in enumerate(ordered):
+            route = str(node["route"])
+            distance = int(node["goal_distance"])
+            ring = 0 if distance == 0 else 4 if distance < 0 else min(distance, 3)
+            authority_norm = (float(node.get("authority", 0)) - authority_min) / authority_span
+            route_parts = [part for part in route.strip("/").split("/") if part]
+            route_depth = max(0, len(route_parts) - 1)
+            jitter_x = (_site_graph_stable_unit(route, "x") - 0.5) * 72
+            jitter_y = (_site_graph_stable_unit(route, "y") - 0.5) * 58
+            angle = float(spec["angle"]) + (index - (count - 1) / 2) * angle_step
+            angle += (_site_graph_stable_unit(route, "angle") - 0.5) * 0.42
+            spread = float(spec["spread"]) + min(80, count * 5) + route_depth * 18 + ring * 24
+            anchor_x = float(spec["x"])
+            anchor_y = float(spec["y"])
+            if distance == 0 or node.get("selected"):
+                x = center_x + jitter_x * 0.38
+                y = center_y + jitter_y * 0.32
+                pinned = True
+            elif route == "/":
+                x = center_x - 130 + jitter_x * 0.2
+                y = center_y - 18 + jitter_y * 0.2
+                pinned = False
+            else:
+                orbit_x = spread * (0.78 + route_depth * 0.12)
+                orbit_y = spread * (0.52 + route_depth * 0.09)
+                x = anchor_x + math.cos(angle) * orbit_x + jitter_x
+                y = anchor_y + math.sin(angle) * orbit_y + jitter_y
+                if route_depth == 0 and ring <= 1:
+                    x = x * 0.72 + center_x * 0.28
+                    y = y * 0.72 + center_y * 0.28
+                if ring == 4:
+                    y = max(y, height * 0.83 + jitter_y * 0.4)
+                pinned = False
+            node_radius = 22 + authority_norm * 8 + (4 if distance == 0 else 0)
+            positioned[route] = {
+                "x": x,
+                "y": y,
+                "r": int(round(node_radius)),
+                "ring": ring,
+                "anchor_x": anchor_x,
+                "anchor_y": anchor_y,
+                "pinned": pinned,
+            }
+    margin = 54
+    for _ in range(72):
+        values = list(positioned.values())
+        for item in values:
+            if not item["pinned"]:
+                item["x"] = float(item["x"]) + (float(item["anchor_x"]) - float(item["x"])) * 0.006
+                item["y"] = float(item["y"]) + (float(item["anchor_y"]) - float(item["y"])) * 0.006
+        for index, left in enumerate(values):
+            for right in values[index + 1 :]:
+                dx = float(right["x"]) - float(left["x"])
+                dy = float(right["y"]) - float(left["y"])
+                distance = max(0.1, math.hypot(dx, dy))
+                minimum = int(left["r"]) + int(right["r"]) + 46
+                if distance >= minimum:
+                    continue
+                push = (minimum - distance) / distance
+                offset_x = dx * push * 0.5
+                offset_y = dy * push * 0.5
+                if left["pinned"] and right["pinned"]:
+                    continue
+                if left["pinned"]:
+                    right["x"] = float(right["x"]) + offset_x * 1.4
+                    right["y"] = float(right["y"]) + offset_y * 1.4
+                elif right["pinned"]:
+                    left["x"] = float(left["x"]) - offset_x * 1.4
+                    left["y"] = float(left["y"]) - offset_y * 1.4
+                else:
+                    left["x"] = float(left["x"]) - offset_x
+                    left["y"] = float(left["y"]) - offset_y
+                    right["x"] = float(right["x"]) + offset_x
+                    right["y"] = float(right["y"]) + offset_y
+        for item in values:
+            item["x"] = min(width - margin, max(margin, float(item["x"])))
+            item["y"] = min(height - margin, max(margin, float(item["y"])))
+    positions = {}
+    for route, item in positioned.items():
+        positions[route] = {
+            "x": int(round(float(item["x"]))),
+            "y": int(round(float(item["y"]))),
+            "r": int(item["r"]),
+            "depth": (float(item["y"]) - center_y) / max(1, height / 2),
+            "ring": int(item["ring"]),
+        }
+    cluster_labels = []
+    for section, section_nodes in sorted(sections.items(), key=lambda item: _site_graph_cluster_key("/" + item[0] + "/")):
+        spec = specs.get(section)
+        if not spec:
+            continue
+        cluster_labels.append(
+            {
+                "label": str(spec["label"]),
+                "count": len(section_nodes),
+                "x": int(round(float(spec["x"]))),
+                "y": int(round(max(36, float(spec["y"]) - float(spec["spread"]) * 0.62))),
+            }
+        )
+    return width, height, positions, cluster_labels
+
+
+def _site_graph_edge_path(source, destination, source_radius: int) -> str:
+    sx, sy = source["x"], source["y"]
+    dx, dy = destination["x"], destination["y"]
+    if sx == dx and sy == dy:
+        loop = source_radius + 28
+        return (
+            f"M {sx + source_radius} {sy - 3} "
+            f"C {sx + loop} {sy - loop} {sx + loop} {sy + loop} {sx + source_radius} {sy + 3}"
+        )
+    mid_x = (sx + dx) / 2
+    mid_y = (sy + dy) / 2
+    delta_x = dx - sx
+    delta_y = dy - sy
+    distance = max(1, math.hypot(delta_x, delta_y))
+    curve = min(70, max(24, distance * 0.12))
+    sign = -1 if (sx + sy + dx + dy) % 2 else 1
+    control_x = mid_x - sign * delta_y / distance * curve
+    control_y = mid_y + sign * delta_x / distance * curve * 0.62
+    return f"M {sx} {sy} Q {int(round(control_x))} {int(round(control_y))} {dx} {dy}"
+
+
 def _site_graph_svg(payload):
     nodes = payload["visualization"]["nodes"]
     edges = payload["visualization"]["edges"]
     if not nodes:
         return '<div class="empty-state">No pages match this bounded view.</div>'
-    columns = min(6, max(1, len(nodes)))
-    rows = (len(nodes) + columns - 1) // columns
-    width = 960
-    height = max(280, 120 + rows * 105)
-    positions = {}
-    for index, node in enumerate(nodes):
-        column = index % columns
-        row = index // columns
-        positions[node["route"]] = (
-            int((column + 0.5) * width / columns),
-            70 + row * 105,
-        )
+    width, height, positions, cluster_labels = _site_graph_positions(nodes)
     edge_html = []
-    for edge in edges:
-        source = positions.get(edge["source"])
-        destination = positions.get(edge["destination"])
+    edge_priority = {"menu": 0, "utility": 1, "breadcrumb": 2, "contextual": 3, "related": 4, "action": 5}
+    for edge in sorted(edges, key=lambda item: edge_priority.get(item["layer"], 9)):
+        source_route = edge["source"]
+        destination_route = edge["destination"]
+        layer = edge["layer"]
+        source = positions.get(source_route)
+        destination = positions.get(destination_route)
         if not source or not destination:
             continue
-        edge_html.append(
-            f'<line class="graph-edge {_e(edge["layer"])}" x1="{source[0]}" y1="{source[1]}" '
-            f'x2="{destination[0]}" y2="{destination[1]}" marker-end="url(#arrow)"><title>'
-            f'{_e(edge["source"])} to {_e(edge["destination"])}; {_e(edge["layer"])}; anchor {_e(edge["anchor"] or "unlabeled")}'
-            f'</title></line>'
+        source_name = edge.get("source_name") or _site_graph_display_name(source_route)
+        destination_name = edge.get("destination_name") or _site_graph_display_name(destination_route)
+        anchor = edge["anchor"] or "unlabeled"
+        occurrence_count = edge.get("occurrence_count", 1)
+        path = _site_graph_edge_path(source, destination, source["r"])
+        edge_label = (
+            f"Edge from {source_name} to {destination_name}; "
+            f"{layer} layer; {occurrence_count} occurrence(s); anchor {anchor}"
         )
+        edge_html.append(
+            f'<path class="graph-edge {_e(layer)}" d="{_e(path)}" marker-end="url(#arrow)" tabindex="0" role="button" '
+            f'aria-label="{_e(edge_label)}" data-graph-edge data-source="{_e(source_route)}" '
+            f'data-source-name="{_e(source_name)}" data-destination-name="{_e(destination_name)}" '
+            f'data-destination="{_e(destination_route)}" data-layer="{_e(layer)}" '
+            f'data-occurrences="{occurrence_count}" data-anchor="{_e(anchor)}"><title>'
+            f'{_e(source_name)} to {_e(destination_name)}; {_e(layer)}; '
+            f'{occurrence_count} occurrence(s); anchor {_e(anchor)}'
+            f'</title></path>'
+        )
+    key_routes = {
+        str(node["route"])
+        for node in sorted(nodes, key=lambda item: float(item.get("authority", 0)), reverse=True)[:8]
+    }
     node_html = []
-    for node in nodes:
-        x, y = positions[node["route"]]
+    for node in sorted(nodes, key=lambda item: positions[str(item["route"])]["depth"]):
+        route = node["route"]
+        x, y, radius = positions[route]["x"], positions[route]["y"], positions[route]["r"]
         distance = node["goal_distance"]
         state = "selected" if node["selected"] else "goal" if distance == 0 else "unreachable" if distance < 0 else ""
-        label = node["route"] if len(node["route"]) <= 24 else node["route"][:21] + "..."
+        pretty_name = node.get("pretty_name") or _site_graph_display_name(route)
+        label = pretty_name if len(pretty_name) <= 28 else pretty_name[:25] + "..."
         distance_label = "goal" if distance == 0 else "unreachable" if distance < 0 else f"{distance} hop"
+        node_label = f'Page {pretty_name}; route {route}; {distance_label}; authority {node["authority"]:.4f}'
+        depth_class = "depth-front" if positions[route]["depth"] > 0 else "depth-back"
+        key_class = "is-key" if route in key_routes or distance in (0, 1) or node["selected"] else ""
         node_html.append(
-            f'<g><circle class="graph-node {state}" cx="{x}" cy="{y}" r="27"><title>'
-            f'{_e(node["route"])}; {distance_label}; authority {node["authority"]:.4f}'
-            f'</title></circle><text class="graph-label" x="{x}" y="{y + 45}">{_e(label)}</text></g>'
+            f'<g class="graph-node-group {state} {key_class}" tabindex="0" role="button" aria-label="{_e(node_label)}" '
+            f'data-graph-node data-graph-node-route="{_e(route)}" '
+            f'data-graph-node-name="{_e(pretty_name)}" '
+            f'data-goal-distance="{_e(distance_label)}" data-authority="{node["authority"]:.4f}">'
+            f'<ellipse class="graph-node-shadow" cx="{x}" cy="{y + radius + 7}" rx="{radius + 9}" ry="8"></ellipse>'
+            f'<circle class="graph-node {state} {depth_class}" cx="{x}" cy="{y}" r="{radius}"><title>'
+            f'{_e(pretty_name)}; route {_e(route)}; {distance_label}; authority {node["authority"]:.4f}'
+            f'</title></circle><text class="graph-label" x="{x}" y="{y + radius + 19}">'
+            f'<tspan class="graph-label-title" x="{x}">{_e(label)}</tspan></text></g>'
         )
+    plane = (
+        f'<ellipse class="graph-depth-plane" cx="{width // 2}" cy="{int(height * .52)}" '
+        f'rx="{int(width * .42)}" ry="{int(height * .28)}"></ellipse>'
+    )
+    cluster_html = "".join(
+        f'<text class="graph-cluster-label" x="{label["x"]}" y="{label["y"]}">'
+        f'{_e(label["label"])} · {label["count"]}</text>'
+        for label in cluster_labels
+    )
     return (
-        f'<div class="graph-stage"><svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
+        '<div class="graph-stage" data-site-graph-stage><div class="graph-map">'
+        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and nearby circles belong to the same part of the site.</p>'
+        f'<svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
         'aria-labelledby="graph-title graph-description"><title id="graph-title">Site Graph structural overview</title>'
-        '<desc id="graph-description">A bounded structural map of pages and selected internal link layers. '
-        'An equivalent table follows the graphic.</desc><defs><marker id="arrow" markerWidth="8" markerHeight="8" '
-        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker></defs>'
-        + "".join(edge_html) + "".join(node_html) + '</svg></div>'
+        f'<desc id="graph-description">An organic topic-cluster map of pages and '
+        f'aggregated internal-link relationships in the selected layers. An equivalent table follows the graphic.</desc>'
+        '<defs><marker id="arrow" markerWidth="8" markerHeight="8" '
+        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker>'
+        '<filter id="node-lift" x="-35%" y="-35%" width="170%" height="170%"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#17201d" flood-opacity=".18"></feDropShadow></filter></defs>'
+        + plane + cluster_html + "".join(edge_html) + "".join(node_html) + '</svg></div>'
+        '<aside class="graph-inspector" data-graph-inspector aria-live="polite"></aside></div>'
     )
 
 
 def _site_graph_table(payload):
     rows = "".join(
-        f'<tr><td><a href="{_e("/site-graph?" + urlencode({"site": payload["site"]["key"], "page": node["route"]}))}">{_e(node["route"])}</a></td>'
+        f'<tr><td class="edge-identity"><a href="{_e("/site-graph?" + urlencode({"site": payload["site"]["key"], "page": node["route"]}))}">{_e(node.get("pretty_name") or _site_graph_display_name(node["route"]))}</a><br>{_e(node["route"])}</td>'
         f'<td>{"Goal" if node["goal_distance"] == 0 else "Unreachable" if node["goal_distance"] < 0 else str(node["goal_distance"])}</td>'
         f'<td>{node["authority"]:.4f}</td><td>{"Selected" if node["selected"] else ""}</td></tr>'
         for node in payload["visualization"]["nodes"]
     )
     edge_rows = "".join(
-        f'<tr><td>{_e(edge["source"])}</td><td>{_e(edge["destination"])}</td><td>{_e(edge["layer"])}</td><td>{_e(edge["anchor"] or "Unlabeled")}</td></tr>'
+        f'<tr><td>{_e(edge["source"])}</td><td>{_e(edge["destination"])}</td><td>{_e(edge["layer"])}</td>'
+        f'<td>{edge.get("occurrence_count", 1)}</td><td>{_e(edge["anchor"] or "Unlabeled")}</td></tr>'
         for edge in payload["visualization"]["edges"]
     )
     return (
         '<details class="chart-fallback" open><summary>Graph nodes and edges</summary>'
         '<div class="table-scroll"><table><caption class="sr-only">Bounded graph nodes</caption><thead><tr><th>Page</th><th>Goal distance</th><th>Authority</th><th>State</th></tr></thead><tbody>'
         + (rows or '<tr><td colspan="4">No nodes.</td></tr>') + '</tbody></table></div>'
-        '<div class="table-scroll"><table><caption class="sr-only">Bounded graph edges</caption><thead><tr><th>Source</th><th>Destination</th><th>Layer</th><th>Anchor</th></tr></thead><tbody>'
-        + (edge_rows or '<tr><td colspan="4">No edges in this view.</td></tr>') + '</tbody></table></div></details>'
+        '<div class="table-scroll"><table><caption class="sr-only">Displayed graph edges</caption><thead><tr><th>Source</th><th>Destination</th><th>Layer</th><th>Occurrences</th><th>Anchor sample</th></tr></thead><tbody>'
+        + (edge_rows or '<tr><td colspan="5">No edges in this view.</td></tr>') + '</tbody></table></div></details>'
+    )
+
+
+def _site_graph_url(payload, **changes):
+    params = {
+        "site": payload["site"]["key"],
+        "layer": payload["selected_layers"],
+        "graph": payload["display"]["requested_graph_mode"],
+        "page": payload["neighborhood"]["selected_page"],
+        "edge_query": payload["edge_table"]["query"],
+        "edge_sort": payload["edge_table"]["sort"],
+        "edge_order": payload["edge_table"]["order"],
+        "edge_page": payload["edge_table"]["page"],
+    }
+    params.update(changes)
+    params = {key: value for key, value in params.items() if value is not None and value != ""}
+    return "/site-graph?" + urlencode(params, doseq=True)
+
+
+def _site_graph_disclosure(payload):
+    display = payload["display"]
+    unresolved = display["unresolved_relationships"]
+    selected_page = display["filters"]["selected_page"] or "none"
+    edge_query = display["filters"]["edge_query"] or "none"
+    reasons = "".join(f"<li>{_e(reason)}</li>" for reason in display["truncation_reasons"])
+    layer_accounting = ", ".join(
+        f"{layer} {payload['layer_counts'].get(layer, 0)}" for layer in SITE_GRAPH_LAYERS
+    )
+    actions = []
+    if display["full_graph_available"] and display["graph_mode"] != "full":
+        actions.append(f'<a href="{_e(_site_graph_url(payload, graph="full"))}">Show safe full graph</a>')
+    if display["graph_mode"] == "full":
+        actions.append(f'<a href="{_e(_site_graph_url(payload, graph="bounded"))}">Use bounded graph</a>')
+    if tuple(payload["selected_layers"]) != SITE_GRAPH_LAYERS:
+        actions.append(
+            f'<a href="{_e(_site_graph_url(payload, layer=SITE_GRAPH_LAYERS, edge_page=1))}">Account for all internal layers</a>'
+        )
+    csv_params = {
+        "site": payload["site"]["key"],
+        "layer": payload["selected_layers"],
+        "edge_query": payload["edge_table"]["query"],
+        "edge_sort": payload["edge_table"]["sort"],
+        "edge_order": payload["edge_table"]["order"],
+    }
+    actions.append(
+        f'<a href="{_e("/api/v1/site-graph.csv?" + urlencode(csv_params, doseq=True))}">Export complete edge CSV</a>'
+    )
+    return (
+        '<div class="graph-disclosure" aria-label="Graph completeness disclosure">'
+        f'<p><strong>{display["displayed_nodes"]} displayed of {display["total_nodes"]} total nodes</strong>'
+        f'Node threshold: {display["thresholds"]["nodes"]}</p>'
+        f'<p><strong>{display["displayed_unique_edges"]} displayed of {display["total_unique_edges"]} total unique edges</strong>'
+        f'{display["represented_occurrences"]} represented of {display["total_occurrences"]} total link occurrences</p>'
+        f'<p><strong>{unresolved} unresolved relationship{"s" if unresolved != 1 else ""}</strong>'
+        'Not drawn as resolved page-to-page edges</p>'
+        f'<p><strong>Truncation occurred:</strong> {"Yes" if display["truncated"] else "No"}<br>'
+        f'Mode: {_e(display["graph_mode"])}; aggregation: source-destination-layer</p>'
+        f'<p><strong>Active projection and filters</strong>Projection: {_e(display["projection"])}; '
+        f'layers: {_e(", ".join(display["layers"]))}; neighborhood: {_e(selected_page)}; '
+        f'edge-table query: {_e(edge_query)}</p>'
+        f'<p><strong>{payload["coverage"]["link_occurrences"]} stored internal link occurrences across all layers</strong>'
+        f'Current selected layers account for {display["total_occurrences"]}; layer totals: '
+        f'{_e(layer_accounting)}</p>'
+        + (f'<ul class="graph-reasons">{reasons}</ul>' if reasons else '')
+        + '</div><div class="graph-actions">' + ''.join(actions) + '</div>'
+    )
+
+
+def _complete_site_graph_edge_table(payload):
+    edge_table = payload["edge_table"]
+    rows = []
+    for row in edge_table["rows"]:
+        evidence = row["evidence"]
+        evidence_label = "; ".join(
+            item for item in (
+                evidence["anchor_sample"] and f'anchor: {evidence["anchor_sample"]}',
+                evidence["landmark_sample"] and f'landmark: {evidence["landmark_sample"]}',
+                evidence["source"] and f'source: {evidence["source"]}',
+                evidence["classification"] and f'classification: {evidence["classification"]}',
+            ) if item
+        ) or "No descriptive sample"
+        rows.append(
+            f'<tr><td class="edge-identity"><strong>{_e(row["source"]["pretty_name"])}</strong><br>{_e(row["source"]["route"])}</td>'
+            f'<td class="edge-identity"><strong>{_e(row["destination"]["pretty_name"])}</strong><br>{_e(row["destination"]["route"])}</td>'
+            f'<td><span class="source-chip">{_e(row["layer"])}</span></td><td>{row["occurrence_count"]}</td>'
+            f'<td class="edge-evidence">{_e(evidence_label)}; confidence {evidence["confidence_min"]}-{evidence["confidence_max"]}</td></tr>'
+        )
+    hidden = (
+        f'<input type="hidden" name="site" value="{_e(payload["site"]["key"])}">'
+        + ''.join(f'<input type="hidden" name="layer" value="{_e(layer)}">' for layer in payload["selected_layers"])
+        + (f'<input type="hidden" name="page" value="{_e(payload["neighborhood"]["selected_page"])}">' if payload["neighborhood"]["selected_page"] else '')
+        + f'<input type="hidden" name="graph" value="{_e(payload["display"]["requested_graph_mode"])}">'
+    )
+    sort_options = "".join(
+        f'<option value="{value}"{" selected" if edge_table["sort"] == value else ""}>{label}</option>'
+        for value, label in (("source", "Source"), ("destination", "Destination"), ("layer", "Layer"), ("occurrences", "Occurrences"))
+    )
+    order_options = "".join(
+        f'<option value="{value}"{" selected" if edge_table["order"] == value else ""}>{label}</option>'
+        for value, label in (("asc", "Ascending"), ("desc", "Descending"))
+    )
+    previous_link = (
+        f'<a href="{_e(_site_graph_url(payload, edge_page=edge_table["page"] - 1))}">Previous page</a>'
+        if edge_table["page"] > 1 else '<span>Previous page</span>'
+    )
+    next_link = (
+        f'<a href="{_e(_site_graph_url(payload, edge_page=edge_table["page"] + 1))}">Next page</a>'
+        if edge_table["page"] < edge_table["page_count"] else '<span>Next page</span>'
+    )
+    source_sort_order = "desc" if edge_table["sort"] == "source" and edge_table["order"] == "asc" else "asc"
+    return (
+        '<section class="panel table-panel edge-table-panel">'
+        '<div class="panel-heading"><div><h2>Complete selected-projection edge table</h2>'
+        f'<p>{edge_table["displayed_rows"]} of {edge_table["filtered_unique_edges"]} unique edges on this page; '
+        f'{edge_table["total_unique_edges"]} before table filtering. '
+        f'<a href="{_e(_site_graph_url(payload, edge_sort="source", edge_order=source_sort_order, edge_page=1))}">Sort by source</a>. '
+        'Pretty names are derived from canonical routes because the current page-fact contract does not store page titles.</p></div></div>'
+        '<form class="edge-tools" method="get" action="/site-graph">' + hidden
+        + f'<label class="field"><span>Filter complete edge table</span><input name="edge_query" value="{_e(edge_table["query"])}" placeholder="Route or layer"></label>'
+        f'<label class="field"><span>Sort</span><select name="edge_sort">{sort_options}</select></label>'
+        f'<label class="field"><span>Order</span><select name="edge_order">{order_options}</select></label>'
+        '<button type="submit">Apply table filters</button></form>'
+        '<div class="table-scroll"><table><thead><tr><th>Source page</th><th>Destination page</th><th>Layer</th><th>Occurrences</th><th>Sanitized evidence</th></tr></thead><tbody>'
+        + (''.join(rows) or '<tr><td colspan="5">No resolved unique edges match this table filter.</td></tr>')
+        + f'</tbody></table></div><div class="pager">{previous_link}<span>Page {edge_table["page"]} of {edge_table["page_count"]}</span>{next_link}</div></section>'
+    )
+
+
+def _site_graph_distance_label(distance):
+    if distance == 0:
+        return "Goal"
+    if distance < 0:
+        return "Unreachable"
+    return str(distance)
+
+
+def _site_graph_page_table(payload):
+    nodes = sorted(payload["visualization"]["nodes"], key=lambda item: item["route"])
+    inbound = {}
+    outbound = {}
+    for row in payload["edge_table"]["rows"]:
+        source = row["source"]["route"]
+        destination = row["destination"]["route"]
+        count = row["occurrence_count"]
+        outbound[source] = outbound.get(source, 0) + count
+        inbound[destination] = inbound.get(destination, 0) + count
+    display = payload["display"]
+    edge_table = payload["edge_table"]
+    table_title = "Complete page table" if len(nodes) == display["total_nodes"] else "Displayed page table"
+    rows = "".join(
+        f'<tr><td class="edge-identity"><a href="{_e(_site_graph_url(payload, page=node["route"], edge_page=1))}">{_e(node.get("pretty_name") or _site_graph_display_name(node["route"]))}</a><br>{_e(node["route"])}</td>'
+        f'<td>{_e(_site_graph_distance_label(node["goal_distance"]))}</td><td>{node["authority"]:.4f}</td>'
+        f'<td>{outbound.get(node["route"], 0)}</td><td>{inbound.get(node["route"], 0)}</td>'
+        f'<td>{"Selected" if node["selected"] else ""}</td></tr>'
+        for node in nodes
+    )
+    return (
+        '<section id="site-graph-pages" class="panel table-panel">'
+        f'<div class="panel-heading"><div><h2>{table_title}</h2>'
+        f'<p>{len(nodes)} of {display["total_nodes"]} pages represented. Inbound/outbound counts below are computed from '
+        f'{edge_table["displayed_rows"]} of {edge_table["filtered_unique_edges"]} selected-projection table rows loaded in this response.</p></div></div>'
+        '<div class="table-scroll"><table><thead><tr><th>Page</th><th>Goal distance</th><th>Authority</th><th>Outgoing occurrences</th><th>Incoming occurrences</th><th>State</th></tr></thead><tbody>'
+        + (rows or '<tr><td colspan="6">No pages match this view.</td></tr>')
+        + '</tbody></table></div></section>'
+    )
+
+
+def _site_graph_matrix_panel(payload):
+    routes = sorted({node["route"] for node in payload["visualization"]["nodes"]})
+    route_limit = 32
+    matrix_routes = routes[:route_limit]
+    route_index = {route: index + 1 for index, route in enumerate(matrix_routes)}
+    counts = {}
+    for row in payload["edge_table"]["rows"]:
+        source = row["source"]["route"]
+        destination = row["destination"]["route"]
+        if source in route_index and destination in route_index:
+            counts[(source, destination)] = counts.get((source, destination), 0) + row["occurrence_count"]
+    header = "".join(f'<th><abbr title="{_e(route)}">{route_index[route]}</abbr></th>' for route in matrix_routes)
+    body_rows = []
+    for source in matrix_routes:
+        cells = []
+        for destination in matrix_routes:
+            value = counts.get((source, destination), 0)
+            cells.append(f'<td class="matrix-hit">{value}</td>' if value else '<td>0</td>')
+        body_rows.append(
+            f'<tr><th scope="row"><abbr title="{_e(source)}">{route_index[source]}</abbr></th>{"".join(cells)}</tr>'
+        )
+    legend = "".join(f'<span><strong>{route_index[route]}</strong> {_e(route)}</span>' for route in matrix_routes)
+    truncation_note = (
+        f" Matrix route list is capped at {route_limit} displayed routes for readability."
+        if len(routes) > route_limit else ""
+    )
+    return (
+        '<section id="site-graph-matrix" class="panel section-panel"><div class="panel-heading"><div><h2>Adjacency matrix</h2>'
+        f'<p>Matrix uses {len(matrix_routes)} displayed routes and {payload["edge_table"]["displayed_rows"]} loaded edge-table rows.'
+        f'{_e(truncation_note)}</p></div></div><div class="matrix-scroll"><table class="matrix-table"><thead><tr><th>From / to</th>{header}</tr></thead><tbody>'
+        + ("".join(body_rows) or '<tr><td>No matrix entries.</td></tr>')
+        + f'</tbody></table></div><div class="graph-meta">{legend}</div></section>'
+    )
+
+
+def _site_graph_evidence_panel(payload):
+    classification_counts = {}
+    source_counts = {}
+    selected_layer_counts = {}
+    for row in payload["edge_table"]["rows"]:
+        evidence = row["evidence"]
+        classification = evidence["classification"] or "unknown"
+        evidence_source = evidence["source"] or "unknown"
+        classification_counts[classification] = classification_counts.get(classification, 0) + row["occurrence_count"]
+        source_counts[evidence_source] = source_counts.get(evidence_source, 0) + row["occurrence_count"]
+        selected_layer_counts[row["layer"]] = selected_layer_counts.get(row["layer"], 0) + row["occurrence_count"]
+
+    def rows_for(counts):
+        return "".join(
+            f'<tr><td>{_e(label)}</td><td>{count}</td></tr>'
+            for label, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        ) or '<tr><td colspan="2">No evidence rows in this selected projection.</td></tr>'
+
+    return (
+        '<section id="site-graph-evidence" class="panel table-panel"><div class="panel-heading"><div><h2>Evidence rollup</h2>'
+        f'<p>{payload["edge_table"]["displayed_rows"]} loaded selected-projection rows; sanitized anchors, landmarks, sources, confidence bands, and classifications are in the edge table.</p></div></div>'
+        '<div class="table-scroll"><table><thead><tr><th>Selected layer</th><th>Occurrences</th></tr></thead><tbody>'
+        + rows_for(selected_layer_counts)
+        + '</tbody></table></div><div class="table-scroll"><table><thead><tr><th>Evidence classification</th><th>Occurrences</th></tr></thead><tbody>'
+        + rows_for(classification_counts)
+        + '</tbody></table></div><div class="table-scroll"><table><thead><tr><th>Evidence source</th><th>Occurrences</th></tr></thead><tbody>'
+        + rows_for(source_counts)
+        + '</tbody></table></div></section>'
+    )
+
+
+def _site_graph_resilience_panel(payload):
+    overview = payload["overview"]
+    cards = (
+        ("Components", overview["components"], "Strongly connected structural groups"),
+        ("Orphans", overview["orphans"], "Pages without structural inbound evidence"),
+        ("Traps", overview["traps"], "Pages with no non-menu outbound route in this projection"),
+        ("Bottlenecks", overview["bottlenecks"], "Pages whose removal increases structural fragmentation"),
+        ("Contextual dead ends", overview["contextual_dead_ends"], "Contextual projection pages with no continuation"),
+        ("Menu-dependent", overview["menu_dependent_pages"], "Pages reachable only through menu layers"),
+    )
+    card_html = "".join(
+        f'<article class="health-item"><b>{_e(label)}</b><span class="pipeline-value">{value}</span><span>{_e(note)}</span></article>'
+        for label, value, note in cards
+    )
+    return (
+        '<section id="site-graph-resilience" class="panel section-panel"><div class="panel-heading"><div><h2>Resilience view</h2>'
+        '<p>Structural failure-mode indicators from the compiled graph snapshot.</p></div></div>'
+        f'<div class="health-grid">{card_html}</div></section>'
+    )
+
+
+def _site_graph_entry_goal_panel(payload):
+    nodes = sorted(
+        payload["visualization"]["nodes"],
+        key=lambda node: (999 if node["goal_distance"] < 0 else node["goal_distance"], -node["authority"], node["route"]),
+    )
+    rows = "".join(
+        f'<tr><td class="edge-identity"><strong>{_e(node.get("pretty_name") or _site_graph_display_name(node["route"]))}</strong><br>{_e(node["route"])}</td><td>{_e(_site_graph_distance_label(node["goal_distance"]))}</td>'
+        f'<td>{node["authority"]:.4f}</td><td>{"Selected neighborhood" if node["selected"] else "Structural route"}</td></tr>'
+        for node in nodes
+    )
+    return (
+        '<section id="site-graph-entry-goal" class="panel table-panel"><div class="panel-heading"><div><h2>Entry-to-goal structural view</h2>'
+        '<p>Goal distance uses structural link paths to configured goal pages. This does not claim visitor-entry behavior.</p></div></div>'
+        '<div class="distance-grid">'
+        + "".join(
+            f'<div class="distance-item"><b>{payload["goal_distance_buckets"][key]}</b><span>{_e(key.title())}</span></div>'
+            for key in ("goal", "1", "2", "3", "4+", "menu-only", "unreachable")
+        )
+        + '</div><div class="table-scroll"><table><thead><tr><th>Page</th><th>Goal distance</th><th>Authority</th><th>Mode</th></tr></thead><tbody>'
+        + (rows or '<tr><td colspan="4">No pages available.</td></tr>')
+        + '</tbody></table></div></section>'
+    )
+
+
+def _site_graph_snapshot_panel(payload):
+    snapshot = payload["snapshot"]
+    display = payload["display"]
+    diff = payload.get("snapshot_diff") or {}
+    rows = (
+        ("Current snapshot", snapshot["id"]),
+        ("Captured", snapshot["captured_at"]),
+        ("Repository state", "clean" if snapshot["clean"] else "dirty override"),
+        ("Stored contextual snapshots", snapshot["count"]),
+        ("Analyzed revision", payload["revision"]),
+        ("Manifest hash", payload["manifest_hash"]),
+        ("Displayed nodes", f'{display["displayed_nodes"]} of {display["total_nodes"]}'),
+        ("Displayed unique edges", f'{display["displayed_unique_edges"]} of {display["total_unique_edges"]}'),
+        ("Represented occurrences", f'{display["represented_occurrences"]} of {display["total_occurrences"]}'),
+    )
+    body = "".join(f'<tr><th>{_e(label)}</th><td>{_e(value)}</td></tr>' for label, value in rows)
+    if diff.get("available"):
+        current = diff["current"]
+        previous = diff["previous"]
+        pages = diff["pages"]
+        edges = diff["edges"]
+        sample_rows = []
+        for label, sample in (("Added edge", edges["added_sample"]), ("Removed edge", edges["removed_sample"])):
+            for edge in sample:
+                sample_rows.append(
+                    f'<tr><td>{_e(label)}</td><td>{_e(edge["source"])}</td><td>{_e(edge["destination"])}</td><td>{_e(edge["layer"])}</td></tr>'
+                )
+        for label, sample in (("Added page", pages["added_sample"]), ("Removed page", pages["removed_sample"])):
+            for route in sample:
+                sample_rows.append(f'<tr><td>{_e(label)}</td><td colspan="3">{_e(route)}</td></tr>')
+        diff_body = (
+            f'<p class="view-note">Comparing current revision {_e(current["revision"])} to previous distinct revision '
+            f'{_e(previous["revision"])}. Edge diff is capped at {diff["limit"]} edges; '
+            f'limited: {"yes" if diff.get("limited") else "no"}.</p>'
+            '<div class="distance-grid">'
+            f'<div class="distance-item"><b>{pages["added"]}</b><span>Pages added</span></div>'
+            f'<div class="distance-item"><b>{pages["removed"]}</b><span>Pages removed</span></div>'
+            f'<div class="distance-item"><b>{pages["unchanged"]}</b><span>Pages unchanged</span></div>'
+            f'<div class="distance-item"><b>{edges["added"]}</b><span>Edges added</span></div>'
+            f'<div class="distance-item"><b>{edges["removed"]}</b><span>Edges removed</span></div>'
+            f'<div class="distance-item"><b>{edges["unchanged"]}</b><span>Edges unchanged</span></div>'
+            '</div><div class="table-scroll"><table><thead><tr><th>Change</th><th>Source/page</th><th>Destination</th><th>Layer</th></tr></thead><tbody>'
+            + ("".join(sample_rows) or '<tr><td colspan="4">No page or edge identity changes in the displayed samples.</td></tr>')
+            + '</tbody></table></div>'
+        )
+    else:
+        diff_body = f'<p class="view-note">Snapshot diff unavailable: {_e(diff.get("reason", "No previous snapshot comparison is available."))}</p>'
+    return (
+        '<section id="site-graph-snapshot" class="panel table-panel"><div class="panel-heading"><div><h2>Snapshot diff</h2>'
+        '<p>Current snapshot, display counts, and previous-snapshot identity changes when a distinct prior snapshot exists.</p></div></div>'
+        f'<div class="table-scroll"><table><tbody>{body}</tbody></table></div>{diff_body}</section>'
+    )
+
+
+def _site_graph_analysis_panels(payload):
+    return (
+        _site_graph_page_table(payload)
+        + '<div class="graph-view-grid">'
+        + _site_graph_matrix_panel(payload)
+        + _site_graph_resilience_panel(payload)
+        + _site_graph_entry_goal_panel(payload)
+        + _site_graph_snapshot_panel(payload)
+        + '</div>'
+        + _site_graph_evidence_panel(payload)
     )
 
 
 def handler_factory(config, store, credentials=None):
     reports = ReportService(config, store)
-    graph_reports = SiteGraphReportService(SiteGraphStore(store.path))
+    graph_reports = SiteGraphDisplayReportService(SiteGraphStore(store.path))
     credential_provider = credentials or ReferenceCredentialProvider()
     password = None
     if config.web.auth_mode == "basic":
@@ -643,6 +1366,16 @@ def handler_factory(config, store, credentials=None):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _send_chunks(self, status, content_type, first_chunk, chunks, extra_headers=None):
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(first_chunk.encode("utf-8"))
+            for chunk in chunks:
+                self.wfile.write(chunk.encode("utf-8"))
+
         def do_GET(self):
             if not self._allowed():
                 return
@@ -660,31 +1393,63 @@ def handler_factory(config, store, credentials=None):
                     return self._site_graph(parse_qs(parsed.query))
                 if parsed.path == "/api/v1/site-graph":
                     return self._site_graph_api(parse_qs(parsed.query))
+                if parsed.path == "/api/v1/site-graph.csv":
+                    return self._site_graph_csv(parse_qs(parsed.query))
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
                     return self._api(parsed.path, parse_qs(parsed.query))
                 self.send_error(404)
             except (ValueError, KeyError):
-                message = "invalid site graph request" if parsed.path in {"/site-graph", "/api/v1/site-graph"} else "invalid report request"
+                message = "invalid site graph request" if parsed.path in {
+                    "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
+                } else "invalid report request"
                 self._send(400, "application/json", json.dumps({"error": message}, sort_keys=True))
 
         @staticmethod
         def _graph_layers(query):
             layers = tuple(query.get("layer", []))
+            if "all" in layers:
+                return SITE_GRAPH_LAYERS
             return layers or ("contextual", "related", "action")
 
         def _site_graph_payload(self, query):
             site_key = query.get("site", [None])[0]
             selected_page = query.get("page", [None])[0]
+            try:
+                edge_page = int(query.get("edge_page", ["1"])[0])
+            except (TypeError, ValueError) as error:
+                raise ValueError("invalid edge page") from error
             return graph_reports.summary(
                 site_key=site_key,
                 selected_page=selected_page,
                 layers=self._graph_layers(query),
+                graph_mode=query.get("graph", ["auto"])[0],
+                edge_query=query.get("edge_query", [""])[0],
+                edge_sort=query.get("edge_sort", ["source"])[0],
+                edge_order=query.get("edge_order", ["asc"])[0],
+                edge_page=edge_page,
             )
 
         def _site_graph_api(self, query):
             return self._send(200, "application/json", json.dumps(self._site_graph_payload(query), sort_keys=True))
+
+        def _site_graph_csv(self, query):
+            chunks = graph_reports.iter_edge_csv(
+                site_key=query.get("site", [None])[0],
+                layers=self._graph_layers(query),
+                edge_query=query.get("edge_query", [""])[0],
+                edge_sort=query.get("edge_sort", ["source"])[0],
+                edge_order=query.get("edge_order", ["asc"])[0],
+            )
+            first_chunk = next(chunks)
+            return self._send_chunks(
+                200,
+                "text/csv; charset=utf-8",
+                first_chunk,
+                chunks,
+                {"Content-Disposition": 'attachment; filename="site-graph-edges.csv"'},
+            )
 
         def _site_graph(self, query):
             payload = self._site_graph_payload(query)
@@ -697,7 +1462,7 @@ def handler_factory(config, store, credentials=None):
 <title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a>{site_links}</div>
-<section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p></section></main></body></html>"""
+<section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
                 return self._send(200, "text/html; charset=utf-8", page)
 
             site_options = "".join(
@@ -706,16 +1471,17 @@ def handler_factory(config, store, credentials=None):
             )
             selected_page = payload["neighborhood"]["selected_page"] or ""
             selected_layers = set(payload["selected_layers"])
+            requested_graph_mode = payload["display"]["requested_graph_mode"]
             layer_controls = "".join(
                 f'<label><input type="checkbox" name="layer" value="{layer}"{" checked" if layer in selected_layers else ""}>{layer.title()}</label>'
-                for layer in ("contextual", "related", "action", "menu", "breadcrumb", "utility")
+                for layer in SITE_GRAPH_LAYERS
             )
             overview = payload["overview"]
             cards = (
-                ("Pages", payload["coverage"]["pages"], "Repository pages with immutable facts"),
-                ("Selected edges", overview["projection_edges"], "Distinct link occurrences in selected layers"),
-                ("Menu dependence", overview["menu_dependent_pages"], "Pages without structural routes in the contextual projection"),
-                ("Dead ends", overview["contextual_dead_ends"], "Non-goal pages with no contextual route onward"),
+                ("Pages", payload["display"]["total_nodes"], "Complete repository page facts"),
+                ("Unique edges", payload["display"]["total_unique_edges"], "Aggregated by source, destination, and layer"),
+                ("Link occurrences", payload["display"]["total_occurrences"], "Selected internal crawlable relationship facts"),
+                ("Unresolved", payload["display"]["unresolved_relationships"], "Unique selected relationships without a known destination page"),
             )
             cards_html = "".join(
                 f'<article class="kpi-card"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span></div><strong class="kpi-value">{value}</strong><p class="kpi-note">{_e(note)}</p></article>'
@@ -735,19 +1501,35 @@ def handler_factory(config, store, credentials=None):
             ) or '<tr><td colspan="3">No structural findings in this projection.</td></tr>'
             revision = payload["revision"][:12]
             graph_table = _site_graph_table(payload)
+            graph_disclosure = _site_graph_disclosure(payload)
+            complete_edge_table = _complete_site_graph_edge_table(payload)
+            analysis_panels = _site_graph_analysis_panels(payload)
+            view_links = (
+                '<nav class="quick-links" aria-label="Site Graph analysis views">'
+                '<a href="#site-graph-pages">Pages</a><a href="#site-graph-matrix">Matrix</a>'
+                '<a href="#site-graph-resilience">Resilience</a><a href="#site-graph-entry-goal">Entry-to-goal</a>'
+                '<a href="#site-graph-snapshot">Snapshot</a><a href="#site-graph-evidence">Evidence</a></nav>'
+            )
+            graph_mode_options = "".join(
+                f'<option value="{value}"{" selected" if requested_graph_mode == value else ""}>{label}</option>'
+                for value, label in (("auto", "Auto: full when safe"), ("full", "Request full graph"), ("bounded", "Bounded graph"))
+            )
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head>
+<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a></div>
-<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Explore bounded internal-link structure, goal distance, strongly connected components, and evidence-backed findings without loading a full-site graph into the browser.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
+<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Inspect internal-link structure with exact completeness disclosures, a safe full-graph mode for small sites, bounded rendering for larger sites, and a complete paginated evidence table.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
 <div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
+{view_links}
 <section class="panel control-panel"><div class="panel-heading"><div><h2>Graph controls</h2><p>Contextual, related, and action links are shown by default. Browser controls are read-only.</p></div></div>
-<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Neighborhood page route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></section>
+<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Neighborhood page route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><label class="field"><span>Graph mode</span><select name="graph">{graph_mode_options}</select></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></section>
 <aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Structural evidence</strong><br>{_e(payload["structural_evidence_notice"])}</div></div></aside>
 <section class="kpi-grid" aria-label="Graph overview">{cards_html}</section>
-<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Bounded structural overview'}</h2><p>{len(payload["visualization"]["nodes"])} of at most {payload["visualization"]["node_limit"]} nodes; {len(payload["visualization"]["edges"])} of at most {payload["visualization"]["edge_limit"]} link occurrences.</p></div><span class="source-chip">{_e(", ".join(payload["selected_layers"]))}</span></div>{_site_graph_svg(payload)}<p class="graph-caption">Arrows represent stored, crawlable internal link occurrences in the selected layers. Node color marks goals, unreachable pages, and the selected page.</p>{graph_table}</section>
+<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Full structural overview' if payload["display"]["graph_mode"] == 'full' else 'Bounded structural overview'}</h2><p>Active projection: contextual; layers: {_e(", ".join(payload["selected_layers"]))}; unique edges aggregate matching occurrences by source, destination, and layer.</p></div><span class="source-chip">{_e(payload["display"]["graph_mode"])} mode</span></div>{graph_disclosure}{_site_graph_svg(payload)}<p class="graph-caption">Arrows represent aggregated, stored, crawlable internal relationships in the selected layers. Node color marks goals, unreachable pages, and the selected page.</p>{graph_table}</section>
+{analysis_panels}
+{complete_edge_table}
 <section class="panel section-panel"><div class="panel-heading"><div><h2>Goal distance</h2><p>Shortest structural path to a configured goal in the compiled contextual projection.</p></div></div><div class="distance-grid">{bucket_html}</div></section>
 <div class="split-grid"><section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Deterministic Kosaraju components; these are structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section>
 <section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Evidence-linked structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section></div>

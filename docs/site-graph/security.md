@@ -16,14 +16,24 @@ The contract layer responds as follows:
 - Route regexes are compiled at validation time and reject backreferences, lookarounds, nested quantified groups, and repeated wildcards. Ingest code must still apply per-file and total-run bounds before using them at scale.
 - Storage uses parameterized SQL, foreign keys, transaction rollback, immutable hashes, and exact manifest/revision provenance.
 - The validation CLI emits a field allowlist and excludes paths, remotes, and account references.
-- The web read model excludes source paths, repository identities, remotes, evidence excerpts, and
-  manifest account references. Its queries are bounded before SVG and table rendering.
+- The web read model excludes source paths, source locations, repository identities, remotes, raw
+  evidence objects, and manifest account references. It allowlists short anchor, landmark,
+  confidence, classification, and evidence-source summaries for the complete edge table and CSV.
+- SVG rendering is bounded to 36 nodes and 60 resolved unique edges. Complete counts come from
+  parameterized aggregate queries, the HTML edge table reads 100 rows per page, and the complete CSV
+  export uses one read-only aggregate cursor fetched 500 rows at a time. Formula-leading text fields
+  are prefixed with an apostrophe before CSV encoding so spreadsheet software treats them as text.
+- Edge-table sort fields and direction use fixed allowlists. Search text, site identity, layers,
+  pagination, and destination resolution remain bound SQL parameters.
 
 No credential is required for the manifest validator or database schema. Cloudflare entries are identifiers for a separately configured read-only integration, not secrets. Do not place tokens, passwords, private keys, cookies, or authenticated repository URLs in a site-graph manifest.
 
-The browser surface is strictly read-only. `GET /site-graph` and `GET /api/v1/site-graph` may select a
-stored site, page neighborhood, and link layers; they cannot start ingest, build, compilation, sync,
-or provider operations. The routes retain the existing loopback-first and Host-validation boundary.
+The browser surface is strictly read-only. `GET /site-graph`, `GET /api/v1/site-graph`, and
+`GET /api/v1/site-graph.csv` may select a stored site, page neighborhood, link layers, display mode,
+and table/export filters; they cannot start ingest, build, compilation, sync, or provider operations.
+All three routes retain the existing loopback-first and Host-validation boundary, restrictive CSP and
+security headers, `Cache-Control: no-store`, same-origin resource policy, and absence of permissive
+CORS. The HTML fallback, filtering, sorting, pagination, and export require no browser JavaScript.
 
 ## Repository and build-mode gate
 

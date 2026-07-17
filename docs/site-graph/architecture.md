@@ -8,7 +8,7 @@ The package establishes three durable layers:
 
 1. A strict YAML manifest describes the expected repository, bounded analysis mode, route policy, page-role rules, link-layer selectors, and goals.
 2. Schema version 2 stores immutable source facts and derived graph artifacts with foreign-key links to the exact manifest and repository revision that produced them.
-3. A dependency-free compiler and read-only dashboard turn completed facts into bounded structural views without exposing repository paths, remote URLs, credentials, or source excerpts to the browser.
+3. A dependency-free compiler and read-only dashboard turn completed facts into honestly bounded structural views without exposing repository paths, remote URLs, credentials, or source excerpts to the browser.
 
 Source facts are deliberately more detailed than graph edges. Every matching link occurrence is retained with its source location, landmark, classification layer, confidence, flags, and structured evidence. Later graph compilation may aggregate those occurrences, but it cannot replace them.
 
@@ -64,17 +64,44 @@ The compiler currently records in-degree, out-degree, goal distance, internal au
 dependence, strongly connected components, orphans, contextual dead ends, and menu-dependence
 findings. Component analysis is iterative so large acyclic sites do not hit Python's recursion limit.
 
+See [site graph engine](engine.md) for the full manifest, ingestion, compilation, display, and
+public/private-boundary documentation.
+
 ## Dashboard
 
 `/site-graph` is part of the existing loopback server. It uses the same Host allowlist, Basic-auth
 option, restrictive CSP, no-CORS policy, `no-store` response policy, and credential isolation as the
 analytics reports. `/api/v1/site-graph` returns the same normalized read model as JSON.
 
-The dashboard deliberately avoids a full-site browser graph. A request reads at most 5,000 candidate
-link occurrences, then renders at most 36 nodes and 60 edges. The default is the contextual layer
-set. An operator can select a page for a bounded two-hop neighborhood or enable navigation layers.
-Every SVG has a title and description, and node and edge tables provide the equivalent values for
-keyboard and screen-reader use.
+The dashboard uses two explicit rendering modes. A selected graph containing no more than 36 nodes
+and 60 resolved unique edges automatically uses full-graph mode. Larger graphs use bounded mode and
+render at most 36 nodes and 60 unique edges. A unique edge is the aggregate of matching occurrences
+with the same source canonical route, destination canonical route, and layer. The safe thresholds are
+browser-rendering limits, not storage, compiler, table, or export limits.
+
+Every graph response discloses displayed and total node counts, displayed and total resolved unique
+edge counts, represented and total selected link-occurrence counts, unresolved relationship count,
+active projection, active layers and filters, aggregation mode, whether truncation occurred, and each
+reason it occurred. A page selection requests a bounded two-hop neighborhood. Its legacy candidate
+walk inspects at most 5,000 selected occurrences and the response explicitly discloses when that cap
+could affect the neighborhood.
+
+The server-rendered complete edge table is independent of the SVG limit. It reads 1,000 aggregated
+rows per page and supports parameterized route/layer filtering plus allowlisted source, destination,
+layer, or occurrence-count sorting. Pretty names are derived from canonical routes because the
+current page fact contract does not store titles. `/api/v1/site-graph.csv` streams all matching
+resolved unique edges in 500-row database pages. Neither path exposes raw source locations or
+repository identity. The default selected layers remain `contextual`, `related`, and `action`;
+navigation layers can be enabled explicitly.
+
+The SVG layout is an organic, deterministic topic-cluster map. It uses section anchors, stable
+hash-based jitter, collision relaxation, curved directed edges, quiet navigation-layer styling, key
+page labels, and a plain-language map hint so non-graph users can read it as pages and pathways
+rather than a mathematical graph.
+
+Every SVG has a title and description. A server-rendered node/edge fallback and the complete edge
+table expose equivalent values without JavaScript for keyboard and screen-reader use. Graph mode,
+table filtering, sorting, pagination, and CSV export are ordinary same-origin links and forms.
 
 The page labels all outputs as structural evidence. Link topology does not prove visits, attention,
 intent, conversion, or revenue impact.
