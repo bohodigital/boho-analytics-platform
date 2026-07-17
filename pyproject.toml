@@ -11,11 +11,13 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Boho Analytics Platform contributors"}]
+maintainers = [{name = "Boho Digital Services"}]
 keywords = ["analytics", "umami", "cloudflare", "google-analytics", "search-console"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Environment :: Web Environment",
+  "Intended Audience :: Developers",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
@@ -25,6 +27,7 @@ classifiers = [
   "Topic :: Internet :: Log Analysis",
 ]
 dependencies = [
+  "PyYAML>=6.0.3,<7",
   "tzdata>=2025.2; platform_system == 'Windows'",
 ]
 
@@ -36,6 +39,8 @@ Homepage = "https://github.com/bohodigital/boho-analytics-platform"
 Documentation = "https://github.com/bohodigital/boho-analytics-platform#readme"
 Repository = "https://github.com/bohodigital/boho-analytics-platform"
 Issues = "https://github.com/bohodigital/boho-analytics-platform/issues"
+Changelog = "https://github.com/bohodigital/boho-analytics-platform/blob/main/CHANGELOG.md"
+Security = "https://github.com/bohodigital/boho-analytics-platform/security/policy"
 
 [project.scripts]
 boho-analytics = "boho_analytics_platform.cli:main"

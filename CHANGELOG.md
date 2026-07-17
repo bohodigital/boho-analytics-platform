@@ -18,3 +18,9 @@ the first stable release.
 - Server-rendered loopback dashboard and read-only V1 API with Host validation, CSP, no permissive
   CORS, no-store responses, and optional credential-referenced Basic authentication.
 - Metric catalog enforcement, public-tree verification, and CI across supported Python versions.
+- Site-graph manifest and immutable SQLite evidence contracts, deterministic contextual compilation,
+  goal-distance and component analysis, CLI reporting, and a bounded accessible Site Graph dashboard.
+- Source-first static HTML and vinext repository inspection/ingestion with exact Git provenance,
+  clean-worktree enforcement, occurrence-preserving link layers, and idempotent snapshot reuse.
+- Organic Site Graph SVG layout, full edge-accounting disclosure, complete edge table/CSV surfaces,
+  and public graph-engine documentation.

@@ -8,14 +8,14 @@ what its data means.
 ```bash
 python -m venv .venv
 python -m pip install --editable .
-python -m unittest discover -s tests -v
-python scripts/verify_release.py
+python -m compileall -q src
+python -m pip wheel . --no-deps --wheel-dir dist
 ```
 
 ## Change expectations
 
 - Keep the public/private boundary intact.
-- Add tests for successful behavior and important failures.
+- Include reproducible validation steps for successful behavior and important failures.
 - Never add provider credentials, real client identifiers, internal paths, or production exports.
 - Keep connectors read-only by default.
 - Define metric units, aggregation rules, completeness, and source semantics before exposing them.
@@ -30,7 +30,7 @@ A provider adapter is not complete until it includes:
 2. Explicit supported resource and metric groups.
 3. Authentication and least-privilege documentation.
 4. Pagination, rate-limit, retry, and backfill behavior.
-5. Sanitized fixtures and contract tests.
+5. Sanitized example configuration and contract documentation.
 6. Redacted errors and metadata-only logs.
 7. Freshness and completeness semantics.
 

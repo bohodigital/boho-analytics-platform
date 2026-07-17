@@ -10,8 +10,8 @@ installation must still use account-specific least-privilege credentials and ver
 
 ![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
 
-_Headlessly generated from the checked-in demo fixture. No live analytics profile or private
-configuration is used._
+_Generated from sanitized illustrative data. No live analytics profile or private configuration is
+used._
 
 The browser only reads normalized local aggregates. Provider credentials stay server-side, syncs
 are explicit or scheduled, and every metric remains source-labeled. The public repository contains
@@ -33,22 +33,25 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - A responsive, server-rendered dashboard with portfolio KPI cards, interactive same-origin canvas
   charts, accessible daily-value fallbacks, source freshness, and quick date presets. No chart library
   or third-party browser asset is required.
+- A Site Graph dashboard for compiled repository snapshots: bounded structural SVGs, accessible
+  node and edge tables, selectable link layers, two-hop page neighborhoods, goal-distance buckets,
+  strongly connected components, and evidence-linked findings. It is structural evidence only and
+  never presents link topology as visitor behavior.
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
 
 ![Boho Analytics summary dashboard using public example data](docs/images/boho-analytics-dashboard.png)
 
-## Quick start with safe demo data
+## Quick start with a blank configuration
 
 ```bash
 python -m venv .venv
 python -m pip install --editable .
-boho-analytics --config examples/platform.demo.toml config validate
-boho-analytics --config examples/platform.demo.toml db init
-boho-analytics --config examples/platform.demo.toml sync --start 2026-07-01 --end 2026-07-04
-boho-analytics --config examples/platform.demo.toml report summary --start 2026-07-01 --end 2026-07-04
-boho-analytics --config examples/platform.demo.toml serve
+cp examples/platform.example.toml platform.toml
+boho-analytics --config platform.toml config validate
+boho-analytics --config platform.toml db init
+boho-analytics --config platform.toml serve
 ```
 
 Open `http://127.0.0.1:8787`, or forward that loopback port over SSH from a private server.
@@ -57,8 +60,26 @@ Use **Plot Builder** to select the stored data source, metric, site, dates, visu
 previous-period overlay. The browser fetches only normalized series from the local service; it never
 contacts Umami, Cloudflare, or Google directly.
 
-The end date is exclusive. The example above reports July 1 through July 3. Use `--days 30` for
-the last 30 complete local days. A browser request never triggers a provider sync.
+Copy the generic site-graph manifest to a private path, fill in the repository root, exact remote,
+ref, and full commit, then inspect and ingest it. Source-only mode reads tracked files from the
+recorded revision without changing the checkout or executing repository code:
+
+```bash
+boho-analytics site-graph manifest validate --manifest site-graph.yaml
+boho-analytics site-graph inspect-repo --manifest site-graph.yaml
+boho-analytics site-graph ingest --manifest site-graph.yaml --database var/analytics.sqlite3
+boho-analytics site-graph compile --database var/analytics.sqlite3 --site example-site
+boho-analytics site-graph report --database var/analytics.sqlite3 --site example-site
+boho-analytics --config platform.toml serve
+```
+
+The browser route is read-only: it cannot ingest a repository, run a build, compile a graph, or sync
+a provider. See [site graph architecture](docs/site-graph/architecture.md) for the provenance and
+projection model, [site graph engine](docs/site-graph/engine.md) for the full engine behavior, and
+[repository ingestion](docs/site-graph/ingestion.md) for adapter behavior.
+
+Date-window end values are exclusive. Use `--days 30` for the last 30 complete local days. A browser
+request never triggers a provider sync.
 
 ## Configure real connections
 
@@ -78,9 +99,9 @@ boho-analytics --config /private/platform.toml probe --connection example-umami
 boho-analytics --config /private/platform.toml sync --connection example-umami --days 30
 ```
 
-See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md), and
-[provider behavior](docs/providers.md), [deployment](docs/deployment.md), and the reproducible
-[headless screenshot workflow](docs/screenshots.md) before connecting live data.
+See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md),
+[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live
+data.
 
 ## Metric ownership
 
@@ -109,9 +130,13 @@ contracts are documented under [docs](docs/architecture.md).
 ## Development
 
 ```bash
-python -m unittest discover -s tests -v
-python scripts/verify_release.py
+python -m compileall -q src
 python -m pip wheel . --no-deps --wheel-dir dist
 ```
+
+The intended PyPI distribution name is `boho-analytics-platform`, while the installed command stays
+`boho-analytics`. PyPI publication is not implied by this repository: maintainers must complete the
+guarded Trusted Publishing setup and approve a release before documenting `pip install` as available.
+See the [deployment and PyPI release runbook](docs/deployment.md#guarded-pypi-publishing).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The project is MIT licensed.

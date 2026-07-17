@@ -16,8 +16,27 @@ from pathlib import Path
 from .models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 
 
-SCHEMA_VERSION = 1
-MIGRATIONS = {1: "001_initial.sql"}
+SCHEMA_VERSION = 2
+MIGRATIONS = {1: "001_initial.sql", 2: "002_site_graph.sql"}
+
+
+def _apply_migration(db: sqlite3.Connection, migration: str, version: int) -> None:
+    """Apply DDL and its schema-version update as one rollback-safe unit."""
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("migration version must be a positive integer")
+    script = (
+        "BEGIN IMMEDIATE;\n"
+        f"{migration}\n"
+        "DELETE FROM schema_meta;\n"
+        f"INSERT INTO schema_meta(version) VALUES ({version});\n"
+        "COMMIT;"
+    )
+    try:
+        db.executescript(script)
+    except sqlite3.Error:
+        if db.in_transaction:
+            db.rollback()
+        raise
 
 
 def _iso(value: datetime) -> str:
@@ -76,9 +95,7 @@ class SQLiteMetricStore:
                 raise RuntimeError(f"database schema {current} is newer than supported {SCHEMA_VERSION}")
             for version in range(current + 1, SCHEMA_VERSION + 1):
                 migration = files("boho_analytics_platform.migrations").joinpath(MIGRATIONS[version]).read_text(encoding="utf-8")
-                db.executescript(migration)
-                db.execute("DELETE FROM schema_meta")
-                db.execute("INSERT INTO schema_meta(version) VALUES (?)", (version,))
+                _apply_migration(db, migration, version)
 
     def upsert(self, points: Iterable[MetricPoint]) -> int:
         now = _iso(datetime.now(UTC)); rows = []
