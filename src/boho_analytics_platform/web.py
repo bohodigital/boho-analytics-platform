@@ -127,7 +127,7 @@ BASE_CSS = """
 .plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
 .graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 .graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
-.graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.site-graph-svg{min-height:430px}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
+.graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{position:relative;min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.graph-canvas-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}.graph-canvas-toolbar button{min-height:32px;padding:5px 9px;border-color:#c8c9c3;background:rgba(255,255,255,.88);color:var(--ink-2);font-size:12px;font-weight:800}.graph-canvas-toolbar button:hover{background:#fff;color:var(--ink)}.graph-zoom-status{padding:4px 7px;border-radius:999px;background:#efefeb;color:var(--muted);font-size:11px;font-weight:800}.site-graph-svg{min-height:430px;cursor:grab;touch-action:none;user-select:none}.graph-map.is-panning .site-graph-svg{cursor:grabbing}.graph-viewport{transform-origin:0 0}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{stroke-width:3}.graph-edge.is-related{stroke-width:2.2}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
 @media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
 @media(max-width:980px){.graph-form,.edge-tools{grid-template-columns:1fr 1fr}.graph-form button,.edge-tools button{grid-column:span 2}.graph-stage,.graph-view-grid{grid-template-columns:1fr}.graph-disclosure{grid-template-columns:1fr 1fr}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form,.edge-tools{grid-template-columns:1fr}.filter-form button,.graph-form button,.edge-tools button{grid-column:auto}.tools-row,.footer,.pager{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.graph-disclosure{grid-template-columns:1fr}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
@@ -306,9 +306,138 @@ JS = r"""
     if (!stage) return;
     const inspector = stage.querySelector("[data-graph-inspector]");
     const svg = stage.querySelector(".site-graph-svg");
+    const map = stage.querySelector("[data-graph-map]");
+    const viewport = stage.querySelector("[data-graph-viewport]");
+    const zoomInButton = stage.querySelector("[data-graph-zoom-in]");
+    const zoomOutButton = stage.querySelector("[data-graph-zoom-out]");
+    const zoomResetButton = stage.querySelector("[data-graph-zoom-reset]");
+    const zoomStatus = stage.querySelector("[data-graph-zoom-status]");
     const nodes = Array.from(stage.querySelectorAll("[data-graph-node]"));
     const edges = Array.from(stage.querySelectorAll("[data-graph-edge]"));
     if (!inspector || !svg || (!nodes.length && !edges.length)) return;
+
+    function initCanvasView() {
+      if (!viewport) return;
+      const viewBox = svg.viewBox.baseVal;
+      if (!viewBox || !viewBox.width || !viewBox.height) return;
+      const transform = {x: 0, y: 0, scale: 1, homeX: 0, homeY: 0, homeScale: 1};
+      let dragState = null;
+
+      function clientToViewBox(clientX, clientY) {
+        const rect = svg.getBoundingClientRect();
+        const width = rect.width || 1;
+        const height = rect.height || 1;
+        return {
+          x: viewBox.x + ((clientX - rect.left) / width) * viewBox.width,
+          y: viewBox.y + ((clientY - rect.top) / height) * viewBox.height,
+        };
+      }
+
+      function clampScale(scale) {
+        return Math.min(Math.max(scale, transform.homeScale * 0.45), transform.homeScale * 3.2);
+      }
+
+      function setTransform(x, y, scale) {
+        transform.x = x;
+        transform.y = y;
+        transform.scale = clampScale(scale);
+        viewport.setAttribute(
+          "transform",
+          `translate(${transform.x.toFixed(2)} ${transform.y.toFixed(2)}) scale(${transform.scale.toFixed(4)})`
+        );
+        if (zoomStatus) {
+          zoomStatus.textContent = `${Math.round((transform.scale / transform.homeScale) * 100)}%`;
+        }
+      }
+
+      function fitView() {
+        let box;
+        try {
+          box = viewport.getBBox();
+        } catch {
+          box = {x: 0, y: 0, width: viewBox.width, height: viewBox.height};
+        }
+        const margin = Math.max(72, Math.min(viewBox.width, viewBox.height) * 0.06);
+        const usableWidth = Math.max(1, viewBox.width - margin * 2);
+        const usableHeight = Math.max(1, viewBox.height - margin * 2);
+        const scale = clampScale(Math.min(usableWidth / Math.max(1, box.width), usableHeight / Math.max(1, box.height), 1.08) * 0.98);
+        const x = viewBox.x + (viewBox.width - box.width * scale) / 2 - box.x * scale;
+        const y = viewBox.y + (viewBox.height - box.height * scale) / 2 - box.y * scale;
+        transform.homeX = x;
+        transform.homeY = y;
+        transform.homeScale = scale || 1;
+        setTransform(x, y, transform.homeScale);
+      }
+
+      function zoomAt(factor, point) {
+        const nextScale = clampScale(transform.scale * factor);
+        const anchorX = (point.x - transform.x) / transform.scale;
+        const anchorY = (point.y - transform.y) / transform.scale;
+        setTransform(point.x - anchorX * nextScale, point.y - anchorY * nextScale, nextScale);
+      }
+
+      function zoomFromCenter(factor) {
+        zoomAt(factor, {x: viewBox.x + viewBox.width / 2, y: viewBox.y + viewBox.height / 2});
+      }
+
+      zoomInButton?.addEventListener("click", () => zoomFromCenter(1.18));
+      zoomOutButton?.addEventListener("click", () => zoomFromCenter(1 / 1.18));
+      zoomResetButton?.addEventListener("click", fitView);
+      svg.addEventListener("wheel", event => {
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        zoomAt(factor, clientToViewBox(event.clientX, event.clientY));
+      }, {passive: false});
+
+      svg.addEventListener("pointerdown", event => {
+        if (event.button !== 0 || event.pointerType === "mouse" && event.buttons !== 1) return;
+        const start = clientToViewBox(event.clientX, event.clientY);
+        dragState = {
+          pointerId: event.pointerId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          startViewX: start.x,
+          startViewY: start.y,
+          x: transform.x,
+          y: transform.y,
+          moved: false,
+        };
+        svg.setPointerCapture?.(event.pointerId);
+        map?.classList.add("is-panning");
+      });
+
+      svg.addEventListener("pointermove", event => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const current = clientToViewBox(event.clientX, event.clientY);
+        const screenMove = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
+        if (screenMove > 3) {
+          dragState.moved = true;
+          stage.dataset.graphDragging = "true";
+          setTransform(
+            dragState.x + current.x - dragState.startViewX,
+            dragState.y + current.y - dragState.startViewY,
+            transform.scale
+          );
+        }
+      });
+
+      function finishDrag(event) {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const moved = dragState.moved;
+        dragState = null;
+        map?.classList.remove("is-panning");
+        stage.dataset.graphDragging = "false";
+        if (moved) {
+          stage.dataset.graphSuppressClick = "true";
+          window.setTimeout(() => { stage.dataset.graphSuppressClick = "false"; }, 0);
+        }
+      }
+
+      svg.addEventListener("pointerup", finishDrag);
+      svg.addEventListener("pointercancel", finishDrag);
+      fitView();
+      window.addEventListener("resize", () => fitView(), {passive: true});
+    }
 
     function isPinned() {
       return stage.dataset.graphPinned === "true";
@@ -407,6 +536,11 @@ JS = r"""
       element.addEventListener("pointerenter", () => { if (!isPinned()) focusFn(element, false); });
       element.addEventListener("focus", () => { if (!isPinned()) focusFn(element, false); });
       element.addEventListener("click", event => {
+        if (stage.dataset.graphSuppressClick === "true" || stage.dataset.graphDragging === "true") {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         focusFn(element, true);
@@ -426,11 +560,13 @@ JS = r"""
     for (const edge of edges) bindInteractiveElement(edge, focusEdge);
     stage.addEventListener("pointerleave", () => { if (!isPinned()) clearGraph(); });
     stage.addEventListener("click", event => {
-      if (event.target === stage || event.target === svg) clearGraph();
+      if (stage.dataset.graphSuppressClick === "true") return;
+      if (event.target === stage || event.target === svg || event.target === viewport || event.target.classList?.contains("graph-depth-plane")) clearGraph();
     });
     document.addEventListener("keydown", event => {
       if (event.key === "Escape" && stage.contains(document.activeElement)) clearGraph();
     });
+    initCanvasView();
     clearGraph();
   }
 
@@ -1057,16 +1193,22 @@ def _site_graph_svg(payload):
         for label in cluster_labels
     )
     return (
-        '<div class="graph-stage" data-site-graph-stage><div class="graph-map">'
-        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and placement follows link relationships plus click distance from the focus page.</p>'
+        '<div class="graph-stage" data-site-graph-stage><div class="graph-map" data-graph-map>'
+        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and placement follows link relationships plus click distance from the focus page. Drag the map, scroll to zoom, or use the controls.</p>'
+        '<div class="graph-canvas-toolbar" role="group" aria-label="Graph canvas controls">'
+        '<button type="button" data-graph-zoom-out aria-label="Zoom out">Zoom out</button>'
+        '<button type="button" data-graph-zoom-in aria-label="Zoom in">Zoom in</button>'
+        '<button type="button" data-graph-zoom-reset>Reset view</button>'
+        '<span class="graph-zoom-status" data-graph-zoom-status aria-live="polite">100%</span></div>'
         f'<svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
         'aria-labelledby="graph-title graph-description"><title id="graph-title">Site Graph structural overview</title>'
         f'<desc id="graph-description">An organic topology map of pages and '
         f'aggregated internal-link relationships in the selected layers. An equivalent table follows the graphic.</desc>'
-        '<defs><marker id="arrow" markerWidth="8" markerHeight="8" '
-        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker>'
+        '<defs><marker id="arrow" markerUnits="strokeWidth" markerWidth="4.8" markerHeight="4.8" '
+        'refX="4.25" refY="2.4" orient="auto"><path d="M0,0 L4.8,2.4 L0,4.8 z" fill="#78817c"></path></marker>'
         '<filter id="node-lift" x="-35%" y="-35%" width="170%" height="170%"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#17201d" flood-opacity=".18"></feDropShadow></filter></defs>'
-        + plane + cluster_html + "".join(edge_html) + "".join(node_html) + '</svg></div>'
+        '<g class="graph-viewport" data-graph-viewport>'
+        + plane + cluster_html + "".join(edge_html) + "".join(node_html) + '</g></svg></div>'
         '<aside class="graph-inspector" data-graph-inspector aria-live="polite"></aside></div>'
     )
 
