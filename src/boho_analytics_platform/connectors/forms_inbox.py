@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ..models import CapabilitySnapshot
-from .common import binding_site, daily_point
+from .common import binding_site, connection_bindings, daily_point, timestamp_day
 
 
 class FormsInboxConnector:
@@ -37,31 +38,54 @@ class FormsInboxConnector:
         required = {"messages", "mailbox_locations", "mailboxes"}
         with self._connect(self._path(connection)) as db:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if not required.issubset(tables): raise ValueError("forms inbox database does not match the supported schema")
-        return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, (),
+            if not required.issubset(tables): raise ValueError("forms inbox database does not match the supported schema")
+            resources = tuple(sorted({str(binding.options.get("mailbox_key", binding.resource_id))
+                for binding in connection_bindings(self.config, connection.id)}))
+            for mailbox_key in resources:
+                if db.execute("SELECT 1 FROM mailboxes WHERE mailbox_key = ? LIMIT 1", (mailbox_key,)).fetchone() is None:
+                    raise ValueError(f"configured forms inbox mailbox is unavailable: {mailbox_key}")
+        return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
             ("forms.inbox-deliveries", "forms.inbox-unread"))
+
+    @staticmethod
+    def _requested_days(window, timezone):
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        day = window.start.astimezone(zone).date()
+        end = window.end.astimezone(zone).date()
+        while day < end:
+            yield day
+            day += timedelta(days=1)
 
     def collect(self, connection, _credential, request):
         # Only aggregate counts and dates leave SQLite. Content/address columns are never selected.
         options = request.binding.options; mailbox_key = str(options.get("mailbox_key", request.binding.resource_id))
-        clauses = ["mb.mailbox_key = ?", "m.received_at >= ?", "m.received_at < ?", "m.direction = 'inbound'"]
-        params: list[object] = [mailbox_key, request.window.start.isoformat(), request.window.end.isoformat()]
+        clauses = ["mb.mailbox_key = ?", "julianday(m.received_at) >= julianday(?)",
+            "julianday(m.received_at) < julianday(?)", "m.direction = 'inbound'"]
+        params: list[object] = [mailbox_key, request.window.start.astimezone(UTC).isoformat(),
+            request.window.end.astimezone(UTC).isoformat()]
         sender = options.get("sender_contains"); subject = options.get("subject_contains")
         if sender:
             clauses.append("instr(lower(m.from_address), lower(?)) > 0"); params.append(str(sender))
         if subject:
             clauses.append("instr(lower(m.subject), lower(?)) > 0"); params.append(str(subject))
-        sql = f"""SELECT substr(m.received_at,1,10) AS metric_day, COUNT(*) AS aggregate_count,
+        sql = f"""SELECT m.received_at, COUNT(*) AS aggregate_count,
           SUM(CASE WHEN instr(lower(ml.flags_json), '\\seen') = 0 THEN 1 ELSE 0 END) AS unread_count
           FROM messages m JOIN mailbox_locations ml ON ml.message_id=m.id JOIN mailboxes mb ON mb.id=ml.mailbox_id
-          WHERE {' AND '.join(clauses)} GROUP BY metric_day ORDER BY metric_day"""
+          WHERE {' AND '.join(clauses)} GROUP BY m.received_at ORDER BY m.received_at"""
         with self._connect(self._path(connection)) as db:
             rows = db.execute(sql, params).fetchall()
         site = binding_site(self.config, request.binding.site_id)
+        daily: dict[object, list[int]] = {}
         for row in rows:
+            day = timestamp_day(row["received_at"], site.timezone)
+            aggregate = daily.setdefault(day, [0, 0])
+            aggregate[0] += int(row["aggregate_count"])
+            aggregate[1] += int(row["unread_count"] or 0)
+        for day in self._requested_days(request.window, site.timezone):
+            deliveries, unread = daily.get(day, [0, 0])
             yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                metric="forms.inbox-deliveries", unit="count", day=row["metric_day"],
-                value=row["aggregate_count"], timezone=site.timezone)
+                metric="forms.inbox-deliveries", unit="count", day=day,
+                value=deliveries, timezone=site.timezone)
             yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                metric="forms.inbox-unread", unit="count", day=row["metric_day"],
-                value=row["unread_count"] or 0, timezone=site.timezone)
+                metric="forms.inbox-unread", unit="count", day=day,
+                value=unread, timezone=site.timezone)

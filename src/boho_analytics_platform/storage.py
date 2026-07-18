@@ -16,8 +16,9 @@ from pathlib import Path
 from .models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 
 
-SCHEMA_VERSION = 2
-MIGRATIONS = {1: "001_initial.sql", 2: "002_site_graph.sql"}
+SCHEMA_VERSION = 3
+MIGRATIONS = {1: "001_initial.sql", 2: "002_site_graph.sql", 3: "003_sync_coverage.sql"}
+CURRENT_IDENTITY_VERSIONS = {"cloudflare-forms": 2, "forms-inbox": 2}
 
 
 def _apply_migration(db: sqlite3.Connection, migration: str, version: int) -> None:
@@ -48,10 +49,14 @@ def _parse(value: str) -> datetime:
 
 
 def _key(point: MetricPoint) -> str:
-    identity = json.dumps([
+    identity = [
         point.client_id, point.site_id, point.source, point.metric, point.unit,
         _iso(point.start), _iso(point.end), point.grain.value, list(point.dimensions)
-    ], separators=(",", ":"), ensure_ascii=True)
+    ]
+    identity_version = CURRENT_IDENTITY_VERSIONS.get(point.source, 1)
+    if identity_version != 1:
+        identity.append(identity_version)
+    identity = json.dumps(identity, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
@@ -103,10 +108,14 @@ class SQLiteMetricStore:
             rows.append((_key(point), point.client_id, point.site_id, point.source, point.metric, point.unit,
                 _iso(point.start), _iso(point.end), point.grain.value, str(point.value),
                 json.dumps(dict(point.dimensions), separators=(",", ":"), sort_keys=True),
-                point.completeness.value, _iso(point.observed_at), now))
+                point.completeness.value, _iso(point.observed_at), now,
+                CURRENT_IDENTITY_VERSIONS.get(point.source, 1)))
         if not rows: return 0
         with self.connect() as db:
-            db.executemany("""INSERT INTO metric_facts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            db.executemany("""INSERT INTO metric_facts(
+              point_key,client_id,site_id,source,metric,unit,start_at,end_at,grain,value,
+              dimensions_json,completeness,observed_at,updated_at,identity_version
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(point_key) DO UPDATE SET value=excluded.value, completeness=excluded.completeness,
               observed_at=excluded.observed_at, updated_at=excluded.updated_at""", rows)
         return len(rows)
@@ -119,6 +128,10 @@ class SQLiteMetricStore:
         params = [client_id, *site_ids, *metric_ids, _iso(window.start), _iso(window.end)]
         with self.connect(readonly=True) as db:
             rows = db.execute(sql, params).fetchall()
+        rows = [
+            row for row in rows
+            if int(row["identity_version"]) == CURRENT_IDENTITY_VERSIONS.get(row["source"], 1)
+        ]
         return [MetricPoint(
             row["client_id"], row["site_id"], row["source"], row["metric"], row["unit"],
             _parse(row["start_at"]), _parse(row["end_at"]), TimeGrain(row["grain"]),
@@ -136,18 +149,118 @@ class SQLiteMetricStore:
                 json.dumps(snapshot.resources), json.dumps(snapshot.metric_groups), snapshot.max_lookback_days,
                 json.dumps(snapshot.warnings)))
 
-    def start_run(self, connection_id: str, site_id: str | None) -> str:
+    def start_run(
+        self,
+        connection_id: str,
+        site_id: str | None,
+        *,
+        binding_key: str | None = None,
+        source: str | None = None,
+        window: QueryWindow | None = None,
+    ) -> str:
         run_id = uuid.uuid4().hex
         with self.connect() as db:
-            db.execute("INSERT INTO sync_runs(id,connection_id,site_id,started_at,status) VALUES (?,?,?,?,?)",
-                (run_id, connection_id, site_id, _iso(datetime.now(UTC)), "running"))
+            db.execute(
+                """INSERT INTO sync_runs(
+                  id,connection_id,site_id,started_at,status,binding_key,source,window_start,window_end
+                ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    connection_id,
+                    site_id,
+                    _iso(datetime.now(UTC)),
+                    "running",
+                    binding_key,
+                    source,
+                    _iso(window.start) if window else None,
+                    _iso(window.end) if window else None,
+                ),
+            )
         return run_id
 
-    def finish_run(self, run_id: str, status: str, points: int = 0, category: str | None = None, message: str | None = None) -> None:
+    def finish_run(
+        self,
+        run_id: str,
+        status: str,
+        points: int = 0,
+        category: str | None = None,
+        message: str | None = None,
+        *,
+        result_kind: str | None = None,
+        data_through: datetime | None = None,
+    ) -> None:
         safe_message = message[:300] if message else None
         with self.connect() as db:
-            db.execute("UPDATE sync_runs SET finished_at=?,status=?,points_written=?,error_category=?,error_message=? WHERE id=?",
-                (_iso(datetime.now(UTC)), status, points, category, safe_message, run_id))
+            db.execute(
+                """UPDATE sync_runs SET finished_at=?,status=?,points_written=?,error_category=?,
+                  error_message=?,result_kind=?,data_through=? WHERE id=?""",
+                (
+                    _iso(datetime.now(UTC)),
+                    status,
+                    points,
+                    category,
+                    safe_message,
+                    result_kind,
+                    _iso(data_through) if data_through else None,
+                    run_id,
+                ),
+            )
+
+    def query_sync_coverage(
+        self,
+        *,
+        site_ids: Sequence[str],
+        sources: Sequence[str],
+        binding_keys: Sequence[str],
+        window: QueryWindow,
+    ) -> list[dict[str, object]]:
+        """Return successful acquisition intervals for currently configured bindings.
+
+        A successful provider query is distinct from the presence of events. The
+        interval ledger lets reporting represent query-proven quiet dates without
+        manufacturing metric facts or accepting stale runs from removed bindings.
+        """
+
+        if not site_ids or not sources or not binding_keys:
+            return []
+        sites = ",".join("?" for _ in site_ids)
+        provider_sources = ",".join("?" for _ in sources)
+        bindings = ",".join("?" for _ in binding_keys)
+        sql = f"""SELECT site_id,source,binding_key,window_start,window_end,
+                         result_kind,data_through,finished_at
+                    FROM sync_runs
+                   WHERE status='success'
+                     AND result_kind IN ('data','empty')
+                     AND site_id IN ({sites})
+                     AND source IN ({provider_sources})
+                     AND binding_key IN ({bindings})
+                     AND window_start IS NOT NULL
+                     AND window_end IS NOT NULL
+                     AND window_start < ?
+                     AND window_end > ?
+                ORDER BY window_start,window_end"""
+        params = [
+            *site_ids,
+            *sources,
+            *binding_keys,
+            _iso(window.end),
+            _iso(window.start),
+        ]
+        with self.connect(readonly=True) as db:
+            rows = db.execute(sql, params).fetchall()
+        return [
+            {
+                "site_id": row["site_id"],
+                "source": row["source"],
+                "binding_key": row["binding_key"],
+                "window_start": _parse(row["window_start"]),
+                "window_end": _parse(row["window_end"]),
+                "result_kind": row["result_kind"],
+                "data_through": _parse(row["data_through"]) if row["data_through"] else None,
+                "finished_at": _parse(row["finished_at"]) if row["finished_at"] else None,
+            }
+            for row in rows
+        ]
 
     def acquire_lock(self, name: str, owner: str, lease_seconds: int = 900) -> None:
         now = datetime.now(UTC); expires = now + timedelta(seconds=lease_seconds)

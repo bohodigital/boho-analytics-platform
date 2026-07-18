@@ -11,6 +11,8 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .catalog import METRICS
+
 
 SCHEMA_VERSION = 2
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -165,6 +167,14 @@ def _text_list(value: object, label: str, *, required: bool = False) -> tuple[st
     output = tuple(item.strip() for item in value)
     if len(set(output)) != len(output):
         raise ConfigError(f"{label} must not contain duplicates")
+    return output
+
+
+def _metric_ids(value: object, label: str) -> tuple[str, ...]:
+    output = _text_list(value, label, required=True)
+    unknown = tuple(item for item in output if item not in METRICS)
+    if unknown:
+        raise ConfigError(f"{label} contains unknown metric ids: {', '.join(unknown)}")
     return output
 
 
@@ -339,7 +349,7 @@ def load_config(path: str | Path) -> AppConfig:
             subs.append(SubreportConfig(
                 _validate_id(_required_text(sub, "id", sub_label), f"{sub_label}.id"),
                 _required_text(sub, "title", sub_label),
-                _text_list(sub.get("metric_ids"), f"{sub_label}.metric_ids", required=True),
+                _metric_ids(sub.get("metric_ids"), f"{sub_label}.metric_ids"),
                 _int(sub, "default_window_days", _int(table, "default_window_days", 30, label, 1, 3650), sub_label, 1, 3650),
                 tuple(sorted((key.strip(), value.strip()) for key, value in raw_filters.items())),
             ))
@@ -349,7 +359,7 @@ def load_config(path: str | Path) -> AppConfig:
             _required_text(table, "title", label),
             _validate_id(_required_text(table, "client_id", label), f"{label}.client_id"),
             _text_list(table.get("site_ids"), f"{label}.site_ids", required=True),
-            _text_list(table.get("metric_ids"), f"{label}.metric_ids", required=True),
+            _metric_ids(table.get("metric_ids"), f"{label}.metric_ids"),
             _int(table, "default_window_days", 30, label, 1, 3650),
             tuple(subs),
         ))

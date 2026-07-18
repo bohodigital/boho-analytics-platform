@@ -4,9 +4,9 @@ Boho Analytics Platform is a lightweight, public-first website analytics dashboa
 Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
 Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 
-> **Status: stable v0.1.0.** Public fixtures, multi-version CI, a private Pi deployment, bounded
-live syncs, backup and integrity checks, and the loopback dashboard have been validated. Each
-installation must still use account-specific least-privilege credentials and verify provider access.
+> **Status: v0.1.0 is the latest public release; v0.1.1.dev0 is an unreleased stabilization
+candidate.** Each installation must use account-specific least-privilege credentials, verify the
+configured provider resources, and treat incomplete coverage as incomplete rather than zero.
 
 ![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
 
@@ -31,7 +31,7 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
   and previous-period controls. Every selected series is also available as versioned JSON or flat CSV.
 - A responsive, server-rendered dashboard with portfolio KPI cards, interactive same-origin canvas
-  charts, accessible daily-value fallbacks, source freshness, and quick date presets. No chart library
+  charts, accessible daily-value fallbacks, data-through and ingestion health, and quick date presets. No chart library
   or third-party browser asset is required.
 - A Site Graph dashboard for compiled repository snapshots: bounded structural SVGs, accessible
   node and edge tables, selectable link layers, two-hop page neighborhoods, goal-distance buckets,
@@ -131,6 +131,7 @@ contracts are documented under [docs](docs/architecture.md).
 
 ```bash
 python -m compileall -q src
+python -m unittest discover -s tests -v
 python -m pip wheel . --no-deps --wheel-dir dist
 ```
 

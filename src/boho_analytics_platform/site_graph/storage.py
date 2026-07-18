@@ -335,6 +335,7 @@ class SiteGraphStore:
         projection_name: str,
         goal_definition_hash: str,
         content_hash: str,
+        _connection: sqlite3.Connection | None = None,
     ) -> str:
         values = {
             "site_key": _text(site_key, "site_key", maximum=100),
@@ -347,7 +348,7 @@ class SiteGraphStore:
             "sgg", repository_snapshot_id, manifest_version_id, values["compiler_version"],
             values["projection_name"], values["goal_definition_hash"], values["content_hash"],
         )
-        with self.connect() as db:
+        def persist(db: sqlite3.Connection) -> None:
             provenance = db.execute(
                 """SELECT r.site_key,i.manifest_version_id
                    FROM site_graph_repository_snapshots r
@@ -365,6 +366,11 @@ class SiteGraphStore:
                 (record_id, values["site_key"], repository_snapshot_id, manifest_version_id, values["compiler_version"],
                  values["projection_name"], values["goal_definition_hash"], values["content_hash"], _now()),
             )
+        if _connection is None:
+            with self.connect() as db:
+                persist(db)
+        else:
+            persist(_connection)
         return record_id
 
     def save_finding(
@@ -380,6 +386,7 @@ class SiteGraphStore:
         affected_edges: list[str],
         source_fact_keys: list[str],
         content_hash: str,
+        _connection: sqlite3.Connection | None = None,
     ) -> str:
         if severity not in {"info", "warning", "critical"}:
             raise ValueError("finding severity must be info, warning, or critical")
@@ -415,7 +422,8 @@ class SiteGraphStore:
             raise ValueError(f"finding evidence exceeds {MAX_FINDING_BYTES} serialized bytes")
         record_hash = _hash(payload)
         record_id = _id("sgf", graph_snapshot_id, finding_key)
-        with self.connect() as db:
+
+        def persist(db: sqlite3.Connection) -> None:
             graph = db.execute(
                 "SELECT repository_snapshot_id FROM site_graph_snapshots WHERE id=?", (graph_snapshot_id,)
             ).fetchone()
@@ -458,4 +466,9 @@ class SiteGraphStore:
                  source_fact_keys_json, payload["content_hash"], record_hash, _now()),
             )
             _immutable(db, "site_graph_findings", record_id, record_hash)
+        if _connection is None:
+            with self.connect() as db:
+                persist(db)
+        else:
+            persist(_connection)
         return record_id

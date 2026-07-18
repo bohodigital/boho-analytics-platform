@@ -158,6 +158,8 @@ class SiteGraphDisplayReportService(SiteGraphReportService):
         report["display"] = {
             "projection": report["projection"],
             "layers": list(layers),
+            "edge_basis": "selected-layers",
+            "analysis_basis": "compiled-contextual",
             "filters": {
                 "selected_page": selected_page,
                 "edge_query": edge_query or None,
@@ -650,6 +652,8 @@ class SiteGraphDisplayReportService(SiteGraphReportService):
         return {
             "projection": "contextual",
             "layers": list(layers),
+            "edge_basis": "selected-layers",
+            "analysis_basis": "compiled-contextual",
             "filters": {
                 "selected_page": None,
                 "edge_query": None,

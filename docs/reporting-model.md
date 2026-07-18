@@ -23,29 +23,38 @@ requests never initiate syncs.
 
 The Plot Builder uses `/api/v1/series` and `/api/v1/series.csv`. It accepts the same report, site,
 start, and end scope plus `source`, `metric`, `style`, and optional `compare=1`. Style affects only
-presentation; the JSON and CSV values are identical across line, area, and bar views. The series CSV
-uses stable columns: `period,date,metric,site_id,source,unit,value`.
+presentation; the JSON and CSV values are identical across line, area, and bar views. Charts split
+line and area paths at missing calendar dates instead of implying continuity.
 
 ## Output contract
 
-Report JSON includes schema version, report/subreport/site scope, applied filters, resolved current and
-comparison windows, generation time, rows, compact current and comparison daily series, per-source observation freshness,
-forms-pipeline reconciliation, warnings, and completeness. Each row includes metric, site, source,
-unit, current value, prior value, and percentage change. Series preserve provider labels and include
-only returned dates; the dashboard does not invent zeroes for omitted dates.
+Report JSON schema version 2 includes report/subreport/site scope, applied filters, resolved current
+and comparison windows, generation time, rows, compact series, `summary_totals`, `coverage`,
+`source_health`, comparison status, nullable forms-pipeline reconciliation, warnings, and strict
+completeness. Coverage is counted per configured site, source, metric input, and expected date (or
+one exact-window cell for window metrics). Intentionally unconfigured site/source combinations have
+zero expected cells and do not degrade configured metrics. Missing detail is represented as compact
+consecutive ranges rather than one object per absent day. Source health separates provider data-through from local
+ingestion time and discloses time-basis, sampling, and data-state assumptions.
 
-Report CSV contains the flat aggregate-row columns. Series CSV contains one daily value per row and
-labels current versus comparison periods. Both deliberately exclude credentials, resource IDs,
-configuration, form/message content, and provider payloads.
+Report CSV contains flat aggregate rows. Series CSV contains one daily value per row and labels
+current versus comparison periods. Both append report/window/timezone, aggregation, coverage,
+comparison availability, data-through, ingestion, time-basis, sampling, and data-state context.
+They deliberately exclude credentials, resource IDs, configuration, form/message content, and raw
+provider payloads.
 
 ## Semantics
 
 Metric catalog rules determine aggregation. Additive counts/bytes sum; Search Console CTR and
-position are weighted; latest-state metrics select the newest point; exact-window unique/summary
+position are weighted; exact-window unique/summary
 metrics never sum overlapping sync windows. Cross-provider visitor measures remain separate.
 
-`complete = false` and a warning mean at least one configured metric has no stored contribution in
-the requested window. Zero is emitted only when a provider explicitly returned zero.
+`complete = true` requires every expected configured coverage cell. A missing provider row remains
+missing unless an explicit zero fact or a successful binding-window query proves that quiet date.
+Query-proven empty additive windows aggregate to zero without manufacturing stored metric facts.
+Search Console coverage stops at its returned data-through date so normal provider latency is not
+misstated as a finalized zero. Previous values, percentage changes, comparison charts, and comparison
+CSV rows remain absent unless both periods have comparable complete coverage.
 
 ## Scale path
 

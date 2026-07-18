@@ -38,10 +38,20 @@ class SyncEngine:
         self.http = http or JsonHttpClient(timeout=config.platform.http_timeout_seconds,
             max_bytes=config.platform.max_response_bytes)
 
+    def _selected_connection_ids(self, connection_ids: set[str] | None) -> set[str]:
+        configured = {item.id for item in self.config.connections}
+        if not connection_ids:
+            return configured
+        unknown = sorted(connection_ids - configured)
+        if unknown:
+            raise ValueError(f"unknown connection id(s): {', '.join(unknown)}")
+        return set(connection_ids)
+
     def probe(self, connection_ids: set[str] | None = None) -> list[SyncResult]:
+        selected = self._selected_connection_ids(connection_ids)
         results = []
         for connection in self.config.connections:
-            if connection_ids and connection.id not in connection_ids: continue
+            if connection.id not in selected: continue
             run_id = self.store.start_run(connection.id, None)
             try:
                 with self.credentials.acquire(connection.credential_ref) as credential:
@@ -54,25 +64,69 @@ class SyncEngine:
         return results
 
     def sync(self, window: QueryWindow, connection_ids: set[str] | None = None) -> list[SyncResult]:
+        selected = self._selected_connection_ids(connection_ids)
+        selected_bindings = [
+            binding for binding in self.config.bindings
+            if binding.connection_id in selected
+        ]
+        if not selected_bindings:
+            raise ValueError("selected connection(s) have no configured bindings")
         owner = uuid.uuid4().hex; self.store.acquire_lock("global-sync", owner)
         results: list[SyncResult] = []
         try:
             connection_map = {item.id: item for item in self.config.connections}
-            for binding in self.config.bindings:
+            for binding in selected_bindings:
                 connection = connection_map[binding.connection_id]
-                if connection_ids and connection.id not in connection_ids: continue
-                run_id = self.store.start_run(connection.id, binding.site_id)
+                binding_key = f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}"
+                run_id = self.store.start_run(
+                    connection.id,
+                    binding.site_id,
+                    binding_key=binding_key,
+                    source=connection.provider,
+                    window=window,
+                )
                 try:
                     request = SyncRequest(binding, window, binding.metric_groups)
                     with self.credentials.acquire(connection.credential_ref) as credential:
                         points = list(build_connector(connection.provider, self.config, self.http).collect(connection, credential, request))
                     validate_points(points, fixture=connection.provider == "fixture")
                     count = self.store.upsert(points)
-                    self.store.set_watermark(f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}", window.end)
-                    self.store.finish_run(run_id, "success", count)
-                    results.append(SyncResult(connection.id, binding.site_id, "success", count))
+                    if count:
+                        data_through = min(max(point.end for point in points), window.end)
+                        self.store.set_watermark(binding_key, data_through)
+                        self.store.finish_run(
+                            run_id,
+                            "success",
+                            count,
+                            result_kind="data",
+                            data_through=data_through,
+                        )
+                        results.append(SyncResult(connection.id, binding.site_id, "success", count))
+                    else:
+                        # A completed read-only provider query is authoritative
+                        # acquisition coverage even when the window contains no
+                        # events. Preserve event freshness as null while advancing
+                        # the query watermark through the requested end.
+                        self.store.set_watermark(binding_key, window.end)
+                        self.store.finish_run(
+                            run_id,
+                            "success",
+                            result_kind="empty",
+                        )
+                        results.append(SyncResult(
+                            connection.id,
+                            binding.site_id,
+                            "success",
+                            0,
+                        ))
                 except Exception as exc:
-                    category = _safe_category(exc); self.store.finish_run(run_id, "failed", category=category, message=type(exc).__name__)
+                    category = _safe_category(exc); self.store.finish_run(
+                        run_id,
+                        "failed",
+                        category=category,
+                        message=type(exc).__name__,
+                        result_kind="failed",
+                    )
                     results.append(SyncResult(connection.id, binding.site_id, "failed", 0, category))
         finally:
             self.store.release_lock("global-sync", owner)

@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+
+VALID_MANIFEST = """\
+schema_version: 1
+site:
+  key: fixture-static
+  display_name: Fixture Static Site
+  canonical_hosts:
+    - fixture.example
+repository:
+  local_path: /srv/example/fixture-static
+  expected_remote: https://github.com/example/fixture-static.git
+  ref: main
+  expected_commit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  require_clean: true
+analysis:
+  mode: source-only
+  adapter: static-html
+  include_drafts: false
+  maximum_pages: 500
+build:
+  enabled: false
+  adapter_command: null
+  output_directory: null
+cloudflare_pages:
+  enabled: true
+  account_id_ref: cloudflare:fixture-account
+  project_name: fixture-static
+  expected_production_branch: main
+routes:
+  include:
+    - /**
+  exclude:
+    - /admin/**
+canonicalization:
+  normalize_trailing_slash: true
+  strip_fragments: true
+  remove_query_parameters: true
+page_rules:
+  - id: homepage
+    path_regex: ^/$
+    roles: [homepage]
+    journey_stage: 1
+  - id: service
+    path_regex: ^/services/
+    roles: [service]
+    journey_stage: 3
+link_layers:
+  explicit_attribute: data-link-layer
+  selectors:
+    menu: [header nav a]
+    breadcrumb: ['[aria-label="Breadcrumb"] a']
+    contextual: [main article a]
+    related: ['[data-related-content] a']
+    action: ['[data-cta] a']
+    utility: [footer a]
+goals:
+  - id: contact-page
+    kind: page
+    paths: [/contact/]
+  - id: service-role
+    kind: role
+    roles: [service]
+"""

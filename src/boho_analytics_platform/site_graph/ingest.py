@@ -24,8 +24,34 @@ MAX_SOURCE_BYTES = 64 * 1024 * 1024
 MAX_TRACKED_FILES = 100_000
 MAX_LINKS = 2_000_000
 SOURCE_EXTENSIONS = {".html", ".htm", ".ts", ".tsx", ".js", ".jsx", ".mdx"}
-ROUTE_LITERAL = re.compile(r"\b(?:slug|path|href)\s*:\s*([\"'])(?P<value>[^\"']+)\1")
-JSX_HREF = re.compile(r"\bhref\s*=\s*(?:\{\s*)?([\"'])(?P<value>[^\"']+)\1")
+ROUTE_LITERAL = re.compile(
+    r"\b(?P<attr>slug|path|href|to|url|action|formAction)\s*:\s*([\"'`])(?P<value>[^\"'`]+)\2"
+)
+JSX_HREF = re.compile(r"\b(?:href|to|action|formAction)\s*=\s*(?:\{\s*)?([\"'`])(?P<value>[^\"'`]+)\1")
+JSX_ROUTE_EXPRESSION = re.compile(
+    r"\b(?:href|to|action|formAction)\s*=\s*\{\s*(?P<expr>[^}\n]{1,260})\s*\}"
+)
+ROUTER_LITERAL = re.compile(
+    r"\b(?:router\s*\.\s*)?(?:push|replace|prefetch|navigate|redirect|permanentRedirect)\s*"
+    r"\(\s*([\"'`])(?P<value>[^\"'`]+)\1"
+)
+ROUTER_EXPRESSION = re.compile(
+    r"\b(?:router\s*\.\s*)?(?:push|replace|prefetch|navigate|redirect|permanentRedirect)\s*"
+    r"\(\s*(?P<expr>[^,\)\n]{1,260})"
+)
+MARKDOWN_LINK = re.compile(r"\[(?P<label>[^\]]{0,500})\]\(\s*(?P<value>[^)\s]+)")
+SIMPLE_ROUTE_SYMBOL = re.compile(
+    r"\b(?:export\s+)?(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*"
+    r"([\"'`])(?P<value>/[^\"'`]+)\2"
+)
+OBJECT_ROUTE_BLOCK = re.compile(
+    r"\b(?:export\s+)?(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*\{"
+    r"(?P<body>.{0,20000}?)\n\}",
+    re.DOTALL,
+)
+OBJECT_ROUTE_PROPERTY = re.compile(
+    r"(?P<key>[A-Za-z_$][\w$]*|[\"'][^\"']+[\"'])\s*:\s*([\"'`])(?P<value>/[^\"'`]+)\2"
+)
 LABEL_LITERAL = re.compile(r"\b(?:label|linkLabel|title|headline)\s*:\s*([\"'])(?P<value>[^\"']{1,500})\1")
 
 
@@ -258,6 +284,21 @@ def _normalize_route(path: str, manifest: SiteGraphManifest) -> str:
     return path
 
 
+def _canonical_page_route(raw: str, manifest: SiteGraphManifest) -> str | None:
+    """Return a concrete page route, never a template or resource target."""
+    if not raw.startswith("/") or raw.startswith("//"):
+        return None
+    path = urlsplit(raw).path or "/"
+    if any(marker in path for marker in ("${", "{", "}", "[", "]", "*")):
+        return None
+    if any(segment.startswith(":") or "@" in segment for segment in path.split("/") if segment):
+        return None
+    normalized = _normalize_route(path, manifest)
+    if normalized != "/" and Path(normalized.rstrip("/")).suffix:
+        return None
+    return normalized
+
+
 def _destination(raw: str, source_route: str, manifest: SiteGraphManifest) -> tuple[str, bool, bool, bool, str | None]:
     split = urlsplit(raw)
     fragment = bool(split.fragment) or raw.startswith("#")
@@ -460,6 +501,88 @@ def _typescript_layer(path: str, context: str) -> tuple[str, float, str, bool]:
     return "contextual", 0.7, "source", False
 
 
+def _typescript_route_symbols(text: str) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    symbols: dict[str, str] = {}
+    object_routes: dict[str, dict[str, str]] = {}
+    for match in SIMPLE_ROUTE_SYMBOL.finditer(text):
+        symbols.setdefault(match.group("name"), match.group("value")[:4000])
+    for block in OBJECT_ROUTE_BLOCK.finditer(text):
+        routes: dict[str, str] = {}
+        for prop in OBJECT_ROUTE_PROPERTY.finditer(block.group("body")):
+            key = prop.group("key").strip("\"'")
+            routes.setdefault(key, prop.group("value")[:4000])
+        if routes:
+            object_routes.setdefault(block.group("name"), routes)
+    return symbols, object_routes
+
+
+def _resolve_route_expression(
+    expression: str, symbols: dict[str, str], object_routes: dict[str, dict[str, str]]
+) -> list[str]:
+    stripped = expression.strip().strip("()")
+    if not stripped:
+        return []
+    if stripped[0] in {"'", '"', "`"} and stripped[-1:] == stripped[0]:
+        return [stripped[1:-1]]
+    if stripped in symbols:
+        return [symbols[stripped]]
+    values: list[str] = []
+    for object_name, key in re.findall(r"\b([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\b", stripped):
+        value = object_routes.get(object_name, {}).get(key)
+        if value:
+            values.append(value)
+    for object_name, key in re.findall(r"\b([A-Za-z_$][\w$]*)\[['\"]([^'\"]+)['\"]\]", stripped):
+        value = object_routes.get(object_name, {}).get(key)
+        if value:
+            values.append(value)
+    for token in re.split(r"\s*(?:\?\?|&&|\|\||,)\s*", stripped):
+        if token in symbols:
+            values.append(symbols[token])
+    return values
+
+
+def _typescript_link_candidates(
+    line: str, symbols: dict[str, str], object_routes: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+
+    def add(value: str, source: str, label: str = "", position: int = 0) -> None:
+        cleaned = value.strip().strip("\"'").strip()
+        if cleaned:
+            candidates.append({
+                "value": cleaned[:4000],
+                "source": source,
+                "label": label[:500],
+                "position": position,
+            })
+
+    for source, pattern in (
+        ("object-field", ROUTE_LITERAL),
+        ("jsx-literal", JSX_HREF),
+        ("router-literal", ROUTER_LITERAL),
+    ):
+        for match in pattern.finditer(line):
+            if source != "object-field" or match.group("attr") in {
+                "href", "to", "url", "action", "formAction"
+            }:
+                add(match.group("value"), source, position=match.start())
+    for match in MARKDOWN_LINK.finditer(line):
+        add(match.group("value"), "markdown", match.group("label"), match.start())
+    for source, pattern in (("jsx-expression", JSX_ROUTE_EXPRESSION), ("router-expression", ROUTER_EXPRESSION)):
+        for match in pattern.finditer(line):
+            expression = match.group("expr")
+            for value in _resolve_route_expression(expression, symbols, object_routes):
+                add(value, source, position=match.start())
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for candidate in candidates:
+        key = (candidate["position"], candidate["value"])
+        if key not in seen:
+            deduped.append(candidate)
+            seen.add(key)
+    return sorted(deduped, key=lambda item: (item["position"], item["value"]))
+
+
 def _extract_vinext(
     repository: Path, revision: str, entries: list[TrackedFile], manifest: SiteGraphManifest
 ) -> tuple[list[PageFact], list[LinkOccurrence], dict[str, Any]]:
@@ -479,7 +602,7 @@ def _extract_vinext(
         and not entry.path.endswith("content/publicPages.ts")
     ]
     sources: dict[str, str] = {}
-    route_sources: dict[str, tuple[str, float, str]] = {"/": ("app/page.tsx", 0.95, "")}
+    route_sources: dict[str, tuple[str, float, str]] = {}
     raw_occurrences: list[dict[str, Any]] = []
     global_occurrences: list[dict[str, Any]] = []
     for entry in candidates:
@@ -489,10 +612,12 @@ def _extract_vinext(
         except UnicodeError as exc:
             raise IngestError(f"source is not UTF-8: {entry.path}") from exc
         sources[entry.path] = text
+        symbols, object_routes = _typescript_route_symbols(text)
         file_route = _source_route(entry.path)
-        if file_route:
-            route_sources.setdefault(_normalize_route(file_route, manifest), (entry.path, 1.0, text))
-        current_route = file_route
+        concrete_file_route = _canonical_page_route(file_route, manifest) if file_route else None
+        if concrete_file_route and _route_allowed(concrete_file_route, manifest):
+            route_sources.setdefault(concrete_file_route, (entry.path, 1.0, text))
+        current_route = concrete_file_route
         current_route_excluded = current_route in retired_routes
         recent: list[str] = []
         last_label = ""
@@ -502,35 +627,41 @@ def _extract_vinext(
             label_match = LABEL_LITERAL.search(line)
             if label_match:
                 last_label = label_match.group("value")[:500]
-            route_matches = list(ROUTE_LITERAL.finditer(line))
-            for match in route_matches:
-                value = match.group("value")
-                if match.group(0).lstrip().startswith("slug") and value.startswith("/"):
-                    current_route = _normalize_route(urlsplit(value).path, manifest)
-                    current_route_excluded = current_route in retired_routes
+            link_candidates = _typescript_link_candidates(line, symbols, object_routes)
+            events: list[tuple[int, str, Any]] = [
+                (match.start(), "route", match)
+                for match in ROUTE_LITERAL.finditer(line)
+                if match.group("attr") == "slug"
+            ]
+            events.extend(
+                (int(candidate["position"]), "link", candidate)
+                for candidate in link_candidates
+            )
+            for _position, kind, event in sorted(events, key=lambda item: (item[0], item[1])):
+                if kind == "route":
+                    candidate_route = _canonical_page_route(event.group("value"), manifest)
+                    current_route = candidate_route
+                    current_route_excluded = (
+                        candidate_route is None
+                        or candidate_route in retired_routes
+                        or not _route_allowed(candidate_route, manifest)
+                    )
                     if not current_route_excluded:
-                        route_sources.setdefault(current_route, (entry.path, 0.96, text))
-            hrefs = list(ROUTE_LITERAL.finditer(line)) + list(JSX_HREF.finditer(line))
-            seen_spans: set[tuple[int, int]] = set()
-            for match in hrefs:
-                if match.span() in seen_spans:
+                        assert candidate_route is not None
+                        route_sources.setdefault(candidate_route, (entry.path, 0.96, text))
                     continue
-                seen_spans.add(match.span())
-                raw_destination = match.group("value")
+                candidate = event
+                raw_destination = candidate["value"]
                 if not raw_destination.startswith(("/", "#", "http://", "https://", "mailto:", "tel:")):
                     continue
                 if current_route_excluded:
                     continue
-                if raw_destination.startswith("/") and not raw_destination.startswith("//"):
-                    destination_route = _normalize_route(urlsplit(raw_destination).path or "/", manifest)
-                    if _route_allowed(destination_route, manifest):
-                        route_sources.setdefault(destination_route, (entry.path, 0.72, text))
                 context = "\n".join(recent)
                 layer, confidence, landmark, repeated = _typescript_layer(entry.path, context)
                 occurrence = {
                     "source": current_route,
                     "raw": raw_destination,
-                    "label": last_label,
+                    "label": candidate["label"] or last_label,
                     "line": line_number,
                     "path": entry.path,
                     "context": re.sub(r"\s+", " ", context).strip()[-500:],
@@ -538,6 +669,7 @@ def _extract_vinext(
                     "confidence": confidence,
                     "landmark": landmark,
                     "repeated": repeated,
+                    "source_kind": candidate["source"],
                 }
                 (global_occurrences if current_route is None and repeated else raw_occurrences).append(occurrence)
     routes = sorted(
@@ -567,6 +699,8 @@ def _extract_vinext(
     for ordinal, occurrence in enumerate(expanded, 1):
         source = occurrence["source"] or "/"
         if source not in route_set:
+            if "/" not in route_set:
+                continue
             source = "/"
         canonical, crawlable, fragment, external, action_kind = _destination(occurrence["raw"], source, manifest)
         digest = hashlib.sha256(
@@ -589,16 +723,29 @@ def _extract_vinext(
             external=external,
             fragment=fragment,
             action_kind=action_kind or ("cta" if occurrence["layer"] == "action" else None),
-            evidence={"source": "typescript", "classification": "bounded-source-heuristic"},
+            evidence={
+                "source": "typescript",
+                "classification": "bounded-source-heuristic",
+                "extractor": occurrence.get("source_kind", "unknown"),
+            },
         ))
         if len(links) > MAX_LINKS:
             raise IngestError(f"source extraction exceeds {MAX_LINKS} link occurrences")
+    unresolved_internal_targets = sum(
+        1
+        for link in links
+        if not link.external
+        and not link.fragment
+        and link.action_kind is None
+        and link.canonical_destination not in route_set
+    )
     return pages, links, {
         "source_files": len(candidates),
         "source_bytes": total[0],
         "route_evidence": "app-router-and-content-literals",
         "classification": "bounded-source-heuristic",
         "ambiguous_links": sum(1 for link in links if link.confidence < 0.8),
+        "unresolved_internal_targets": unresolved_internal_targets,
         "build_output": "not-executed-source-only",
         "retired_source_routes": len(retired_routes),
     }

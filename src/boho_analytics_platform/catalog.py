@@ -14,10 +14,46 @@ class MetricDefinition:
     unit: str
     aggregation: str
     description: str
+    coverage_inputs: tuple[str, ...]
 
 
-def _metric(identifier: str, source: str, unit: str, aggregation: str, description: str) -> MetricDefinition:
-    return MetricDefinition(identifier, source, unit, aggregation, description)
+@dataclass(frozen=True, slots=True)
+class SourceSemantics:
+    """Honest provider-level interpretation metadata for reports and exports."""
+
+    time_basis: str
+    sampling: str
+    data_state: str
+
+
+def _metric(
+    identifier: str,
+    source: str,
+    unit: str,
+    aggregation: str,
+    description: str,
+    *,
+    coverage_inputs: tuple[str, ...] | None = None,
+) -> MetricDefinition:
+    return MetricDefinition(
+        identifier,
+        source,
+        unit,
+        aggregation,
+        description,
+        coverage_inputs or (identifier,),
+    )
+
+
+SOURCE_SEMANTICS = {
+    "umami": SourceSemantics("request-timezone", "provider-reported", "unknown"),
+    "cloudflare": SourceSemantics("unverified-provider-date-bucket", "adaptive", "provisional"),
+    "google-analytics": SourceSemantics("response-validated-property-timezone-or-unverified", "provider-reported", "unknown"),
+    "search-console": SourceSemantics("America/Los_Angeles-provider-date-mapped-to-site-day", "provider-reported", "final-requested"),
+    "cloudflare-forms": SourceSemantics("UTC-instant-filtered-configured-site-day", "exact-count", "snapshot"),
+    "forms-inbox": SourceSemantics("UTC-instant-filtered-configured-site-day", "exact-count", "snapshot"),
+    "fixture": SourceSemantics("fixture-declared", "fixture", "fixture"),
+}
 
 
 METRICS = {item.id: item for item in (
@@ -37,14 +73,16 @@ METRICS = {item.id: item for item in (
     _metric("google.key-events", "google-analytics", "count", "sum", "GA4 configured key events."),
     _metric("search.clicks", "search-console", "count", "sum", "Search Console clicks."),
     _metric("search.impressions", "search-console", "count", "sum", "Search Console impressions."),
-    _metric("search.ctr", "search-console", "ratio", "weighted", "Search Console row CTR; not additive."),
-    _metric("search.position", "search-console", "position", "weighted", "Search Console average position; not additive."),
+    _metric("search.ctr", "search-console", "ratio", "weighted", "Search Console row CTR; not additive.",
+        coverage_inputs=("search.clicks", "search.impressions")),
+    _metric("search.position", "search-console", "position", "weighted", "Search Console average position; not additive.",
+        coverage_inputs=("search.impressions", "search.position")),
     _metric("forms.submissions", "cloudflare-forms", "count", "sum", "Durably stored form submissions."),
     _metric("forms.pending", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is pending."),
     _metric("forms.sent", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is marked sent."),
     _metric("forms.failed", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is marked failed."),
     _metric("forms.inbox-deliveries", "forms-inbox", "count", "sum", "Matching notification messages observed in the configured mailbox."),
-    _metric("forms.inbox-unread", "forms-inbox", "count", "latest", "Matching notification messages without a Seen flag."),
+    _metric("forms.inbox-unread", "forms-inbox", "count", "sum", "Matching notification messages received in the window without a Seen flag."),
 )}
 
 

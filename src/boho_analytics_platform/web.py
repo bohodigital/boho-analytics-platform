@@ -8,21 +8,22 @@ import hmac
 import html
 import json
 import math
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
-from zoneinfo import ZoneInfo
 
+from .build_info import build_identity
 from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
 from .site_graph.reporting import SiteGraphDisplayReportService
 from .site_graph.storage import SiteGraphStore
+from .time_window import report_window
 
 
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "Permissions-Policy": "accelerometer=(), autoplay=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -30,6 +31,8 @@ SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Cross-Origin-Resource-Policy": "same-origin",
 }
+
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#17201d"/><path d="M17 15h18c10 0 15 4 15 12 0 5-3 8-7 10 5 1 8 5 8 11 0 9-6 13-17 13H17V15zm12 10v8h6c3 0 5-1 5-4s-2-4-5-4h-6zm0 17v9h7c3 0 5-2 5-5 0-2-2-4-5-4h-7z" fill="#ffd4c2"/></svg>"""
 
 SITE_GRAPH_LAYERS = ("contextual", "related", "action", "menu", "breadcrumb", "utility")
 
@@ -84,17 +87,17 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
-    ("Page views", ("umami.pageviews", "google.pageviews"), "Audience attention"),
-    ("Sessions", ("umami.sessions", "google.sessions"), "Engaged visits"),
+    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
+    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
     ("Search impressions", ("search.impressions",), "Organic visibility"),
     ("Inbox deliveries", ("forms.inbox-deliveries",), "Form notification evidence"),
 )
 
 TRAFFIC_SUMMARY = (
-    ("Page views", ("umami.pageviews", "google.pageviews"), "Audience attention"),
-    ("Sessions", ("umami.sessions", "google.sessions"), "Engaged visits"),
-    ("Visitors", ("umami.visitors", "google.active-users"), "Measured audience"),
-    ("Edge requests", ("cloudflare.requests",), "Cloudflare delivery volume"),
+    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
+    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
+    ("Umami visitors", ("umami.visitors",), "Unique within each exact provider window; summed by site"),
+    ("GA active-user days", ("google.active-users",), "Daily active users summed; not unique across days"),
 )
 
 SEARCH_SUMMARY = (
@@ -120,14 +123,14 @@ BASE_CSS = """
 .report-nav,.subnav,.quick-links{display:flex;flex-wrap:wrap;gap:8px}.report-nav{margin:0 0 12px}.report-nav a,.subnav a,.quick-links a{padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.6);color:var(--ink-2);font-size:13px;font-weight:700;text-decoration:none}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{background:#fff;border-color:#b9bab4}.report-nav a.active,.subnav a.active{background:var(--ink);border-color:var(--ink);color:#fff}.subnav{margin-bottom:16px}
 .panel{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}.control-panel{padding:18px;margin-bottom:18px}.panel-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:14px}.panel-heading h2{margin:0;font-size:18px;letter-spacing:-.02em}.panel-heading p{margin:3px 0 0;color:var(--muted);font-size:13px}.filter-form{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end}.field{display:grid;min-width:0;gap:6px}fieldset.field{min-width:0;margin:0}.field span{font-size:12px;font-weight:750;color:var(--ink-2)}input,select{width:100%;min-height:42px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(232,109,61,.28);outline-offset:2px;border-color:var(--accent)}button{min-height:42px;padding:9px 16px;border:1px solid var(--ink);border-radius:9px;background:var(--ink);color:#fff;font-weight:800;cursor:pointer}button:hover{background:#283530}.tools-row{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #ecebe5}.tools-label{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
 .alerts{display:grid;gap:9px;margin:0 0 18px}.alert{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid #f0d7b4;border-radius:11px;background:var(--amber-soft);color:#77440f}.alert-mark{display:grid;place-items:center;flex:0 0 22px;height:22px;border-radius:50%;background:#d98627;color:#fff;font-size:12px;font-weight:900}
-.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card[data-state="partial"]{border-color:#e0b16d;background:#fffaf0}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}.trend.partial{background:var(--amber-soft);color:var(--amber)}
 .chart-panel{padding:20px;margin-bottom:18px}.chart-panel .panel-heading{margin-bottom:18px}.metric-description{max-width:650px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:linear-gradient(180deg,#fff,#fbfaf7)}.chart-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px}.chart-card h3{margin:0;font-size:14px}.chart-total{color:var(--muted);font-size:12px;font-weight:750}.chart-scroll{overflow-x:auto;padding:4px 0 0}.bar-grid{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);align-items:end;gap:4px;height:205px;min-width:100%;border-bottom:1px solid #cfd1cc;background:repeating-linear-gradient(to top,transparent 0,transparent 50px,#ecece7 51px)}.bar-grid.density-mid{grid-auto-columns:minmax(9px,1fr)}.bar-grid.density-wide{grid-auto-columns:minmax(6px,1fr)}.bar-slot{height:100%;display:flex;align-items:end;justify-content:center}.bar{display:block;width:72%;min-height:2px;border-radius:5px 5px 2px 2px;background:var(--accent)}.bar.tone-1{background:#357a68}.bar.tone-2{background:#6772a8}.bar.tone-3{background:#ba8b32}.axis-labels{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--muted);font-size:11px}.chart-data{margin-top:10px;color:var(--muted);font-size:12px}.chart-data summary{cursor:pointer;font-weight:700}.empty-state{padding:34px;border:1px dashed #cacbc5;border-radius:12px;text-align:center;color:var(--muted)}
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
 .graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 .graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
-.graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.site-graph-svg{min-height:430px}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
+.graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{position:relative;min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.graph-canvas-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}.graph-canvas-toolbar button{min-height:32px;padding:5px 9px;border-color:#c8c9c3;background:rgba(255,255,255,.88);color:var(--ink-2);font-size:12px;font-weight:800}.graph-canvas-toolbar button:hover{background:#fff;color:var(--ink)}.graph-zoom-status{padding:4px 7px;border-radius:999px;background:#efefeb;color:var(--muted);font-size:11px;font-weight:800}.site-graph-svg{min-height:430px;cursor:grab;touch-action:none;user-select:none}.graph-map.is-panning .site-graph-svg{cursor:grabbing}.graph-viewport{transform-origin:0 0}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{stroke-width:3}.graph-edge.is-related{stroke-width:2.2}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
 @media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
 @media(max-width:980px){.graph-form,.edge-tools{grid-template-columns:1fr 1fr}.graph-form button,.edge-tools button{grid-column:span 2}.graph-stage,.graph-view-grid{grid-template-columns:1fr}.graph-disclosure{grid-template-columns:1fr 1fr}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form,.edge-tools{grid-template-columns:1fr}.filter-form button,.graph-form button,.edge-tools button{grid-column:auto}.tools-row,.footer,.pager{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.graph-disclosure{grid-template-columns:1fr}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
@@ -154,6 +157,22 @@ JS = r"""
       if (visible && first === null) first = option;
     }
     if (metric.selectedOptions[0]?.disabled && first) first.selected = true;
+  }
+
+  function updateSiteOptions() {
+    const source = document.querySelector('select[name="source"]');
+    const metric = document.querySelector('select[name="metric"]');
+    const site = document.querySelector('select[name="site"]');
+    const selectedSource = source?.value || metric?.selectedOptions[0]?.dataset.source || "";
+    if (!selectedSource || !site) return;
+    let first = null;
+    for (const option of site.options) {
+      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
+      option.hidden = !supported;
+      option.disabled = !supported;
+      if (supported && first === null) first = option;
+    }
+    if (site.selectedOptions[0]?.disabled && first) first.selected = true;
   }
 
   function drawChart(canvas, payload) {
@@ -214,25 +233,41 @@ JS = r"""
       ctx.fillText(dateAt(index), xIndex(index), height - margin.bottom + 13);
     }
 
+    function contiguousSegments(points) {
+      const segments = [];
+      for (const point of points) {
+        const current = segments[segments.length - 1];
+        const previous = current?.[current.length - 1];
+        const gapDays = previous ? Math.round((dateMs(point.date) - dateMs(previous.date)) / 86400000) : 1;
+        if (!current || gapDays !== 1) segments.push([point]); else current.push(point);
+      }
+      return segments;
+    }
+
     function path(item, color, dashed, fill) {
       if (!item.points.length) return;
       const startMs = dashed ? comparisonStart : currentStart;
-      ctx.beginPath();
-      item.points.forEach((point, index) => {
-        const px = xPoint(point, startMs), py = y(Number(point.value));
-        if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      });
-      if (fill && item.points.length > 1) {
-        ctx.lineTo(xPoint(item.points[item.points.length - 1], startMs), y(min));
-        ctx.lineTo(xPoint(item.points[0], startMs), y(min)); ctx.closePath();
-        const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
-        gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
-        ctx.fillStyle = gradient; ctx.fill();
+      for (const segment of contiguousSegments(item.points)) {
         ctx.beginPath();
-        item.points.forEach((point, index) => { const px=xPoint(point,startMs),py=y(Number(point.value)); if(index===0)ctx.moveTo(px,py);else ctx.lineTo(px,py); });
+        segment.forEach((point, index) => {
+          const px = xPoint(point, startMs), py = y(Number(point.value));
+          if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        if (fill && segment.length > 1) {
+          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
+          ctx.lineTo(xPoint(segment[0], startMs), y(min)); ctx.closePath();
+          const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
+          gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
+          ctx.fillStyle = gradient; ctx.fill();
+          ctx.beginPath();
+          segment.forEach((point, index) => {
+            const px = xPoint(point, startMs), py = y(Number(point.value));
+            if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          });
+        }
+        ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
+        ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       }
-      ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
-      ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
       if (!dashed && item.points.length <= 45) {
         ctx.fillStyle = color;
@@ -266,10 +301,13 @@ JS = r"""
       });
       if (comparison.length) {
         const li = document.createElement("li"); li.textContent = "Dashed = previous period"; legend.append(li);
+      } else if (payload.compare && !payload.comparison_available) {
+        const li = document.createElement("li"); li.textContent = "Previous-period comparison unavailable"; legend.append(li);
       }
     }
     const rangeText = `${dateAt(0)} through ${dateAt(dayCount - 1)}`;
-    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`;
+    const comparisonText = payload.compare && !payload.comparison_available ? " - comparison unavailable" : "";
+    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`;
     canvas.dataset.rendered = "true";
     canvas.onpointermove = event => {
       const bounds = canvas.getBoundingClientRect();
@@ -281,7 +319,7 @@ JS = r"""
       });
       status.textContent = `${selectedDate} - ${values.join(" - ")}`;
     };
-    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`; };
+    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`; };
   }
 
   async function loadChart() {
@@ -306,9 +344,138 @@ JS = r"""
     if (!stage) return;
     const inspector = stage.querySelector("[data-graph-inspector]");
     const svg = stage.querySelector(".site-graph-svg");
+    const map = stage.querySelector("[data-graph-map]");
+    const viewport = stage.querySelector("[data-graph-viewport]");
+    const zoomInButton = stage.querySelector("[data-graph-zoom-in]");
+    const zoomOutButton = stage.querySelector("[data-graph-zoom-out]");
+    const zoomResetButton = stage.querySelector("[data-graph-zoom-reset]");
+    const zoomStatus = stage.querySelector("[data-graph-zoom-status]");
     const nodes = Array.from(stage.querySelectorAll("[data-graph-node]"));
     const edges = Array.from(stage.querySelectorAll("[data-graph-edge]"));
     if (!inspector || !svg || (!nodes.length && !edges.length)) return;
+
+    function initCanvasView() {
+      if (!viewport) return;
+      const viewBox = svg.viewBox.baseVal;
+      if (!viewBox || !viewBox.width || !viewBox.height) return;
+      const transform = {x: 0, y: 0, scale: 1, homeX: 0, homeY: 0, homeScale: 1};
+      let dragState = null;
+
+      function clientToViewBox(clientX, clientY) {
+        const rect = svg.getBoundingClientRect();
+        const width = rect.width || 1;
+        const height = rect.height || 1;
+        return {
+          x: viewBox.x + ((clientX - rect.left) / width) * viewBox.width,
+          y: viewBox.y + ((clientY - rect.top) / height) * viewBox.height,
+        };
+      }
+
+      function clampScale(scale) {
+        return Math.min(Math.max(scale, transform.homeScale * 0.45), transform.homeScale * 3.2);
+      }
+
+      function setTransform(x, y, scale) {
+        transform.x = x;
+        transform.y = y;
+        transform.scale = clampScale(scale);
+        viewport.setAttribute(
+          "transform",
+          `translate(${transform.x.toFixed(2)} ${transform.y.toFixed(2)}) scale(${transform.scale.toFixed(4)})`
+        );
+        if (zoomStatus) {
+          zoomStatus.textContent = `${Math.round((transform.scale / transform.homeScale) * 100)}%`;
+        }
+      }
+
+      function fitView() {
+        let box;
+        try {
+          box = viewport.getBBox();
+        } catch {
+          box = {x: 0, y: 0, width: viewBox.width, height: viewBox.height};
+        }
+        const margin = Math.max(72, Math.min(viewBox.width, viewBox.height) * 0.06);
+        const usableWidth = Math.max(1, viewBox.width - margin * 2);
+        const usableHeight = Math.max(1, viewBox.height - margin * 2);
+        const scale = clampScale(Math.min(usableWidth / Math.max(1, box.width), usableHeight / Math.max(1, box.height), 1.08) * 0.98);
+        const x = viewBox.x + (viewBox.width - box.width * scale) / 2 - box.x * scale;
+        const y = viewBox.y + (viewBox.height - box.height * scale) / 2 - box.y * scale;
+        transform.homeX = x;
+        transform.homeY = y;
+        transform.homeScale = scale || 1;
+        setTransform(x, y, transform.homeScale);
+      }
+
+      function zoomAt(factor, point) {
+        const nextScale = clampScale(transform.scale * factor);
+        const anchorX = (point.x - transform.x) / transform.scale;
+        const anchorY = (point.y - transform.y) / transform.scale;
+        setTransform(point.x - anchorX * nextScale, point.y - anchorY * nextScale, nextScale);
+      }
+
+      function zoomFromCenter(factor) {
+        zoomAt(factor, {x: viewBox.x + viewBox.width / 2, y: viewBox.y + viewBox.height / 2});
+      }
+
+      zoomInButton?.addEventListener("click", () => zoomFromCenter(1.18));
+      zoomOutButton?.addEventListener("click", () => zoomFromCenter(1 / 1.18));
+      zoomResetButton?.addEventListener("click", fitView);
+      svg.addEventListener("wheel", event => {
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        zoomAt(factor, clientToViewBox(event.clientX, event.clientY));
+      }, {passive: false});
+
+      svg.addEventListener("pointerdown", event => {
+        if (event.button !== 0 || event.pointerType === "mouse" && event.buttons !== 1) return;
+        const start = clientToViewBox(event.clientX, event.clientY);
+        dragState = {
+          pointerId: event.pointerId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          startViewX: start.x,
+          startViewY: start.y,
+          x: transform.x,
+          y: transform.y,
+          moved: false,
+        };
+        svg.setPointerCapture?.(event.pointerId);
+        map?.classList.add("is-panning");
+      });
+
+      svg.addEventListener("pointermove", event => {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const current = clientToViewBox(event.clientX, event.clientY);
+        const screenMove = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
+        if (screenMove > 3) {
+          dragState.moved = true;
+          stage.dataset.graphDragging = "true";
+          setTransform(
+            dragState.x + current.x - dragState.startViewX,
+            dragState.y + current.y - dragState.startViewY,
+            transform.scale
+          );
+        }
+      });
+
+      function finishDrag(event) {
+        if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const moved = dragState.moved;
+        dragState = null;
+        map?.classList.remove("is-panning");
+        stage.dataset.graphDragging = "false";
+        if (moved) {
+          stage.dataset.graphSuppressClick = "true";
+          window.setTimeout(() => { stage.dataset.graphSuppressClick = "false"; }, 0);
+        }
+      }
+
+      svg.addEventListener("pointerup", finishDrag);
+      svg.addEventListener("pointercancel", finishDrag);
+      fitView();
+      window.addEventListener("resize", () => fitView(), {passive: true});
+    }
 
     function isPinned() {
       return stage.dataset.graphPinned === "true";
@@ -407,6 +574,11 @@ JS = r"""
       element.addEventListener("pointerenter", () => { if (!isPinned()) focusFn(element, false); });
       element.addEventListener("focus", () => { if (!isPinned()) focusFn(element, false); });
       element.addEventListener("click", event => {
+        if (stage.dataset.graphSuppressClick === "true" || stage.dataset.graphDragging === "true") {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         focusFn(element, true);
@@ -426,16 +598,27 @@ JS = r"""
     for (const edge of edges) bindInteractiveElement(edge, focusEdge);
     stage.addEventListener("pointerleave", () => { if (!isPinned()) clearGraph(); });
     stage.addEventListener("click", event => {
-      if (event.target === stage || event.target === svg) clearGraph();
+      if (stage.dataset.graphSuppressClick === "true") return;
+      if (event.target === stage || event.target === svg || event.target === viewport || event.target.classList?.contains("graph-depth-plane")) clearGraph();
     });
     document.addEventListener("keydown", event => {
       if (event.key === "Escape" && stage.contains(document.activeElement)) clearGraph();
     });
+    initCanvasView();
     clearGraph();
   }
 
   const source = document.querySelector('select[name="source"]');
-  if (source) { updateMetricOptions(); source.addEventListener("change", updateMetricOptions); }
+  if (source) {
+    updateMetricOptions();
+    updateSiteOptions();
+    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); });
+  }
+  const metric = document.querySelector('select[name="metric"]');
+  if (!source && metric) {
+    updateSiteOptions();
+    metric.addEventListener("change", updateSiteOptions);
+  }
   loadChart();
   initSiteGraph();
 })();
@@ -443,21 +626,25 @@ JS = r"""
 
 
 def _window(query, timezone, default_days):
-    zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
-    today = datetime.now(zone).date()
-    end_date = datetime.fromisoformat(query.get("end", [today.isoformat()])[0]).date()
-    start_date = datetime.fromisoformat(
-        query.get("start", [(end_date - timedelta(days=default_days)).isoformat()])[0]
-    ).date()
-    return QueryWindow(
-        datetime.combine(start_date, time.min, zone),
-        datetime.combine(end_date, time.min, zone),
-        timezone,
+    return report_window(
+        timezone=timezone,
+        default_days=default_days,
+        start=query.get("start", [None])[0],
+        end=query.get("end", [None])[0],
     )
 
 
 def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def _compare_flag(query) -> bool:
+    value = query.get("compare", [""])[0].casefold()
+    if value in {"", "0", "false", "no"}:
+        return False
+    if value in {"1", "true", "yes"}:
+        return True
+    raise ValueError("invalid comparison flag")
 
 
 def _metric_label(metric: str) -> str:
@@ -490,14 +677,37 @@ def _format_value(value: int | float | None, unit: str = "count") -> str:
 
 
 def _metric_total(result, metric):
+    summary = result.get("summary_totals", {}).get(metric)
+    if summary is not None:
+        return {
+            "value": summary["value"],
+            "previous": summary.get("previous_value"),
+            "change": summary.get("change_percent"),
+            "unit": summary["unit"],
+            "metric": metric,
+            "source": summary.get("source"),
+            "coverage_status": summary.get("coverage_status", "unknown"),
+            "covered_cells": summary.get("covered_cells", 0),
+            "expected_cells": summary.get("expected_cells", 0),
+            "observed": summary.get("observed", False),
+        }
     rows = [row for row in result["rows"] if row["metric"] == metric]
     if not rows:
+        return None
+    if metric in METRICS and METRICS[metric].aggregation in {"weighted", "latest"}:
         return None
     value = sum(float(row["value"]) for row in rows)
     prior_values = [float(row["previous_value"]) for row in rows if row["previous_value"] is not None]
     previous = sum(prior_values) if prior_values else None
     change = None if previous in {None, 0} else round((value - previous) / previous * 100, 1)
-    return {"value": value, "previous": previous, "change": change, "unit": rows[0]["unit"], "metric": metric}
+    return {
+        "value": value, "previous": previous, "change": change,
+        "unit": rows[0]["unit"], "metric": metric, "source": rows[0]["source"],
+        "coverage_status": "legacy",
+        "covered_cells": 0,
+        "expected_cells": 0,
+        "observed": True,
+    }
 
 
 def _trend(change, *, lower_is_better=False):
@@ -528,35 +738,66 @@ def _summary_cards(result, expected_metrics):
     }
     for label, candidates, note in definitions:
         total = None
+        selected_metric = candidates[0]
         for metric in candidates:
             total = _metric_total(result, metric)
             if total:
+                selected_metric = metric
                 break
             pipeline_key = pipeline_values.get(metric)
             if pipeline_key and result["forms_pipeline"] is not None:
                 total = {
-                    "value": result["forms_pipeline"].get(pipeline_key, 0),
+                    "value": result["forms_pipeline"].get(pipeline_key),
                     "previous": None,
                     "change": None,
                     "unit": "count",
                     "metric": metric,
+                    "source": None,
+                    "coverage_status": "unknown",
+                    "covered_cells": 0,
+                    "expected_cells": 0,
+                    "observed": False,
                 }
+                selected_metric = metric
                 break
-        if total:
+        observed = total is not None and total["value"] is not None
+        partial = bool(total and total.get("coverage_status") == "partial")
+        withheld = bool(
+            total and total["value"] is None and partial
+            and any(row["metric"] == selected_metric for row in result["rows"])
+        )
+        if observed:
             value = _format_value(total["value"], total["unit"])
             source_row = next((row for row in result["rows"] if row["metric"] == total["metric"]), None)
-            source = _source_label(source_row["source"]) if source_row else "Current window"
-            badge = _trend(
-                total["change"],
-                lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
+            source_id = total.get("source") or (source_row["source"] if source_row else None)
+            source = _source_label(source_id) if source_id else "Current window"
+            badge = (
+                '<span class="trend partial">Partial data</span>'
+                if partial
+                else _trend(
+                    total["change"],
+                    lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
+                )
             )
-            detail = f"{note} · {source}"
+            coverage_note = (
+                f'; observed {total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+                if partial else ""
+            )
+            detail = f"{note} - {source}{coverage_note}"
+        elif withheld:
+            value = "Withheld"
+            badge = '<span class="trend partial">Partial data</span>'
+            detail = (
+                f'{note} - aggregate withheld; observed '
+                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+            )
         else:
-            value = "—"
-            badge = '<span class="trend flat">No data</span>'
-            detail = note
+            value = "Unknown"
+            badge = '<span class="trend flat">Not observed</span>'
+            detail = f"{note} - no stored observation"
+        state = "partial" if partial else "observed" if observed else "unknown"
         cards.append(
-            f'<article class="kpi-card"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
+            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
             f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
@@ -582,13 +823,38 @@ def _chart_html(result, metric, site_names):
                 f'<span class="bar-slot"><span aria-hidden="true" class="bar tone-{index % 4} h-{level}" title="{_e(title)}"></span></span>'
             )
             data_rows.append(f'<tr><td>{_e(point["date"])}</td><td>{_e(readable)}</td></tr>')
-        total = sum(float(point["value"]) for point in points)
+        aggregate_row = next(
+            (
+                row for row in result.get("rows", [])
+                if row["metric"] == metric
+                and row["site_id"] == series["site_id"]
+                and row["source"] == series["source"]
+            ),
+            None,
+        )
+        aggregate = (
+            aggregate_row["value"]
+            if aggregate_row is not None
+            else sum(float(point["value"]) for point in points)
+        )
+        aggregation = METRICS[metric].aggregation if metric in METRICS else "sum"
+        coverage_status = (
+            aggregate_row.get("coverage_status", "unknown")
+            if aggregate_row is not None else "unknown"
+        )
+        aggregate_label = (
+            "window aggregate"
+            if aggregation in {"weighted", "latest"}
+            else "observed total (partial)"
+            if coverage_status == "partial"
+            else "window total"
+        )
         first = points[0]["date"] if points else ""
         last = points[-1]["date"] if points else ""
         cards.append(
             f'<article class="chart-card" data-chart="{_e(metric)}"><div class="chart-card-head">'
             f'<h3>{_e(site_names.get(series["site_id"], series["site_id"]))}</h3>'
-            f'<span class="chart-total">{_e(_format_value(total, series["unit"]))} total</span></div>'
+            f'<span class="chart-total">{_e(_format_value(aggregate, series["unit"]))} {_e(aggregate_label)}</span></div>'
             f'<div class="chart-scroll"><div class="bar-grid {density}" role="img" aria-label="{_e(_metric_label(metric))} by day for {site_names.get(series["site_id"], series["site_id"])}">'
             + "".join(bars)
             + f'</div><div class="axis-labels"><span>{_e(first)}</span><span>{_e(last)}</span></div></div>'
@@ -608,24 +874,46 @@ def _forms_html(pipeline):
         "failed": "Failed",
     }
     items = "".join(
-        f'<div class="pipeline-item"><b>{_e(labels[key])}</b><span class="pipeline-value">{_e(_format_value(value))}</span>'
+        f'<div class="pipeline-item" data-state="{"observed" if value is not None else "unknown"}"><b>{_e(labels[key])}</b>'
+        f'<span class="pipeline-value">{_e(_format_value(value))}</span>'
         f'<span>{"Current window" if key != "delivery_gap" else "Stored minus delivered"}</span></div>'
-        for key, value in pipeline.items()
+        for key, value in pipeline.items() if key in labels
     )
-    gap = pipeline.get("delivery_gap", 0)
-    note = "Storage and inbox evidence agree." if gap == 0 else "Counts differ; use the forms report to inspect notification state."
+    gap = pipeline.get("delivery_gap")
+    note = (
+        "Storage and inbox evidence agree." if gap == 0
+        else "Counts differ; use the forms report to inspect notification state." if gap is not None
+        else "Storage and inbox evidence are not both available, so no delivery gap is asserted."
+    )
     return f'<section class="panel section-panel"><div class="panel-heading"><div><h2>Forms delivery</h2><p>Independent storage and mailbox evidence.</p></div></div><div class="pipeline-grid">{items}</div><p class="pipeline-note">{_e(note)}</p></section>'
 
 
 def _health_html(result, expected_metrics):
-    present = {row["metric"] for row in result["rows"]}
-    coverage = f"{len(present)} of {len(expected_metrics)} metrics"
-    freshness = []
-    for source, observed in result["freshness"].items():
-        timestamp = datetime.fromisoformat(observed).astimezone(UTC).strftime("%b %d, %H:%M UTC")
-        freshness.append(
-            f'<div class="health-item"><b>{_e(_source_label(source))}</b><span>Observed {_e(timestamp)}</span></div>'
+    report_coverage = result.get("coverage")
+    if report_coverage:
+        coverage = (
+            f"{report_coverage['covered_cells']} of {report_coverage['expected_cells']} expected cells; "
+            f"status {report_coverage['status']}"
         )
+    else:
+        present = {row["metric"] for row in result["rows"]}
+        coverage = f"{len(present)} of {len(expected_metrics)} metrics"
+    freshness = []
+    for item in result.get("source_health", []):
+        through = item.get("data_through") or "no data"
+        ingested = item.get("ingested_at") or "never"
+        label = f"{item['site_id']} - {_source_label(item['source'])}"
+        semantics = f"{item['time_basis']}; {item['sampling']}; {item['data_state']}"
+        freshness.append(
+            f'<div class="health-item" data-state="{_e(item["status"])}"><b>{_e(label)}</b>'
+            f'<span>Data through {_e(through)}; ingested {_e(ingested)}</span><span>{_e(semantics)}</span></div>'
+        )
+    if not freshness:
+        for source, observed in result.get("freshness", {}).items():
+            timestamp = datetime.fromisoformat(observed).astimezone(UTC).strftime("%b %d, %H:%M UTC")
+            freshness.append(
+                f'<div class="health-item"><b>{_e(_source_label(source))}</b><span>Ingested {_e(timestamp)}; data date unavailable</span></div>'
+            )
     if not freshness:
         freshness.append('<div class="health-item"><b>No source data</b><span>Try a wider date window.</span></div>')
     return (
@@ -658,11 +946,135 @@ def _metrics_table(result, site_names):
             f'<td><span class="source-chip">{_e(_source_label(row["source"]))}</span></td>'
             f'<td>{_e(_format_value(row["value"], row["unit"]))}</td>'
             f'<td>{_e(_format_value(row["previous_value"], row["unit"]))}</td>'
+            f'<td>{_e(row.get("coverage_status", "unknown").replace("_", " ").title())}</td>'
             f'<td class="{change_class}">{_e(change_text)}</td></tr>'
         )
     if not rows:
-        rows.append('<tr><td colspan="6">No data in this window.</td></tr>')
+        rows.append('<tr><td colspan="7">No data in this window.</td></tr>')
     return "".join(rows)
+
+
+def _available_sites_by_source(config, report) -> dict[str, set[str]]:
+    connection_sources = {item.id: item.provider for item in config.connections}
+    report_sources = {METRICS[metric].source for metric in report.metric_ids}
+    available = {source: set() for source in report_sources}
+    for binding in config.bindings:
+        if binding.site_id not in report.site_ids:
+            continue
+        provider = connection_sources[binding.connection_id]
+        if provider == "fixture":
+            for source in report_sources:
+                available[source].add(binding.site_id)
+        elif provider in available:
+            available[provider].add(binding.site_id)
+    return available
+
+
+def _scoped_coverage(coverage, *, source: str, metric: str, site_id: str | None):
+    buckets = []
+    for item in coverage.get("by_site_source", []):
+        if item["source"] != source or not item.get("configured"):
+            continue
+        if site_id is not None and item["site_id"] != site_id:
+            continue
+        cells = item.get("metric_coverage", {}).get(
+            metric, {"status": "unavailable", "expected": 0, "covered": 0}
+        )
+        missing_ranges = [
+            entry for entry in item.get("missing_ranges", [])
+            if entry["metric"] == metric
+        ]
+        buckets.append(
+            {
+                "site_id": item["site_id"],
+                "source": source,
+                "status": cells["status"],
+                "configured": True,
+                "expected_cells": cells["expected"],
+                "covered_cells": cells["covered"],
+                "missing_cells_count": sum(int(entry["cells"]) for entry in missing_ranges),
+                "missing_ranges": missing_ranges,
+                "metric_status": {metric: cells["status"]},
+                "metric_coverage": {metric: cells},
+            }
+        )
+    expected = sum(int(item["expected_cells"]) for item in buckets)
+    covered = sum(int(item["covered_cells"]) for item in buckets)
+    status = (
+        "not_configured" if not buckets
+        else "complete" if expected and expected == covered
+        else "unavailable" if covered == 0
+        else "partial"
+    )
+    return {
+        "status": status,
+        "expected_cells": expected,
+        "covered_cells": covered,
+        "by_metric": {metric: status},
+        "by_metric_cells": {metric: {"expected": expected, "covered": covered}},
+        "by_site_source": buckets,
+    }
+
+
+def _fill_query_proven_zero_series(series, coverage, health, *, metric: str, window):
+    """Materialize zeroes only where successful acquisition coverage proves them."""
+
+    if metric not in METRICS or METRICS[metric].aggregation != "sum":
+        return series
+    start = datetime.fromisoformat(window["start"]).date()
+    end = datetime.fromisoformat(window["end"]).date()
+    all_dates = []
+    day = start
+    while day < end:
+        all_dates.append(day.isoformat())
+        day += timedelta(days=1)
+    output = [
+        {**item, "points": [dict(point) for point in item["points"]]}
+        for item in series
+    ]
+    for bucket in coverage.get("by_site_source", []):
+        if not bucket.get("configured"):
+            continue
+        missing_dates = set()
+        for item in bucket.get("missing_ranges", []):
+            if item["metric"] != metric or item["start"] is None:
+                continue
+            missing_day = datetime.fromisoformat(item["start"]).date()
+            missing_end = datetime.fromisoformat(item["end"]).date()
+            while missing_day <= missing_end:
+                missing_dates.add(missing_day.isoformat())
+                missing_day += timedelta(days=1)
+        matching = next(
+            (item for item in output if item["site_id"] == bucket["site_id"]),
+            None,
+        )
+        if matching is None:
+            health_sources = {
+                item["source"] for item in health
+                if item["site_id"] == bucket["site_id"]
+                and item.get("metric_source") == METRICS[metric].source
+            }
+            actual_source = (
+                next(iter(health_sources))
+                if len(health_sources) == 1 else METRICS[metric].source
+            )
+            matching = {
+                "metric": metric,
+                "site_id": bucket["site_id"],
+                "source": actual_source,
+                "unit": METRICS[metric].unit,
+                "points": [],
+            }
+            output.append(matching)
+        values = {point["date"]: point["value"] for point in matching["points"]}
+        for date_label in all_dates:
+            if date_label not in missing_dates:
+                values.setdefault(date_label, 0)
+        matching["points"] = [
+            {"date": date_label, "value": value}
+            for date_label, value in sorted(values.items())
+        ]
+    return sorted(output, key=lambda item: (item["site_id"], item["source"], item["metric"]))
 
 
 def _site_graph_display_name(route: str) -> str:
@@ -681,149 +1093,253 @@ def _site_graph_display_name(route: str) -> str:
     return " ".join(replacements.get(word.casefold(), word.title()) for word in words) or route
 
 
-def _site_graph_cluster_key(route: str) -> tuple[int, str]:
-    first = _site_graph_section(route)
-    order = {
-        "home": 0,
-        "services": 1,
-        "industries": 2,
-        "learn": 3,
-        "resources": 4,
-        "tools": 5,
-        "company": 6,
-        "next": 7,
-        "policy": 8,
-    }
-    return order.get(first, 99), route
-
-
-def _site_graph_section(route: str) -> str:
-    if route == "/":
-        return "home"
-    first = route.strip("/").split("/", 1)[0]
-    if first in {"about"}:
-        return "company"
-    if first in {"contact", "emergency", "start"}:
-        return "next"
-    if first in {"accessibility", "privacy", "terms"}:
-        return "policy"
-    return first or "home"
-
-
 def _site_graph_stable_unit(value: str, salt: str) -> float:
     digest = hashlib.blake2s(f"{salt}:{value}".encode("utf-8"), digest_size=4).hexdigest()
     return int(digest, 16) / 0xFFFFFFFF
 
 
-def _site_graph_cluster_specs(width: int, height: int) -> dict[str, dict[str, float | str]]:
-    return {
-        "home": {"x": width * 0.48, "y": height * 0.47, "angle": -1.1, "spread": 68, "label": "Core"},
-        "services": {"x": width * 0.73, "y": height * 0.48, "angle": -0.08, "spread": 150, "label": "Services"},
-        "industries": {"x": width * 0.33, "y": height * 0.63, "angle": 2.34, "spread": 145, "label": "Industries"},
-        "learn": {"x": width * 0.58, "y": height * 0.25, "angle": -1.46, "spread": 132, "label": "Learn"},
-        "resources": {"x": width * 0.31, "y": height * 0.35, "angle": -2.72, "spread": 112, "label": "Resources"},
-        "tools": {"x": width * 0.49, "y": height * 0.78, "angle": 1.46, "spread": 108, "label": "Tools"},
-        "company": {"x": width * 0.18, "y": height * 0.52, "angle": 3.12, "spread": 84, "label": "Company"},
-        "next": {"x": width * 0.83, "y": height * 0.74, "angle": 0.83, "spread": 96, "label": "Next steps"},
-        "policy": {"x": width * 0.19, "y": height * 0.82, "angle": 2.15, "spread": 82, "label": "Policy"},
-    }
+def _site_graph_label_width(route: str, node: dict[str, object]) -> float:
+    label = str(node.get("pretty_name") or _site_graph_display_name(route))
+    return float(min(230, max(88, len(label) * 7.2 + 42)))
 
 
-def _site_graph_positions(nodes):
-    width = 1240
-    height = max(720, min(1040, 650 + len(nodes) * 11))
+def _site_graph_topology_label(node: dict[str, object], route: str) -> str:
+    distance = int(node.get("goal_distance", -1))
+    if node.get("selected") or distance == 0:
+        return "Focus / goal"
+    if route == "/":
+        return "Entry page"
+    if distance == 1:
+        return "One click away"
+    if distance == 2:
+        return "Two-click support"
+    if distance > 2:
+        return "Longer path"
+    return "Disconnected here"
+
+
+def _site_graph_components(routes: list[str], adjacency: dict[str, dict[str, float]]) -> list[list[str]]:
+    unseen = set(routes)
+    components: list[list[str]] = []
+    while unseen:
+        start = min(unseen)
+        stack = [start]
+        unseen.remove(start)
+        component: list[str] = []
+        while stack:
+            route = stack.pop()
+            component.append(route)
+            for neighbor in adjacency.get(route, {}):
+                if neighbor in unseen:
+                    unseen.remove(neighbor)
+                    stack.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+def _site_graph_positions(nodes, edges):
+    node_by_route = {str(node["route"]): node for node in nodes}
+    routes = sorted(node_by_route)
+    node_count = max(1, len(routes))
+    layout_columns = max(4, math.ceil(math.sqrt(node_count) * 1.28))
+    layout_rows = max(1, math.ceil(node_count / layout_columns))
+    width = int(min(2600, max(1500, layout_columns * 280)))
+    height = int(min(1900, max(920, layout_rows * 245 + 360)))
     center_x = width / 2
-    center_y = height * 0.49
+    center_y = height * 0.48
     authority_values = [node.get("authority", 0) for node in nodes]
     authority_min = min(authority_values, default=0)
     authority_span = max(authority_values, default=0) - authority_min or 1
-    sections: dict[str, list[dict[str, object]]] = {}
-    for node in nodes:
-        sections.setdefault(_site_graph_section(str(node["route"])), []).append(node)
-    specs = _site_graph_cluster_specs(width, height)
+
+    layer_weight = {
+        "contextual": 2.8,
+        "action": 2.6,
+        "related": 2.3,
+        "breadcrumb": 1.7,
+        "menu": 1.1,
+        "utility": 0.8,
+    }
+    adjacency: dict[str, dict[str, float]] = {route: {} for route in routes}
+    edge_forces: list[tuple[str, str, float, str]] = []
+    for edge in edges:
+        source = str(edge.get("source", ""))
+        destination = str(edge.get("destination", ""))
+        if source not in node_by_route or destination not in node_by_route or source == destination:
+            continue
+        layer = str(edge.get("layer", "contextual"))
+        occurrences = int(edge.get("occurrence_count", 1) or 1)
+        weight = layer_weight.get(layer, 1.0) + min(occurrences, 8) * 0.08
+        adjacency[source][destination] = adjacency[source].get(destination, 0.0) + weight
+        adjacency[destination][source] = adjacency[destination].get(source, 0.0) + weight * 0.9
+        edge_forces.append((source, destination, weight, layer))
+
+    components = _site_graph_components(routes, adjacency)
+    focus_routes = {
+        route for route, node in node_by_route.items()
+        if node.get("selected") or int(node.get("goal_distance", -1)) == 0
+    }
+    if not focus_routes and "/" in node_by_route:
+        focus_routes = {"/"}
+    focus_components = {
+        index for index, component in enumerate(components)
+        if any(route in focus_routes for route in component)
+    }
+    component_order = sorted(
+        range(len(components)),
+        key=lambda index: (0 if index in focus_components else 1, -len(components[index]), components[index][0]),
+    )
+    component_slot = {component_index: slot for slot, component_index in enumerate(component_order)}
+    component_rank: dict[str, int] = {}
+    component_size: dict[str, int] = {}
+    for index, component in enumerate(components):
+        for rank, route in enumerate(component):
+            component_rank[route] = rank
+            component_size[route] = len(component)
+
     positioned: dict[str, dict[str, float | int | bool]] = {}
-    for section, section_nodes in sections.items():
-        spec = specs.get(section, {"x": center_x, "y": center_y, "angle": 0.0, "spread": 120, "label": "Other"})
-        ordered = sorted(section_nodes, key=lambda item: _site_graph_cluster_key(str(item["route"])))
-        count = len(ordered)
-        angle_step = min(0.72, 2.65 / max(1, count))
-        for index, node in enumerate(ordered):
-            route = str(node["route"])
-            distance = int(node["goal_distance"])
-            ring = 0 if distance == 0 else 4 if distance < 0 else min(distance, 3)
-            authority_norm = (float(node.get("authority", 0)) - authority_min) / authority_span
-            route_parts = [part for part in route.strip("/").split("/") if part]
-            route_depth = max(0, len(route_parts) - 1)
-            jitter_x = (_site_graph_stable_unit(route, "x") - 0.5) * 72
-            jitter_y = (_site_graph_stable_unit(route, "y") - 0.5) * 58
-            angle = float(spec["angle"]) + (index - (count - 1) / 2) * angle_step
-            angle += (_site_graph_stable_unit(route, "angle") - 0.5) * 0.42
-            spread = float(spec["spread"]) + min(80, count * 5) + route_depth * 18 + ring * 24
-            anchor_x = float(spec["x"])
-            anchor_y = float(spec["y"])
-            if distance == 0 or node.get("selected"):
-                x = center_x + jitter_x * 0.38
-                y = center_y + jitter_y * 0.32
-                pinned = True
-            elif route == "/":
-                x = center_x - 130 + jitter_x * 0.2
-                y = center_y - 18 + jitter_y * 0.2
-                pinned = False
-            else:
-                orbit_x = spread * (0.78 + route_depth * 0.12)
-                orbit_y = spread * (0.52 + route_depth * 0.09)
-                x = anchor_x + math.cos(angle) * orbit_x + jitter_x
-                y = anchor_y + math.sin(angle) * orbit_y + jitter_y
-                if route_depth == 0 and ring <= 1:
-                    x = x * 0.72 + center_x * 0.28
-                    y = y * 0.72 + center_y * 0.28
-                if ring == 4:
-                    y = max(y, height * 0.83 + jitter_y * 0.4)
-                pinned = False
-            node_radius = 22 + authority_norm * 8 + (4 if distance == 0 else 0)
-            positioned[route] = {
-                "x": x,
-                "y": y,
-                "r": int(round(node_radius)),
-                "ring": ring,
-                "anchor_x": anchor_x,
-                "anchor_y": anchor_y,
-                "pinned": pinned,
-            }
+    total_components = max(1, len(component_order))
+    component_arc = (math.tau / total_components) if total_components > 1 else math.tau
+    for route in routes:
+        node = node_by_route[route]
+        distance = int(node.get("goal_distance", -1))
+        ring = 0 if node.get("selected") or distance == 0 else 5 if distance < 0 else min(distance, 4)
+        authority_norm = (float(node.get("authority", 0)) - authority_min) / authority_span
+        route_depth = max(0, len([part for part in route.strip("/").split("/") if part]) - 1)
+        component_index = next(index for index, component in enumerate(components) if route in component)
+        slot = component_slot[component_index]
+        rank = component_rank.get(route, 0)
+        count = max(1, component_size.get(route, 1))
+        rank_offset = ((rank + 0.5) / count - 0.5) * min(component_arc * 0.72, 1.9)
+        jitter_angle = (_site_graph_stable_unit(route, "angle") - 0.5) * 0.48
+        if total_components == 1:
+            angle = -math.pi / 2 + ((rank + 0.5) / count) * math.tau + jitter_angle
+        else:
+            angle = -math.pi / 2 + slot * component_arc + component_arc / 2 + rank_offset + jitter_angle
+        base_radius = min(width, height) * 0.16
+        ring_gap = min(width, height) * 0.105
+        orbit = base_radius + ring * ring_gap + route_depth * 24
+        if ring == 0:
+            x = center_x + (_site_graph_stable_unit(route, "x") - 0.5) * 40
+            y = center_y + (_site_graph_stable_unit(route, "y") - 0.5) * 28
+            anchor_x, anchor_y = center_x, center_y
+            pinned = True
+        elif route == "/":
+            x = center_x - orbit * 0.74
+            y = center_y + (_site_graph_stable_unit(route, "entry-y") - 0.5) * 70
+            anchor_x, anchor_y = x, y
+            pinned = False
+        elif ring == 5:
+            disconnected_angle = math.pi * (0.23 + _site_graph_stable_unit(route, "disconnected") * 0.54)
+            orbit = min(width, height) * (0.39 + _site_graph_stable_unit(route, "outer") * 0.08)
+            x = center_x + math.cos(disconnected_angle) * orbit
+            y = center_y + abs(math.sin(disconnected_angle)) * orbit * 0.86
+            anchor_x, anchor_y = x, y
+            pinned = False
+        else:
+            x = center_x + math.cos(angle) * orbit
+            y = center_y + math.sin(angle) * orbit * 0.82
+            anchor_x, anchor_y = x, y
+            pinned = False
+        node_radius = 24 + authority_norm * 10 + (5 if ring == 0 else 0)
+        positioned[route] = {
+            "x": x,
+            "y": y,
+            "r": int(round(node_radius)),
+            "ring": ring,
+            "anchor_x": anchor_x,
+            "anchor_y": anchor_y,
+            "pinned": pinned,
+            "label_width": _site_graph_label_width(route, node),
+            "group_label": _site_graph_topology_label(node, route),
+        }
     margin = 54
-    for _ in range(72):
-        values = list(positioned.values())
-        for item in values:
-            if not item["pinned"]:
-                item["x"] = float(item["x"]) + (float(item["anchor_x"]) - float(item["x"])) * 0.006
-                item["y"] = float(item["y"]) + (float(item["anchor_y"]) - float(item["y"])) * 0.006
-        for index, left in enumerate(values):
-            for right in values[index + 1 :]:
+    for iteration in range(180):
+        displacement = {route: [0.0, 0.0] for route in positioned}
+        for route, item in positioned.items():
+            anchor_strength = 0.052 if item["pinned"] else 0.018 if int(item["ring"]) == 5 else 0.012
+            displacement[route][0] += (float(item["anchor_x"]) - float(item["x"])) * anchor_strength
+            displacement[route][1] += (float(item["anchor_y"]) - float(item["y"])) * anchor_strength
+        for source, destination, weight, layer in edge_forces:
+            source_item = positioned[source]
+            destination_item = positioned[destination]
+            dx = float(destination_item["x"]) - float(source_item["x"])
+            dy = float(destination_item["y"]) - float(source_item["y"])
+            distance = math.hypot(dx, dy)
+            if distance < 0.1:
+                angle = _site_graph_stable_unit(f"{source}->{destination}", "edge") * math.tau
+                dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+            desired = 185 + abs(int(source_item["ring"]) - int(destination_item["ring"])) * 24
+            if layer in {"menu", "utility"}:
+                desired += 48
+            force = (distance - desired) * min(0.038, 0.009 * weight)
+            unit_x, unit_y = dx / distance, dy / distance
+            displacement[source][0] += unit_x * force
+            displacement[source][1] += unit_y * force
+            displacement[destination][0] -= unit_x * force
+            displacement[destination][1] -= unit_y * force
+        route_items = list(positioned.items())
+        for index, (left_route, left) in enumerate(route_items):
+            for right_route, right in route_items[index + 1 :]:
                 dx = float(right["x"]) - float(left["x"])
                 dy = float(right["y"]) - float(left["y"])
-                distance = max(0.1, math.hypot(dx, dy))
-                minimum = int(left["r"]) + int(right["r"]) + 46
+                distance = math.hypot(dx, dy)
+                if distance < 0.1:
+                    angle = _site_graph_stable_unit(f"{left_route}:{right_route}", "repel") * math.tau
+                    dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+                label_clearance = (float(left["label_width"]) + float(right["label_width"])) * 0.24
+                minimum = int(left["r"]) + int(right["r"]) + max(74, label_clearance)
+                force = 0.0
+                if distance < minimum:
+                    force = (minimum - distance) * 0.46
+                elif distance < 310:
+                    force = (310 - distance) * 0.006
+                if not force:
+                    continue
+                unit_x, unit_y = dx / distance, dy / distance
+                left_factor = 0.28 if left["pinned"] else 1.0
+                right_factor = 0.28 if right["pinned"] else 1.0
+                displacement[left_route][0] -= unit_x * force * left_factor
+                displacement[left_route][1] -= unit_y * force * left_factor
+                displacement[right_route][0] += unit_x * force * right_factor
+                displacement[right_route][1] += unit_y * force * right_factor
+        max_step = 42 - min(32, iteration * 0.16)
+        for route, item in positioned.items():
+            dx, dy = displacement[route]
+            length = math.hypot(dx, dy)
+            if length > max_step:
+                dx *= max_step / length
+                dy *= max_step / length
+            item["x"] = min(width - margin, max(margin, float(item["x"]) + dx))
+            item["y"] = min(height - margin, max(margin, float(item["y"]) + dy))
+    for _ in range(100):
+        moved = False
+        route_items = list(positioned.items())
+        for index, (left_route, left) in enumerate(route_items):
+            for right_route, right in route_items[index + 1 :]:
+                dx = float(right["x"]) - float(left["x"])
+                dy = float(right["y"]) - float(left["y"])
+                distance = math.hypot(dx, dy)
+                if distance < 0.1:
+                    angle = _site_graph_stable_unit(f"{left_route}:{right_route}", "final") * math.tau
+                    dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+                label_clearance = (float(left["label_width"]) + float(right["label_width"])) * 0.24
+                minimum = int(left["r"]) + int(right["r"]) + max(82, label_clearance)
                 if distance >= minimum:
                     continue
-                push = (minimum - distance) / distance
-                offset_x = dx * push * 0.5
-                offset_y = dy * push * 0.5
-                if left["pinned"] and right["pinned"]:
-                    continue
-                if left["pinned"]:
-                    right["x"] = float(right["x"]) + offset_x * 1.4
-                    right["y"] = float(right["y"]) + offset_y * 1.4
-                elif right["pinned"]:
-                    left["x"] = float(left["x"]) - offset_x * 1.4
-                    left["y"] = float(left["y"]) - offset_y * 1.4
-                else:
-                    left["x"] = float(left["x"]) - offset_x
-                    left["y"] = float(left["y"]) - offset_y
-                    right["x"] = float(right["x"]) + offset_x
-                    right["y"] = float(right["y"]) + offset_y
-        for item in values:
+                moved = True
+                push = (minimum - distance) * 0.52
+                unit_x, unit_y = dx / distance, dy / distance
+                left_factor = 0.18 if left["pinned"] else 1.0
+                right_factor = 0.18 if right["pinned"] else 1.0
+                left["x"] = float(left["x"]) - unit_x * push * left_factor
+                left["y"] = float(left["y"]) - unit_y * push * left_factor
+                right["x"] = float(right["x"]) + unit_x * push * right_factor
+                right["y"] = float(right["y"]) + unit_y * push * right_factor
+        for item in positioned.values():
             item["x"] = min(width - margin, max(margin, float(item["x"])))
             item["y"] = min(height - margin, max(margin, float(item["y"])))
+        if not moved:
+            break
     positions = {}
     for route, item in positioned.items():
         positions[route] = {
@@ -833,17 +1349,28 @@ def _site_graph_positions(nodes):
             "depth": (float(item["y"]) - center_y) / max(1, height / 2),
             "ring": int(item["ring"]),
         }
+    label_groups: dict[str, list[str]] = {}
+    for route, item in positioned.items():
+        label_groups.setdefault(str(item["group_label"]), []).append(route)
+    label_order = {
+        "Focus / goal": 0,
+        "Entry page": 1,
+        "One click away": 2,
+        "Two-click support": 3,
+        "Longer path": 4,
+        "Disconnected here": 5,
+    }
     cluster_labels = []
-    for section, section_nodes in sorted(sections.items(), key=lambda item: _site_graph_cluster_key("/" + item[0] + "/")):
-        spec = specs.get(section)
-        if not spec:
-            continue
+    for label, label_routes in sorted(label_groups.items(), key=lambda item: (label_order.get(item[0], 99), item[0])):
+        group_positions = [positions[route] for route in label_routes]
+        x = sum(item["x"] for item in group_positions) / len(group_positions)
+        y = min(item["y"] for item in group_positions) - 58
         cluster_labels.append(
             {
-                "label": str(spec["label"]),
-                "count": len(section_nodes),
-                "x": int(round(float(spec["x"]))),
-                "y": int(round(max(36, float(spec["y"]) - float(spec["spread"]) * 0.62))),
+                "label": label,
+                "count": len(label_routes),
+                "x": int(round(min(width - 80, max(80, x)))),
+                "y": int(round(min(height - 42, max(42, y)))),
             }
         )
     return width, height, positions, cluster_labels
@@ -875,7 +1402,7 @@ def _site_graph_svg(payload):
     edges = payload["visualization"]["edges"]
     if not nodes:
         return '<div class="empty-state">No pages match this bounded view.</div>'
-    width, height, positions, cluster_labels = _site_graph_positions(nodes)
+    width, height, positions, cluster_labels = _site_graph_positions(nodes, edges)
     edge_html = []
     edge_priority = {"menu": 0, "utility": 1, "breadcrumb": 2, "contextual": 3, "related": 4, "action": 5}
     for edge in sorted(edges, key=lambda item: edge_priority.get(item["layer"], 9)):
@@ -942,16 +1469,22 @@ def _site_graph_svg(payload):
         for label in cluster_labels
     )
     return (
-        '<div class="graph-stage" data-site-graph-stage><div class="graph-map">'
-        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and nearby circles belong to the same part of the site.</p>'
+        '<div class="graph-stage" data-site-graph-stage><div class="graph-map" data-graph-map>'
+        '<p class="graph-map-help">Read this map as pages and pathways: circles are pages, arrows are internal links, and placement follows link relationships plus click distance from the focus page. Drag the map, scroll to zoom, or use the controls.</p>'
+        '<div class="graph-canvas-toolbar" role="group" aria-label="Graph canvas controls">'
+        '<button type="button" data-graph-zoom-out aria-label="Zoom out">Zoom out</button>'
+        '<button type="button" data-graph-zoom-in aria-label="Zoom in">Zoom in</button>'
+        '<button type="button" data-graph-zoom-reset>Reset view</button>'
+        '<span class="graph-zoom-status" data-graph-zoom-status aria-live="polite">100%</span></div>'
         f'<svg class="site-graph-svg" viewBox="0 0 {width} {height}" role="img" '
         'aria-labelledby="graph-title graph-description"><title id="graph-title">Site Graph structural overview</title>'
-        f'<desc id="graph-description">An organic topic-cluster map of pages and '
+        f'<desc id="graph-description">An organic topology map of pages and '
         f'aggregated internal-link relationships in the selected layers. An equivalent table follows the graphic.</desc>'
-        '<defs><marker id="arrow" markerWidth="8" markerHeight="8" '
-        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#78817c"></path></marker>'
+        '<defs><marker id="arrow" markerUnits="strokeWidth" markerWidth="4.8" markerHeight="4.8" '
+        'refX="4.25" refY="2.4" orient="auto"><path d="M0,0 L4.8,2.4 L0,4.8 z" fill="#78817c"></path></marker>'
         '<filter id="node-lift" x="-35%" y="-35%" width="170%" height="170%"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#17201d" flood-opacity=".18"></feDropShadow></filter></defs>'
-        + plane + cluster_html + "".join(edge_html) + "".join(node_html) + '</svg></div>'
+        '<g class="graph-viewport" data-graph-viewport>'
+        + plane + cluster_html + "".join(edge_html) + "".join(node_html) + '</g></svg></div>'
         '<aside class="graph-inspector" data-graph-inspector aria-live="polite"></aside></div>'
     )
 
@@ -1034,6 +1567,8 @@ def _site_graph_disclosure(payload):
         f'<p><strong>Active projection and filters</strong>Projection: {_e(display["projection"])}; '
         f'layers: {_e(", ".join(display["layers"]))}; neighborhood: {_e(selected_page)}; '
         f'edge-table query: {_e(edge_query)}</p>'
+        '<p><strong>Analytical basis stays compiled contextual</strong>'
+        'Selected layers change edge counts, tables, and the drawing only; goal distance, components, resilience, and findings remain contextual.</p>'
         f'<p><strong>{payload["coverage"]["link_occurrences"]} stored internal link occurrences across all layers</strong>'
         f'Current selected layers account for {display["total_occurrences"]}; layer totals: '
         f'{_e(layer_accounting)}</p>'
@@ -1381,24 +1916,67 @@ def handler_factory(config, store, credentials=None):
                 return
             parsed = urlsplit(self.path)
             if parsed.path == "/healthz":
-                return self._send(200, "application/json", '{"ok":true}')
+                return self._send(
+                    200,
+                    "application/json",
+                    json.dumps({"ok": True, **build_identity()}, sort_keys=True, separators=(",", ":")),
+                )
             if parsed.path == "/assets/app.css":
                 return self._send(200, "text/css; charset=utf-8", CSS)
             if parsed.path == "/assets/app.js":
                 return self._send(200, "text/javascript; charset=utf-8", JS)
+            if parsed.path == "/favicon.svg":
+                return self._send(200, "image/svg+xml", FAVICON_SVG)
             try:
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                analytics_fields = {
+                    "report", "subreport", "start", "end", "site", "metric",
+                    "source", "style", "compare", "view",
+                }
+                report_fields = {"report", "subreport", "start", "end", "site"}
+                graph_fields = {
+                    "site", "page", "graph", "layer", "edge_query", "edge_sort",
+                    "edge_order", "edge_page",
+                }
                 if parsed.path == "/":
-                    return self._dashboard(parse_qs(parsed.query))
+                    allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path in {"/api/v1/report", "/api/v1/report.csv"}:
+                    allowed = report_fields
+                    repeatable = set()
+                elif parsed.path in {"/api/v1/series", "/api/v1/series.csv"}:
+                    allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path in {
+                    "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
+                }:
+                    allowed = graph_fields
+                    repeatable = {"layer"}
+                else:
+                    allowed = set()
+                    repeatable = set()
+                if set(query) - allowed:
+                    raise ValueError("unknown query field")
+                if any(len(values) != 1 for key, values in query.items() if key not in repeatable):
+                    raise ValueError("duplicate query field")
+                if any(
+                    value == ""
+                    for field in ("start", "end", "site", "metric", "source")
+                    for value in query.get(field, ())
+                ):
+                    raise ValueError("blank query value")
+                if parsed.path == "/":
+                    return self._dashboard(query)
                 if parsed.path == "/site-graph":
-                    return self._site_graph(parse_qs(parsed.query))
+                    return self._site_graph(query)
                 if parsed.path == "/api/v1/site-graph":
-                    return self._site_graph_api(parse_qs(parsed.query))
+                    return self._site_graph_api(query)
                 if parsed.path == "/api/v1/site-graph.csv":
-                    return self._site_graph_csv(parse_qs(parsed.query))
+                    return self._site_graph_csv(query)
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
-                    return self._api(parsed.path, parse_qs(parsed.query))
+                    return self._api(parsed.path, query)
                 self.send_error(404)
             except (ValueError, KeyError):
                 message = "invalid site graph request" if parsed.path in {
@@ -1415,6 +1993,9 @@ def handler_factory(config, store, credentials=None):
 
         def _site_graph_payload(self, query):
             site_key = query.get("site", [None])[0]
+            known_sites = {item["key"] for item in graph_reports.sites()}
+            if site_key is not None and site_key not in known_sites:
+                raise ValueError("unknown site graph site")
             selected_page = query.get("page", [None])[0]
             try:
                 edge_page = int(query.get("edge_page", ["1"])[0])
@@ -1459,7 +2040,7 @@ def handler_factory(config, store, credentials=None):
                     for site in payload["sites"]
                 )
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a>{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
@@ -1516,7 +2097,7 @@ def handler_factory(config, store, credentials=None):
             )
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a></div>
@@ -1549,17 +2130,24 @@ def handler_factory(config, store, credentials=None):
                     raise ValueError("unknown subreport")
                 default_days = subreport.default_window_days
             site_id = query.get("site", [None])[0]
+            if site_id == "all":
+                site_id = None
             window = _window(query, config.platform.default_timezone, default_days)
             return reports.render(report_id, window, subreport_id, site_id), report
 
-        def _series_payload(self, query):
-            is_plot = query.get("view", [""])[0] == "plot"
-            report, definition = self._request(query, force_overview=is_plot)
+        def _series_payload(self, query, *, rendered=None):
+            view = query.get("view", [""])[0]
+            if view not in {"", "plot"}:
+                raise ValueError("invalid series view")
+            is_plot = view == "plot"
+            report, definition = rendered or self._request(query, force_overview=is_plot)
             candidates = tuple(
                 metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
                 if metric in METRICS and METRICS[metric].aggregation != "window"
             )
             requested_metric = query.get("metric", [None])[0]
+            if requested_metric is not None and requested_metric not in candidates:
+                raise ValueError("invalid series metric")
             metric = requested_metric if requested_metric in candidates else next(
                 (item for item in CHART_PRIORITY if item in candidates), candidates[0] if candidates else ""
             )
@@ -1567,10 +2155,14 @@ def handler_factory(config, store, credentials=None):
             source = requested_source or (METRICS[metric].source if metric else "")
             if source not in SOURCE_LABELS or (metric and METRICS[metric].source != source):
                 raise ValueError("invalid series source")
+            available_sites = _available_sites_by_source(config, definition)
+            supported_sites = available_sites.get(source, set())
+            if report["site_id"] is not None and report["site_id"] not in supported_sites:
+                raise ValueError("selected site is not configured for this series source")
             style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
-            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
+            compare = _compare_flag(query)
 
             def selected(items):
                 return [
@@ -1578,12 +2170,74 @@ def handler_factory(config, store, credentials=None):
                     if item["metric"] == metric and item["source"] in {source, "fixture"}
                 ]
 
-            current = selected(report["series"])
-            previous = selected(report["comparison_series"]) if compare else []
-            if not current:
-                report["warnings"] = [*report["warnings"], "No stored daily values match this plot selection."]
+            raw_current = selected(report["series"])
+            raw_previous = selected(report["comparison_series"]) if compare else []
+            current_coverage = _scoped_coverage(
+                report.get("coverage", {}),
+                source=source,
+                metric=metric,
+                site_id=report["site_id"],
+            )
+            prior_coverage = _scoped_coverage(
+                report.get("comparison", {}).get("coverage", {}),
+                source=source,
+                metric=metric,
+                site_id=report["site_id"],
+            )
+            source_health = [
+                item for item in report.get("source_health", [])
+                if item.get("metric_source") == source
+                and (report["site_id"] is None or item["site_id"] == report["site_id"])
+            ]
+            prior_source_health = [
+                item for item in report.get("comparison_source_health", [])
+                if item.get("metric_source") == source
+                and (report["site_id"] is None or item["site_id"] == report["site_id"])
+            ]
+            current = _fill_query_proven_zero_series(
+                raw_current,
+                current_coverage,
+                source_health,
+                metric=metric,
+                window=report["window"],
+            )
+            candidate_previous = _fill_query_proven_zero_series(
+                raw_previous,
+                prior_coverage,
+                prior_source_health,
+                metric=metric,
+                window=report["comparison_window"],
+            ) if compare else []
+            comparison_available = bool(
+                compare
+                and current
+                and candidate_previous
+                and current_coverage["status"] == "complete"
+                and prior_coverage["status"] == "complete"
+            )
+            previous = candidate_previous if comparison_available else []
+            comparison_status = (
+                "not_requested" if not compare
+                else "available" if comparison_available
+                else "unavailable"
+            )
+            warnings = []
+            if not raw_current and current and current_coverage["status"] == "complete":
+                warnings.append(
+                    "The provider query completed for this selection; displayed zeroes are query-proven quiet dates."
+                )
+            elif not current:
+                warnings.append("No stored daily values match this plot selection.")
+            elif current_coverage["status"] != "complete":
+                warnings.append(
+                    "This plotted metric has partial stored coverage; displayed values are observed only."
+                )
+            if compare and not comparison_available:
+                warnings.append(
+                    "The requested comparison is unavailable because the prior period lacks complete stored coverage.",
+                )
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "report_id": report["report_id"],
                 "subreport_id": report["subreport_id"],
                 "site_id": report["site_id"],
@@ -1593,12 +2247,31 @@ def handler_factory(config, store, credentials=None):
                 "metric_label": _metric_label(metric) if metric else "Daily series",
                 "style": style,
                 "compare": compare,
+                "comparison_available": comparison_available,
+                "comparison_status": comparison_status,
                 "window": report["window"],
                 "comparison_window": report["comparison_window"],
                 "series": current,
                 "comparison_series": previous,
-                "site_names": {site.id: site.name for site in config.sites if site.id in definition.site_ids},
-                "warnings": report["warnings"],
+                "generated_at": report.get("generated_at"),
+                "coverage": current_coverage,
+                "comparison": {
+                    "status": comparison_status,
+                    "available": comparison_available,
+                    "coverage": prior_coverage,
+                },
+                "source_health": source_health,
+                "comparison_source_health": prior_source_health,
+                "summary_totals": {
+                    metric: report.get("summary_totals", {}).get(metric, {})
+                },
+                "site_names": {
+                    site.id: site.name for site in config.sites
+                    if site.id in supported_sites
+                    and (report["site_id"] is None or site.id == report["site_id"])
+                },
+                "warnings": warnings,
+                "complete": current_coverage["status"] == "complete",
             }
 
         @staticmethod
@@ -1612,7 +2285,10 @@ def handler_factory(config, store, credentials=None):
             if path in {"/api/v1/series", "/api/v1/series.csv"}:
                 payload = self._series_payload(query)
                 if path.endswith(".csv"):
-                    filename = f'{payload["report_id"]}-{payload["metric"]}-{payload["window"]["start"][:10]}-{payload["window"]["end"][:10]}.csv'
+                    scope = payload.get("site_id") or "all-sites"
+                    section = payload.get("subreport_id") or "overview"
+                    comparison = "-comparison" if payload["compare"] else ""
+                    filename = f'{payload["report_id"]}-{section}-{scope}-{payload["metric"]}{comparison}-{payload["window"]["start"][:10]}-{payload["window"]["end"][:10]}.csv'
                     return self._send(
                         200,
                         "text/csv; charset=utf-8",
@@ -1622,7 +2298,9 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "application/json", json.dumps(payload, sort_keys=True))
             report, _definition = self._request(query)
             if path.endswith(".csv"):
-                filename = f'{report["report_id"]}-{report["window"]["start"][:10]}-{report["window"]["end"][:10]}.csv'
+                scope = report.get("site_id") or "all-sites"
+                section = report.get("subreport_id") or "overview"
+                filename = f'{report["report_id"]}-{section}-{scope}-{report["window"]["start"][:10]}-{report["window"]["end"][:10]}.csv'
                 return self._send(
                     200,
                     "text/csv; charset=utf-8",
@@ -1652,11 +2330,23 @@ def handler_factory(config, store, credentials=None):
                 if metric in METRICS and METRICS[metric].aggregation != "window"
             )
             requested_metric = query.get("metric", [None])[0]
+            available_sites = _available_sites_by_source(config, report)
             represented_sources = tuple(
                 source for source in SOURCE_LABELS
-                if any(METRICS[metric].source == source for metric in available_metrics)
+                if available_sites.get(source)
+                and any(METRICS[metric].source == source for metric in available_metrics)
             )
             requested_source = query.get("source", [None])[0]
+            if requested_metric is not None and requested_metric not in available_metrics:
+                raise ValueError("invalid dashboard metric")
+            if requested_source is not None and requested_source not in represented_sources:
+                raise ValueError("invalid dashboard source")
+            if (
+                requested_metric is not None
+                and requested_source is not None
+                and METRICS[requested_metric].source != requested_source
+            ):
+                raise ValueError("dashboard metric does not belong to source")
             inferred_source = METRICS[requested_metric].source if requested_metric in available_metrics else None
             selected_source = requested_source if requested_source in represented_sources else (
                 inferred_source or (represented_sources[0] if represented_sources else "")
@@ -1669,7 +2359,39 @@ def handler_factory(config, store, credentials=None):
             style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
-            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
+            compare = _compare_flag(query)
+            relevant_sources = {METRICS[metric].source for metric in expected_metrics}
+            site_option_sources = set(represented_sources) if is_plot else relevant_sources
+            form_site_ids = tuple(
+                site_id for site_id in report.site_ids
+                if any(site_id in available_sites.get(source, set()) for source in site_option_sources)
+            )
+            selected_site_supported = result["site_id"] is None or result["site_id"] in (
+                available_sites.get(selected_source, set())
+                if selected_source else set(form_site_ids)
+            )
+            if not selected_site_supported:
+                raise ValueError("selected site is not configured for this dashboard metric source")
+
+            if is_plot:
+                effective_query = {key: list(values) for key, values in query.items()}
+                effective_query["view"] = ["plot"]
+                effective_query["source"] = [selected_source]
+                effective_query["metric"] = [selected_metric]
+                effective_query["style"] = [style]
+                plot_payload = self._series_payload(
+                    effective_query, rendered=(result, report)
+                )
+                result = {
+                    **result,
+                    "coverage": plot_payload["coverage"],
+                    "comparison": plot_payload["comparison"],
+                    "source_health": plot_payload["source_health"],
+                    "comparison_source_health": plot_payload["comparison_source_health"],
+                    "summary_totals": plot_payload["summary_totals"],
+                    "warnings": plot_payload["warnings"],
+                    "complete": plot_payload["complete"],
+                }
 
             def route(path="/", **overrides):
                 params = {"report": report.id, "start": start, "end": end}
@@ -1712,14 +2434,24 @@ def handler_factory(config, store, credentials=None):
                     for source in represented_sources
                 )
             else:
-                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None))}">Overview</a>'
+                overview_metric = next(
+                    (metric for metric in CHART_PRIORITY if metric in report.metric_ids and METRICS[metric].aggregation != "window"),
+                    next((metric for metric in report.metric_ids if METRICS[metric].aggregation != "window"), None),
+                )
+                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
                 subnav += "".join(
-                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id))}">{_e(item.title)}</a>'
+                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
                     for item in report.subreports
                 )
-            site_options = '<option value="">All sites</option>' + "".join(
-                f'<option value="{_e(site_id)}"{" selected" if site_id == result["site_id"] else ""}>{_e(site_names.get(site_id, site_id))}</option>'
-                for site_id in report.site_ids
+            all_selected = " selected" if result["site_id"] is None else ""
+            site_options = f'<option value="all"{all_selected}>All sites</option>' + "".join(
+                (
+                    f'<option value="{_e(site_id)}" data-sources="{_e(",".join(sorted(source for source in represented_sources if site_id in available_sites.get(source, set()))))}"'
+                    f'{" selected" if site_id == result["site_id"] else ""}'
+                    f'{"" if not selected_source or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
+                    f'{_e(site_names.get(site_id, site_id))}</option>'
+                )
+                for site_id in form_site_ids
             )
             metric_order = [metric for metric in CHART_PRIORITY if metric in available_metrics]
             metric_order += sorted(set(available_metrics) - set(metric_order))
@@ -1737,10 +2469,18 @@ def handler_factory(config, store, credentials=None):
             )
 
             end_date = datetime.fromisoformat(end).date()
-            presets = "".join(
-                f'<a href="{_e(route(start=(end_date - timedelta(days=days)).isoformat()))}">{days} days</a>'
-                for days in (7, 30, 90, 365)
-            )
+            preset_links = []
+            for days in (7, 30, 90, 365):
+                try:
+                    candidate = end_date - timedelta(days=days)
+                except OverflowError:
+                    continue
+                if days >= candidate.toordinal():
+                    continue
+                preset_links.append(
+                    f'<a href="{_e(route(start=candidate.isoformat()))}">{days} days</a>'
+                )
+            presets = "".join(preset_links)
             export_params = {"report": report.id, "start": start, "end": end}
             if is_plot:
                 export_params.update({"view": "plot", "source": selected_source, "metric": selected_metric, "style": style})
@@ -1763,7 +2503,7 @@ def handler_factory(config, store, credentials=None):
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
-            freshness_count = len(result["freshness"])
+            freshness_count = len(result.get("source_health", []))
             page_title = "Time-series Plot Builder" if is_plot else result["title"]
             hero_copy = (
                 "Select a source, metric, site, exact date window, and chart style. Every plot is built from stored local snapshots."
@@ -1800,12 +2540,12 @@ def handler_factory(config, store, credentials=None):
             else:
                 supporting_html = (
                     f'<div class="split-grid">{_forms_html(result["forms_pipeline"])}{_health_html(result, expected_metrics)}</div>'
-                    f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
+                    f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Coverage</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
                 )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_e(page_title)} - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<title>{_e(page_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
