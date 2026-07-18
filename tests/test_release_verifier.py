@@ -51,6 +51,15 @@ class ReleaseVerifierTests(unittest.TestCase):
         relative = Path("docs") / "site-graph" / "unsafe.md"
         self.assertIn(f"internal coordination identifier pattern found: {relative}", failures)
 
+    def test_credentialed_remote_targets_are_rejected_without_named_hosts(self):
+        marker = "ssh -i key " + "operator" + "@" + "internal.invalid"
+        self.write("docs/site-graph/unsafe.md", marker + "\n")
+
+        failures = verify_tree(self.root)
+
+        relative = Path("docs") / "site-graph" / "unsafe.md"
+        self.assertIn(f"credentialed remote target pattern found: {relative}", failures)
+
 
 if __name__ == "__main__":
     unittest.main()

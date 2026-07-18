@@ -59,7 +59,14 @@ SECRET_PATTERNS = {
     "Slack token": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
     "Windows user path": re.compile(r"[A-Z]:\\Users\\[^\r\n]+", re.IGNORECASE),
     "private deployment path": re.compile(re.escape("/srv/" + "local1/")),
-    "private host login": re.compile(re.escape("bohopi" + "@")),
+    "credentialed remote target": re.compile(
+        r"(?:\b(?:ssh|sftp)://[A-Za-z_][A-Za-z0-9._-]*@"
+        r"(?!(?:github|gitlab|bitbucket)\.com\b)|"
+        r"\b(?:ssh|scp|sftp)\b[^\r\n]{0,200}\s"
+        r"[A-Za-z_][A-Za-z0-9._-]*@(?!(?:github|gitlab|bitbucket)\.com\b)"
+        r"[A-Za-z0-9.-]+\b)",
+        re.IGNORECASE,
+    ),
     "internal coordination identifier": re.compile(r"\b(?:W" + r"O|C" + r"R)-\d{4}-[A-Z0-9-]+\b"),
 }
 
