@@ -23,7 +23,7 @@ from .time_window import report_window
 
 
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "Permissions-Policy": "accelerometer=(), autoplay=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
@@ -31,6 +31,8 @@ SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "Cross-Origin-Resource-Policy": "same-origin",
 }
+
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#17201d"/><path d="M17 15h18c10 0 15 4 15 12 0 5-3 8-7 10 5 1 8 5 8 11 0 9-6 13-17 13H17V15zm12 10v8h6c3 0 5-1 5-4s-2-4-5-4h-6zm0 17v9h7c3 0 5-2 5-5 0-2-2-4-5-4h-7z" fill="#ffd4c2"/></svg>"""
 
 SITE_GRAPH_LAYERS = ("contextual", "related", "action", "menu", "breadcrumb", "utility")
 
@@ -121,7 +123,7 @@ BASE_CSS = """
 .report-nav,.subnav,.quick-links{display:flex;flex-wrap:wrap;gap:8px}.report-nav{margin:0 0 12px}.report-nav a,.subnav a,.quick-links a{padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.6);color:var(--ink-2);font-size:13px;font-weight:700;text-decoration:none}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{background:#fff;border-color:#b9bab4}.report-nav a.active,.subnav a.active{background:var(--ink);border-color:var(--ink);color:#fff}.subnav{margin-bottom:16px}
 .panel{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}.control-panel{padding:18px;margin-bottom:18px}.panel-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:14px}.panel-heading h2{margin:0;font-size:18px;letter-spacing:-.02em}.panel-heading p{margin:3px 0 0;color:var(--muted);font-size:13px}.filter-form{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end}.field{display:grid;min-width:0;gap:6px}fieldset.field{min-width:0;margin:0}.field span{font-size:12px;font-weight:750;color:var(--ink-2)}input,select{width:100%;min-height:42px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(232,109,61,.28);outline-offset:2px;border-color:var(--accent)}button{min-height:42px;padding:9px 16px;border:1px solid var(--ink);border-radius:9px;background:var(--ink);color:#fff;font-weight:800;cursor:pointer}button:hover{background:#283530}.tools-row{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #ecebe5}.tools-label{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
 .alerts{display:grid;gap:9px;margin:0 0 18px}.alert{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid #f0d7b4;border-radius:11px;background:var(--amber-soft);color:#77440f}.alert-mark{display:grid;place-items:center;flex:0 0 22px;height:22px;border-radius:50%;background:#d98627;color:#fff;font-size:12px;font-weight:900}
-.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card[data-state="partial"]{border-color:#e0b16d;background:#fffaf0}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}.trend.partial{background:var(--amber-soft);color:var(--amber)}
 .chart-panel{padding:20px;margin-bottom:18px}.chart-panel .panel-heading{margin-bottom:18px}.metric-description{max-width:650px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:linear-gradient(180deg,#fff,#fbfaf7)}.chart-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px}.chart-card h3{margin:0;font-size:14px}.chart-total{color:var(--muted);font-size:12px;font-weight:750}.chart-scroll{overflow-x:auto;padding:4px 0 0}.bar-grid{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);align-items:end;gap:4px;height:205px;min-width:100%;border-bottom:1px solid #cfd1cc;background:repeating-linear-gradient(to top,transparent 0,transparent 50px,#ecece7 51px)}.bar-grid.density-mid{grid-auto-columns:minmax(9px,1fr)}.bar-grid.density-wide{grid-auto-columns:minmax(6px,1fr)}.bar-slot{height:100%;display:flex;align-items:end;justify-content:center}.bar{display:block;width:72%;min-height:2px;border-radius:5px 5px 2px 2px;background:var(--accent)}.bar.tone-1{background:#357a68}.bar.tone-2{background:#6772a8}.bar.tone-3{background:#ba8b32}.axis-labels{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--muted);font-size:11px}.chart-data{margin-top:10px;color:var(--muted);font-size:12px}.chart-data summary{cursor:pointer;font-weight:700}.empty-state{padding:34px;border:1px dashed #cacbc5;border-radius:12px;text-align:center;color:var(--muted)}
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
@@ -155,6 +157,20 @@ JS = r"""
       if (visible && first === null) first = option;
     }
     if (metric.selectedOptions[0]?.disabled && first) first.selected = true;
+  }
+
+  function updateSiteOptions() {
+    const source = document.querySelector('select[name="source"]');
+    const site = document.querySelector('select[name="site"]');
+    if (!source || !site) return;
+    let first = null;
+    for (const option of site.options) {
+      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(source.value);
+      option.hidden = !supported;
+      option.disabled = !supported;
+      if (supported && first === null) first = option;
+    }
+    if (site.selectedOptions[0]?.disabled && first) first.selected = true;
   }
 
   function drawChart(canvas, payload) {
@@ -591,7 +607,11 @@ JS = r"""
   }
 
   const source = document.querySelector('select[name="source"]');
-  if (source) { updateMetricOptions(); source.addEventListener("change", updateMetricOptions); }
+  if (source) {
+    updateMetricOptions();
+    updateSiteOptions();
+    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); });
+  }
   loadChart();
   initSiteGraph();
 })();
@@ -609,6 +629,15 @@ def _window(query, timezone, default_days):
 
 def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def _compare_flag(query) -> bool:
+    value = query.get("compare", [""])[0].casefold()
+    if value in {"", "0", "false", "no"}:
+        return False
+    if value in {"1", "true", "yes"}:
+        return True
+    raise ValueError("invalid comparison flag")
 
 
 def _metric_label(metric: str) -> str:
@@ -651,6 +680,9 @@ def _metric_total(result, metric):
             "metric": metric,
             "source": summary.get("source"),
             "coverage_status": summary.get("coverage_status", "unknown"),
+            "covered_cells": summary.get("covered_cells", 0),
+            "expected_cells": summary.get("expected_cells", 0),
+            "observed": summary.get("observed", False),
         }
     rows = [row for row in result["rows"] if row["metric"] == metric]
     if not rows:
@@ -665,6 +697,9 @@ def _metric_total(result, metric):
         "value": value, "previous": previous, "change": change,
         "unit": rows[0]["unit"], "metric": metric, "source": rows[0]["source"],
         "coverage_status": "legacy",
+        "covered_cells": 0,
+        "expected_cells": 0,
+        "observed": True,
     }
 
 
@@ -712,25 +747,48 @@ def _summary_cards(result, expected_metrics):
                     "metric": metric,
                     "source": None,
                     "coverage_status": "unknown",
+                    "covered_cells": 0,
+                    "expected_cells": 0,
+                    "observed": False,
                 }
                 selected_metric = metric
                 break
         observed = total is not None and total["value"] is not None
+        partial = bool(total and total.get("coverage_status") == "partial")
+        withheld = bool(
+            total and total["value"] is None and partial
+            and any(row["metric"] == selected_metric for row in result["rows"])
+        )
         if observed:
             value = _format_value(total["value"], total["unit"])
             source_row = next((row for row in result["rows"] if row["metric"] == total["metric"]), None)
             source_id = total.get("source") or (source_row["source"] if source_row else None)
             source = _source_label(source_id) if source_id else "Current window"
-            badge = _trend(
-                total["change"],
-                lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
+            badge = (
+                '<span class="trend partial">Partial data</span>'
+                if partial
+                else _trend(
+                    total["change"],
+                    lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
+                )
             )
-            detail = f"{note} - {source}"
+            coverage_note = (
+                f'; observed {total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+                if partial else ""
+            )
+            detail = f"{note} - {source}{coverage_note}"
+        elif withheld:
+            value = "Withheld"
+            badge = '<span class="trend partial">Partial data</span>'
+            detail = (
+                f'{note} - aggregate withheld; observed '
+                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+            )
         else:
             value = "Unknown"
             badge = '<span class="trend flat">Not observed</span>'
             detail = f"{note} - no stored observation"
-        state = "observed" if observed else "unknown"
+        state = "partial" if partial else "observed" if observed else "unknown"
         cards.append(
             f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
             f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
@@ -758,13 +816,38 @@ def _chart_html(result, metric, site_names):
                 f'<span class="bar-slot"><span aria-hidden="true" class="bar tone-{index % 4} h-{level}" title="{_e(title)}"></span></span>'
             )
             data_rows.append(f'<tr><td>{_e(point["date"])}</td><td>{_e(readable)}</td></tr>')
-        total = sum(float(point["value"]) for point in points)
+        aggregate_row = next(
+            (
+                row for row in result.get("rows", [])
+                if row["metric"] == metric
+                and row["site_id"] == series["site_id"]
+                and row["source"] == series["source"]
+            ),
+            None,
+        )
+        aggregate = (
+            aggregate_row["value"]
+            if aggregate_row is not None
+            else sum(float(point["value"]) for point in points)
+        )
+        aggregation = METRICS[metric].aggregation if metric in METRICS else "sum"
+        coverage_status = (
+            aggregate_row.get("coverage_status", "unknown")
+            if aggregate_row is not None else "unknown"
+        )
+        aggregate_label = (
+            "window aggregate"
+            if aggregation in {"weighted", "latest"}
+            else "observed total (partial)"
+            if coverage_status == "partial"
+            else "window total"
+        )
         first = points[0]["date"] if points else ""
         last = points[-1]["date"] if points else ""
         cards.append(
             f'<article class="chart-card" data-chart="{_e(metric)}"><div class="chart-card-head">'
             f'<h3>{_e(site_names.get(series["site_id"], series["site_id"]))}</h3>'
-            f'<span class="chart-total">{_e(_format_value(total, series["unit"]))} total</span></div>'
+            f'<span class="chart-total">{_e(_format_value(aggregate, series["unit"]))} {_e(aggregate_label)}</span></div>'
             f'<div class="chart-scroll"><div class="bar-grid {density}" role="img" aria-label="{_e(_metric_label(metric))} by day for {site_names.get(series["site_id"], series["site_id"])}">'
             + "".join(bars)
             + f'</div><div class="axis-labels"><span>{_e(first)}</span><span>{_e(last)}</span></div></div>'
@@ -856,11 +939,135 @@ def _metrics_table(result, site_names):
             f'<td><span class="source-chip">{_e(_source_label(row["source"]))}</span></td>'
             f'<td>{_e(_format_value(row["value"], row["unit"]))}</td>'
             f'<td>{_e(_format_value(row["previous_value"], row["unit"]))}</td>'
+            f'<td>{_e(row.get("coverage_status", "unknown").replace("_", " ").title())}</td>'
             f'<td class="{change_class}">{_e(change_text)}</td></tr>'
         )
     if not rows:
-        rows.append('<tr><td colspan="6">No data in this window.</td></tr>')
+        rows.append('<tr><td colspan="7">No data in this window.</td></tr>')
     return "".join(rows)
+
+
+def _available_sites_by_source(config, report) -> dict[str, set[str]]:
+    connection_sources = {item.id: item.provider for item in config.connections}
+    report_sources = {METRICS[metric].source for metric in report.metric_ids}
+    available = {source: set() for source in report_sources}
+    for binding in config.bindings:
+        if binding.site_id not in report.site_ids:
+            continue
+        provider = connection_sources[binding.connection_id]
+        if provider == "fixture":
+            for source in report_sources:
+                available[source].add(binding.site_id)
+        elif provider in available:
+            available[provider].add(binding.site_id)
+    return available
+
+
+def _scoped_coverage(coverage, *, source: str, metric: str, site_id: str | None):
+    buckets = []
+    for item in coverage.get("by_site_source", []):
+        if item["source"] != source or not item.get("configured"):
+            continue
+        if site_id is not None and item["site_id"] != site_id:
+            continue
+        cells = item.get("metric_coverage", {}).get(
+            metric, {"status": "unavailable", "expected": 0, "covered": 0}
+        )
+        missing_ranges = [
+            entry for entry in item.get("missing_ranges", [])
+            if entry["metric"] == metric
+        ]
+        buckets.append(
+            {
+                "site_id": item["site_id"],
+                "source": source,
+                "status": cells["status"],
+                "configured": True,
+                "expected_cells": cells["expected"],
+                "covered_cells": cells["covered"],
+                "missing_cells_count": sum(int(entry["cells"]) for entry in missing_ranges),
+                "missing_ranges": missing_ranges,
+                "metric_status": {metric: cells["status"]},
+                "metric_coverage": {metric: cells},
+            }
+        )
+    expected = sum(int(item["expected_cells"]) for item in buckets)
+    covered = sum(int(item["covered_cells"]) for item in buckets)
+    status = (
+        "not_configured" if not buckets
+        else "complete" if expected and expected == covered
+        else "unavailable" if covered == 0
+        else "partial"
+    )
+    return {
+        "status": status,
+        "expected_cells": expected,
+        "covered_cells": covered,
+        "by_metric": {metric: status},
+        "by_metric_cells": {metric: {"expected": expected, "covered": covered}},
+        "by_site_source": buckets,
+    }
+
+
+def _fill_query_proven_zero_series(series, coverage, health, *, metric: str, window):
+    """Materialize zeroes only where successful acquisition coverage proves them."""
+
+    if metric not in METRICS or METRICS[metric].aggregation != "sum":
+        return series
+    start = datetime.fromisoformat(window["start"]).date()
+    end = datetime.fromisoformat(window["end"]).date()
+    all_dates = []
+    day = start
+    while day < end:
+        all_dates.append(day.isoformat())
+        day += timedelta(days=1)
+    output = [
+        {**item, "points": [dict(point) for point in item["points"]]}
+        for item in series
+    ]
+    for bucket in coverage.get("by_site_source", []):
+        if not bucket.get("configured"):
+            continue
+        missing_dates = set()
+        for item in bucket.get("missing_ranges", []):
+            if item["metric"] != metric or item["start"] is None:
+                continue
+            missing_day = datetime.fromisoformat(item["start"]).date()
+            missing_end = datetime.fromisoformat(item["end"]).date()
+            while missing_day <= missing_end:
+                missing_dates.add(missing_day.isoformat())
+                missing_day += timedelta(days=1)
+        matching = next(
+            (item for item in output if item["site_id"] == bucket["site_id"]),
+            None,
+        )
+        if matching is None:
+            health_sources = {
+                item["source"] for item in health
+                if item["site_id"] == bucket["site_id"]
+                and item.get("metric_source") == METRICS[metric].source
+            }
+            actual_source = (
+                next(iter(health_sources))
+                if len(health_sources) == 1 else METRICS[metric].source
+            )
+            matching = {
+                "metric": metric,
+                "site_id": bucket["site_id"],
+                "source": actual_source,
+                "unit": METRICS[metric].unit,
+                "points": [],
+            }
+            output.append(matching)
+        values = {point["date"]: point["value"] for point in matching["points"]}
+        for date_label in all_dates:
+            if date_label not in missing_dates:
+                values.setdefault(date_label, 0)
+        matching["points"] = [
+            {"date": date_label, "value": value}
+            for date_label, value in sorted(values.items())
+        ]
+    return sorted(output, key=lambda item: (item["site_id"], item["source"], item["metric"]))
 
 
 def _site_graph_display_name(route: str) -> str:
@@ -1711,8 +1918,40 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "text/css; charset=utf-8", CSS)
             if parsed.path == "/assets/app.js":
                 return self._send(200, "text/javascript; charset=utf-8", JS)
+            if parsed.path == "/favicon.svg":
+                return self._send(200, "image/svg+xml", FAVICON_SVG)
             try:
                 query = parse_qs(parsed.query, keep_blank_values=True)
+                analytics_fields = {
+                    "report", "subreport", "start", "end", "site", "metric",
+                    "source", "style", "compare", "view",
+                }
+                report_fields = {"report", "subreport", "start", "end", "site"}
+                graph_fields = {
+                    "site", "page", "graph", "layer", "edge_query", "edge_sort",
+                    "edge_order", "edge_page",
+                }
+                if parsed.path == "/":
+                    allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path in {"/api/v1/report", "/api/v1/report.csv"}:
+                    allowed = report_fields
+                    repeatable = set()
+                elif parsed.path in {"/api/v1/series", "/api/v1/series.csv"}:
+                    allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path in {
+                    "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
+                }:
+                    allowed = graph_fields
+                    repeatable = {"layer"}
+                else:
+                    allowed = set()
+                    repeatable = set()
+                if set(query) - allowed:
+                    raise ValueError("unknown query field")
+                if any(len(values) != 1 for key, values in query.items() if key not in repeatable):
+                    raise ValueError("duplicate query field")
                 if any(
                     value == ""
                     for field in ("start", "end", "site", "metric", "source")
@@ -1794,7 +2033,7 @@ def handler_factory(config, store, credentials=None):
                     for site in payload["sites"]
                 )
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a>{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
@@ -1851,7 +2090,7 @@ def handler_factory(config, store, credentials=None):
             )
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a></div>
@@ -1884,12 +2123,17 @@ def handler_factory(config, store, credentials=None):
                     raise ValueError("unknown subreport")
                 default_days = subreport.default_window_days
             site_id = query.get("site", [None])[0]
+            if site_id == "all":
+                site_id = None
             window = _window(query, config.platform.default_timezone, default_days)
             return reports.render(report_id, window, subreport_id, site_id), report
 
-        def _series_payload(self, query):
-            is_plot = query.get("view", [""])[0] == "plot"
-            report, definition = self._request(query, force_overview=is_plot)
+        def _series_payload(self, query, *, rendered=None):
+            view = query.get("view", [""])[0]
+            if view not in {"", "plot"}:
+                raise ValueError("invalid series view")
+            is_plot = view == "plot"
+            report, definition = rendered or self._request(query, force_overview=is_plot)
             candidates = tuple(
                 metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
                 if metric in METRICS and METRICS[metric].aggregation != "window"
@@ -1904,10 +2148,14 @@ def handler_factory(config, store, credentials=None):
             source = requested_source or (METRICS[metric].source if metric else "")
             if source not in SOURCE_LABELS or (metric and METRICS[metric].source != source):
                 raise ValueError("invalid series source")
+            available_sites = _available_sites_by_source(config, definition)
+            supported_sites = available_sites.get(source, set())
+            if report["site_id"] is not None and report["site_id"] not in supported_sites:
+                raise ValueError("selected site is not configured for this series source")
             style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
-            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
+            compare = _compare_flag(query)
 
             def selected(items):
                 return [
@@ -1915,33 +2163,74 @@ def handler_factory(config, store, credentials=None):
                     if item["metric"] == metric and item["source"] in {source, "fixture"}
                 ]
 
-            current = selected(report["series"])
-            previous = selected(report["comparison_series"]) if compare else []
-            if not current:
-                report["warnings"] = [*report["warnings"], "No stored daily values match this plot selection."]
-            current_metric_status = report.get("coverage", {}).get("by_metric", {}).get(metric)
-            prior_metric_status = (
-                report.get("comparison", {}).get("coverage", {}).get("by_metric", {}).get(metric)
+            raw_current = selected(report["series"])
+            raw_previous = selected(report["comparison_series"]) if compare else []
+            current_coverage = _scoped_coverage(
+                report.get("coverage", {}),
+                source=source,
+                metric=metric,
+                site_id=report["site_id"],
             )
+            prior_coverage = _scoped_coverage(
+                report.get("comparison", {}).get("coverage", {}),
+                source=source,
+                metric=metric,
+                site_id=report["site_id"],
+            )
+            source_health = [
+                item for item in report.get("source_health", [])
+                if item.get("metric_source") == source
+                and (report["site_id"] is None or item["site_id"] == report["site_id"])
+            ]
+            prior_source_health = [
+                item for item in report.get("comparison_source_health", [])
+                if item.get("metric_source") == source
+                and (report["site_id"] is None or item["site_id"] == report["site_id"])
+            ]
+            current = _fill_query_proven_zero_series(
+                raw_current,
+                current_coverage,
+                source_health,
+                metric=metric,
+                window=report["window"],
+            )
+            candidate_previous = _fill_query_proven_zero_series(
+                raw_previous,
+                prior_coverage,
+                prior_source_health,
+                metric=metric,
+                window=report["comparison_window"],
+            ) if compare else []
             comparison_available = bool(
                 compare
                 and current
-                and previous
-                and current_metric_status == "complete"
-                and prior_metric_status == "complete"
+                and candidate_previous
+                and current_coverage["status"] == "complete"
+                and prior_coverage["status"] == "complete"
             )
+            previous = candidate_previous if comparison_available else []
             comparison_status = (
                 "not_requested" if not compare
                 else "available" if comparison_available
                 else "unavailable"
             )
+            warnings = []
+            if not raw_current and current and current_coverage["status"] == "complete":
+                warnings.append(
+                    "The provider query completed for this selection; displayed zeroes are query-proven quiet dates."
+                )
+            elif not current:
+                warnings.append("No stored daily values match this plot selection.")
+            elif current_coverage["status"] != "complete":
+                warnings.append(
+                    "This plotted metric has partial stored coverage; displayed values are observed only."
+                )
             if compare and not comparison_available:
-                report["warnings"] = [
-                    *report["warnings"],
+                warnings.append(
                     "The requested comparison is unavailable because the prior period lacks complete stored coverage.",
-                ]
+                )
             return {
-                "schema_version": 1,
+                "schema_version": 2,
                 "report_id": report["report_id"],
                 "subreport_id": report["subreport_id"],
                 "site_id": report["site_id"],
@@ -1958,13 +2247,24 @@ def handler_factory(config, store, credentials=None):
                 "series": current,
                 "comparison_series": previous,
                 "generated_at": report.get("generated_at"),
-                "coverage": report.get("coverage", {}),
-                "comparison": report.get("comparison", {}),
-                "source_health": report.get("source_health", []),
-                "comparison_source_health": report.get("comparison_source_health", []),
-                "summary_totals": report.get("summary_totals", {}),
-                "site_names": {site.id: site.name for site in config.sites if site.id in definition.site_ids},
-                "warnings": report["warnings"],
+                "coverage": current_coverage,
+                "comparison": {
+                    "status": comparison_status,
+                    "available": comparison_available,
+                    "coverage": prior_coverage,
+                },
+                "source_health": source_health,
+                "comparison_source_health": prior_source_health,
+                "summary_totals": {
+                    metric: report.get("summary_totals", {}).get(metric, {})
+                },
+                "site_names": {
+                    site.id: site.name for site in config.sites
+                    if site.id in supported_sites
+                    and (report["site_id"] is None or site.id == report["site_id"])
+                },
+                "warnings": warnings,
+                "complete": current_coverage["status"] == "complete",
             }
 
         @staticmethod
@@ -1978,7 +2278,10 @@ def handler_factory(config, store, credentials=None):
             if path in {"/api/v1/series", "/api/v1/series.csv"}:
                 payload = self._series_payload(query)
                 if path.endswith(".csv"):
-                    filename = f'{payload["report_id"]}-{payload["metric"]}-{payload["window"]["start"][:10]}-{payload["window"]["end"][:10]}.csv'
+                    scope = payload.get("site_id") or "all-sites"
+                    section = payload.get("subreport_id") or "overview"
+                    comparison = "-comparison" if payload["compare"] else ""
+                    filename = f'{payload["report_id"]}-{section}-{scope}-{payload["metric"]}{comparison}-{payload["window"]["start"][:10]}-{payload["window"]["end"][:10]}.csv'
                     return self._send(
                         200,
                         "text/csv; charset=utf-8",
@@ -1988,7 +2291,9 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "application/json", json.dumps(payload, sort_keys=True))
             report, _definition = self._request(query)
             if path.endswith(".csv"):
-                filename = f'{report["report_id"]}-{report["window"]["start"][:10]}-{report["window"]["end"][:10]}.csv'
+                scope = report.get("site_id") or "all-sites"
+                section = report.get("subreport_id") or "overview"
+                filename = f'{report["report_id"]}-{section}-{scope}-{report["window"]["start"][:10]}-{report["window"]["end"][:10]}.csv'
                 return self._send(
                     200,
                     "text/csv; charset=utf-8",
@@ -2018,9 +2323,11 @@ def handler_factory(config, store, credentials=None):
                 if metric in METRICS and METRICS[metric].aggregation != "window"
             )
             requested_metric = query.get("metric", [None])[0]
+            available_sites = _available_sites_by_source(config, report)
             represented_sources = tuple(
                 source for source in SOURCE_LABELS
-                if any(METRICS[metric].source == source for metric in available_metrics)
+                if available_sites.get(source)
+                and any(METRICS[metric].source == source for metric in available_metrics)
             )
             requested_source = query.get("source", [None])[0]
             if requested_metric is not None and requested_metric not in available_metrics:
@@ -2045,7 +2352,41 @@ def handler_factory(config, store, credentials=None):
             style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
-            compare = query.get("compare", [""])[0] in {"1", "true", "yes"}
+            compare = _compare_flag(query)
+            relevant_sources = {METRICS[metric].source for metric in expected_metrics}
+            site_option_sources = set(represented_sources) if is_plot else relevant_sources
+            form_site_ids = tuple(
+                site_id for site_id in report.site_ids
+                if any(site_id in available_sites.get(source, set()) for source in site_option_sources)
+            )
+            selected_site_supported = (
+                result["site_id"] is None
+                or result["site_id"] in available_sites.get(selected_source, set())
+                if is_plot
+                else result["site_id"] is None or result["site_id"] in form_site_ids
+            )
+            if not selected_site_supported:
+                raise ValueError("selected site is not configured for this report view")
+
+            if is_plot:
+                effective_query = {key: list(values) for key, values in query.items()}
+                effective_query["view"] = ["plot"]
+                effective_query["source"] = [selected_source]
+                effective_query["metric"] = [selected_metric]
+                effective_query["style"] = [style]
+                plot_payload = self._series_payload(
+                    effective_query, rendered=(result, report)
+                )
+                result = {
+                    **result,
+                    "coverage": plot_payload["coverage"],
+                    "comparison": plot_payload["comparison"],
+                    "source_health": plot_payload["source_health"],
+                    "comparison_source_health": plot_payload["comparison_source_health"],
+                    "summary_totals": plot_payload["summary_totals"],
+                    "warnings": plot_payload["warnings"],
+                    "complete": plot_payload["complete"],
+                }
 
             def route(path="/", **overrides):
                 params = {"report": report.id, "start": start, "end": end}
@@ -2097,9 +2438,15 @@ def handler_factory(config, store, credentials=None):
                     f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
                     for item in report.subreports
                 )
-            site_options = '<option value="">All sites</option>' + "".join(
-                f'<option value="{_e(site_id)}"{" selected" if site_id == result["site_id"] else ""}>{_e(site_names.get(site_id, site_id))}</option>'
-                for site_id in report.site_ids
+            all_selected = " selected" if result["site_id"] is None else ""
+            site_options = f'<option value="all"{all_selected}>All sites</option>' + "".join(
+                (
+                    f'<option value="{_e(site_id)}" data-sources="{_e(",".join(sorted(source for source in represented_sources if site_id in available_sites.get(source, set()))))}"'
+                    f'{" selected" if site_id == result["site_id"] else ""}'
+                    f'{"" if not is_plot or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
+                    f'{_e(site_names.get(site_id, site_id))}</option>'
+                )
+                for site_id in form_site_ids
             )
             metric_order = [metric for metric in CHART_PRIORITY if metric in available_metrics]
             metric_order += sorted(set(available_metrics) - set(metric_order))
@@ -2117,10 +2464,18 @@ def handler_factory(config, store, credentials=None):
             )
 
             end_date = datetime.fromisoformat(end).date()
-            presets = "".join(
-                f'<a href="{_e(route(start=(end_date - timedelta(days=days)).isoformat()))}">{days} days</a>'
-                for days in (7, 30, 90, 365)
-            )
+            preset_links = []
+            for days in (7, 30, 90, 365):
+                try:
+                    candidate = end_date - timedelta(days=days)
+                except OverflowError:
+                    continue
+                if days >= candidate.toordinal():
+                    continue
+                preset_links.append(
+                    f'<a href="{_e(route(start=candidate.isoformat()))}">{days} days</a>'
+                )
+            presets = "".join(preset_links)
             export_params = {"report": report.id, "start": start, "end": end}
             if is_plot:
                 export_params.update({"view": "plot", "source": selected_source, "metric": selected_metric, "style": style})
@@ -2143,7 +2498,7 @@ def handler_factory(config, store, credentials=None):
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
-            freshness_count = len(result["freshness"])
+            freshness_count = len(result.get("source_health", []))
             page_title = "Time-series Plot Builder" if is_plot else result["title"]
             hero_copy = (
                 "Select a source, metric, site, exact date window, and chart style. Every plot is built from stored local snapshots."
@@ -2180,12 +2535,12 @@ def handler_factory(config, store, credentials=None):
             else:
                 supporting_html = (
                     f'<div class="split-grid">{_forms_html(result["forms_pipeline"])}{_health_html(result, expected_metrics)}</div>'
-                    f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
+                    f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Coverage</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
                 )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{_e(page_title)} - Boho Analytics</title><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<title>{_e(page_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>

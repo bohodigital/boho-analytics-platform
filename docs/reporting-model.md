@@ -28,11 +28,13 @@ line and area paths at missing calendar dates instead of implying continuity.
 
 ## Output contract
 
-Report JSON includes schema version, report/subreport/site scope, applied filters, resolved current
+Report JSON schema version 2 includes report/subreport/site scope, applied filters, resolved current
 and comparison windows, generation time, rows, compact series, `summary_totals`, `coverage`,
 `source_health`, comparison status, nullable forms-pipeline reconciliation, warnings, and strict
 completeness. Coverage is counted per configured site, source, metric input, and expected date (or
-one exact-window cell for window metrics). Source health separates provider data-through from local
+one exact-window cell for window metrics). Intentionally unconfigured site/source combinations have
+zero expected cells and do not degrade configured metrics. Missing detail is represented as compact
+consecutive ranges rather than one object per absent day. Source health separates provider data-through from local
 ingestion time and discloses time-basis, sampling, and data-state assumptions.
 
 Report CSV contains flat aggregate rows. Series CSV contains one daily value per row and labels
@@ -44,12 +46,15 @@ provider payloads.
 ## Semantics
 
 Metric catalog rules determine aggregation. Additive counts/bytes sum; Search Console CTR and
-position are weighted; latest-state metrics select the newest point; exact-window unique/summary
+position are weighted; exact-window unique/summary
 metrics never sum overlapping sync windows. Cross-provider visitor measures remain separate.
 
-`complete = true` requires every expected configured coverage cell. A missing provider row is
-missing evidence, not zero. Previous values and percentage changes remain null unless both periods
-have comparable complete coverage. Zero is emitted only when a provider explicitly returned zero.
+`complete = true` requires every expected configured coverage cell. A missing provider row remains
+missing unless an explicit zero fact or a successful binding-window query proves that quiet date.
+Query-proven empty additive windows aggregate to zero without manufacturing stored metric facts.
+Search Console coverage stops at its returned data-through date so normal provider latency is not
+misstated as a finalized zero. Previous values, percentage changes, comparison charts, and comparison
+CSV rows remain absent unless both periods have comparable complete coverage.
 
 ## Scale path
 

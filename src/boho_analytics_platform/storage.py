@@ -206,6 +206,62 @@ class SQLiteMetricStore:
                 ),
             )
 
+    def query_sync_coverage(
+        self,
+        *,
+        site_ids: Sequence[str],
+        sources: Sequence[str],
+        binding_keys: Sequence[str],
+        window: QueryWindow,
+    ) -> list[dict[str, object]]:
+        """Return successful acquisition intervals for currently configured bindings.
+
+        A successful provider query is distinct from the presence of events. The
+        interval ledger lets reporting represent query-proven quiet dates without
+        manufacturing metric facts or accepting stale runs from removed bindings.
+        """
+
+        if not site_ids or not sources or not binding_keys:
+            return []
+        sites = ",".join("?" for _ in site_ids)
+        provider_sources = ",".join("?" for _ in sources)
+        bindings = ",".join("?" for _ in binding_keys)
+        sql = f"""SELECT site_id,source,binding_key,window_start,window_end,
+                         result_kind,data_through,finished_at
+                    FROM sync_runs
+                   WHERE status='success'
+                     AND result_kind IN ('data','empty')
+                     AND site_id IN ({sites})
+                     AND source IN ({provider_sources})
+                     AND binding_key IN ({bindings})
+                     AND window_start IS NOT NULL
+                     AND window_end IS NOT NULL
+                     AND window_start < ?
+                     AND window_end > ?
+                ORDER BY window_start,window_end"""
+        params = [
+            *site_ids,
+            *sources,
+            *binding_keys,
+            _iso(window.end),
+            _iso(window.start),
+        ]
+        with self.connect(readonly=True) as db:
+            rows = db.execute(sql, params).fetchall()
+        return [
+            {
+                "site_id": row["site_id"],
+                "source": row["source"],
+                "binding_key": row["binding_key"],
+                "window_start": _parse(row["window_start"]),
+                "window_end": _parse(row["window_end"]),
+                "result_kind": row["result_kind"],
+                "data_through": _parse(row["data_through"]) if row["data_through"] else None,
+                "finished_at": _parse(row["finished_at"]) if row["finished_at"] else None,
+            }
+            for row in rows
+        ]
+
     def acquire_lock(self, name: str, owner: str, lease_seconds: int = 900) -> None:
         now = datetime.now(UTC); expires = now + timedelta(seconds=lease_seconds)
         with self.connect() as db:

@@ -50,6 +50,29 @@ class StorageTests(unittest.TestCase):
             window.end.isoformat(), "data", data_through.isoformat(),
         ))
 
+    def test_query_sync_coverage_returns_only_successful_current_bindings(self):
+        window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 4, tzinfo=UTC), "UTC")
+        key = "site:connection:website:demo"
+        good = self.store.start_run(
+            "connection", "site", binding_key=key, source="fixture", window=window,
+        )
+        self.store.finish_run(good, "success", result_kind="empty")
+        failed = self.store.start_run(
+            "connection", "site", binding_key=key, source="fixture", window=window,
+        )
+        self.store.finish_run(failed, "failed", result_kind="failed")
+
+        rows = self.store.query_sync_coverage(
+            site_ids=["site"], sources=["fixture"], binding_keys=[key], window=window,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["site_id"], "site")
+        self.assertEqual(rows[0]["source"], "fixture")
+        self.assertEqual(rows[0]["window_start"], window.start)
+        self.assertEqual(rows[0]["window_end"], window.end)
+        self.assertEqual(rows[0]["result_kind"], "empty")
+
     def test_upsert_is_idempotent_and_updates_value(self):
         self.store.upsert([point("4")]); self.store.upsert([point("7")])
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 2, tzinfo=UTC), "UTC")

@@ -43,7 +43,7 @@ metric_groups = ["traffic"]
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM sync_locks").fetchone()[0], 0)
                 self.assertEqual(db.execute("SELECT COUNT(*) FROM metric_facts").fetchone()[0], 3)
 
-    def test_empty_sync_is_warning_and_does_not_advance_watermark(self):
+    def test_successful_empty_sync_records_authoritative_coverage(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); fixture = root / "fixture.json"
             fixture.write_text('{"points":[]}', encoding="utf-8")
@@ -54,16 +54,46 @@ metric_groups = ["traffic"]
 
             result = SyncEngine(config, store).sync(window)[0]
 
-            self.assertEqual(result.status, "warning")
-            self.assertEqual(result.error_category, "empty-result")
+            self.assertEqual(result.status, "success")
+            self.assertIsNone(result.error_category)
             with store.connect(readonly=True) as db:
-                self.assertEqual(db.execute("SELECT COUNT(*) FROM watermarks").fetchone()[0], 0)
+                self.assertEqual(
+                    db.execute("SELECT completed_through FROM watermarks").fetchone()[0],
+                    window.end.isoformat(),
+                )
                 run = db.execute(
                     "SELECT status,result_kind,window_start,window_end,data_through FROM sync_runs ORDER BY started_at DESC LIMIT 1"
                 ).fetchone()
             self.assertEqual(tuple(run), (
-                "warning", "empty", window.start.isoformat(), window.end.isoformat(), None,
+                "success", "empty", window.start.isoformat(), window.end.isoformat(), None,
             ))
+
+    def test_unknown_or_unbound_connection_selection_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); fixture = root / "fixture.json"; write_fixture(fixture)
+            text = config_text(root / "state.db", fixture)
+            text = text.replace(
+                "[[bindings]]",
+                '''[[connections]]
+id = "unused-connection"
+provider = "fixture"
+credential_ref = "none:test"
+[connections.options]
+path = "unused.json"
+[[bindings]]''',
+                1,
+            )
+            path = root / "platform.toml"; path.write_text(text, encoding="utf-8")
+            config = load_config(path); store = SQLiteMetricStore(root / "state.db"); store.initialize()
+            engine = SyncEngine(config, store)
+            window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 2, tzinfo=UTC), "UTC")
+
+            with self.assertRaisesRegex(ValueError, "unknown connection"):
+                engine.sync(window, {"typo"})
+            with self.assertRaisesRegex(ValueError, "no configured bindings"):
+                engine.sync(window, {"unused-connection"})
+            with self.assertRaisesRegex(ValueError, "unknown connection"):
+                engine.probe({"typo"})
 
     def test_nonempty_sync_watermark_tracks_data_through_not_requested_end(self):
         with tempfile.TemporaryDirectory() as temporary:

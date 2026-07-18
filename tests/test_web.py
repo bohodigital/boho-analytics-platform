@@ -15,7 +15,7 @@ from boho_analytics_platform.config import load_config
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import Completeness, MetricPoint, QueryWindow, TimeGrain
 from boho_analytics_platform.storage import SQLiteMetricStore
-from boho_analytics_platform.web import _summary_cards, handler_factory
+from boho_analytics_platform.web import _chart_html, _summary_cards, handler_factory
 from support import config_text, write_fixture
 from tests.site_graph.test_analysis import seed_site_graph
 
@@ -82,6 +82,100 @@ class WebTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.request(path)[0], 400)
 
+    def test_generated_all_sites_forms_submit_without_a_blank_query(self):
+        status, _headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
+        self.assertEqual(status, 200)
+        self.assertIn('<option value="all" selected>All sites</option>', body)
+        self.assertEqual(
+            self.request("/?report=summary&start=2026-07-01&end=2026-07-02&metric=umami.pageviews&site=all")[0],
+            200,
+        )
+
+    def test_site_controls_and_series_api_follow_configured_source_bindings(self):
+        root = Path(self.temporary.name)
+        fixture = root / "availability.json"; write_fixture(fixture)
+        text = config_text(
+            root / "availability.db", fixture, provider="cloudflare-forms",
+            options='account_id = "account"\ndatabase_id = "database"',
+        )
+        text = text.replace(
+            "[[connections]]",
+            '''[[sites]]
+id = "second-site"
+client_id = "example-client"
+name = "Second Site"
+canonical_url = "https://second.example.com"
+timezone = "UTC"
+[[connections]]''',
+            1,
+        )
+        text = text.replace(
+            "[[bindings]]",
+            f'''[[connections]]
+id = "umami-connection"
+provider = "umami"
+credential_ref = "none:test"
+[connections.options]
+base_url = "https://analytics.example.invalid"
+[[bindings]]''',
+            1,
+        )
+        text = text.replace(
+            "[[reports]]",
+            '''[[bindings]]
+site_id = "second-site"
+connection_id = "umami-connection"
+resource_type = "website"
+resource_id = "second-demo"
+metric_groups = ["traffic"]
+[[reports]]''',
+            1,
+        )
+        text = text.replace('site_ids = ["example-site"]', 'site_ids = ["example-site", "second-site"]')
+        text = text.replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
+            'metric_ids = ["umami.pageviews", "forms.submissions"]',
+            1,
+        )
+        config_path = root / "availability.toml"; config_path.write_text(text, encoding="utf-8")
+        config = load_config(config_path)
+        store = SQLiteMetricStore(root / "availability.db"); store.initialize()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(config, store))
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+
+        def request(path):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            connection.request("GET", path, headers={"Host": "127.0.0.1"})
+            response = connection.getresponse(); body = response.read().decode(); status = response.status
+            connection.close(); return status, body
+
+        try:
+            status, forms_body = request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")
+            self.assertEqual(status, 200)
+            self.assertNotIn('value="second-site"', forms_body)
+            status, plot_body = request("/?report=summary&view=plot&source=cloudflare-forms&metric=forms.submissions&start=2026-07-01&end=2026-07-02")
+            self.assertEqual(status, 200)
+            self.assertIn('value="second-site" data-sources="umami" hidden disabled', plot_body)
+            invalid = "/api/v1/series?report=summary&view=plot&source=cloudflare-forms&metric=forms.submissions&site=second-site&start=2026-07-01&end=2026-07-02"
+            self.assertEqual(request(invalid)[0], 400)
+        finally:
+            server.shutdown(); server.server_close(); thread.join(2)
+        self.assertEqual(
+            self.request("/?report=summary&view=plot&source=umami&metric=umami.pageviews&start=2026-07-01&end=2026-07-02&site=all")[0],
+            200,
+        )
+
+    def test_unknown_and_duplicate_analytics_query_parameters_are_rejected(self):
+        for path in (
+            "/?report=summary&siet=example-site",
+            "/api/v1/report?report=summary&report=summary",
+            "/api/v1/series?report=summary&metric=umami.pageviews&metirc=umami.pageviews",
+            "/api/v1/series?report=summary&metric=umami.pageviews&view=bogus",
+            "/?report=summary&compare=perhaps",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path)[0], 400)
+
     def test_json_and_csv_share_report_rows(self):
         json_body = self.request("/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02")[2]
         self.assertIn('"umami.pageviews"', json_body); self.assertIn('"series"', json_body)
@@ -126,7 +220,11 @@ class WebTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertFalse(payload["comparison_available"])
         self.assertEqual(payload["comparison_status"], "unavailable")
+        self.assertEqual(payload["comparison_series"], [])
         self.assertTrue(any("comparison" in warning.casefold() for warning in payload["warnings"]))
+
+        csv_path = path.replace("/series?", "/series.csv?")
+        self.assertNotIn("comparison,", self.request(csv_path)[2])
 
     def test_series_comparison_uses_selected_metric_not_unrelated_report_coverage(self):
         start = datetime(2026, 7, 2, tzinfo=UTC)
@@ -144,6 +242,33 @@ class WebTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertTrue(payload["comparison_available"])
         self.assertEqual(payload["comparison_status"], "available")
+
+    def test_series_materializes_only_query_proven_zero_dates(self):
+        window = QueryWindow(
+            datetime(2026, 7, 2, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+            "UTC",
+        )
+        run = self.store.start_run(
+            "example-connection",
+            "example-site",
+            binding_key="example-site:example-connection:website:demo",
+            source="fixture",
+            window=window,
+        )
+        self.store.finish_run(run, "success", result_kind="empty")
+
+        path = (
+            "/api/v1/series?report=summary&source=umami&metric=umami.pageviews"
+            "&compare=1&start=2026-07-02&end=2026-07-03"
+        )
+        status, _headers, body = self.request(path)
+        payload = json.loads(body)
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["series"][0]["points"], [{"date": "2026-07-02", "value": 0}])
+        self.assertTrue(payload["comparison_available"])
+        self.assertTrue(any("query-proven" in warning for warning in payload["warnings"]))
 
     def test_summary_cards_do_not_silently_switch_visitor_definitions(self):
         result = {
@@ -195,6 +320,27 @@ class WebTests(unittest.TestCase):
         self.assertIn('data-metric="forms.pending" data-state="unknown"', body)
         self.assertIn('data-metric="forms.failed" data-state="unknown"', body)
 
+    def test_partial_card_and_metric_table_disclose_coverage(self):
+        body = self.request("/?report=summary&start=2026-06-30&end=2026-07-02")[2]
+        self.assertIn('data-metric="umami.pageviews" data-state="partial"', body)
+        self.assertIn("Partial data", body)
+        self.assertIn("<th>Coverage</th>", body)
+
+    def test_weighted_accessible_chart_uses_window_aggregate_not_sum_of_daily_rates(self):
+        result = {
+            "series": [{
+                "metric": "search.ctr", "site_id": "example-site", "source": "search-console", "unit": "ratio",
+                "points": [{"date": "2026-07-01", "value": .1}, {"date": "2026-07-02", "value": .2}],
+            }],
+            "rows": [{
+                "metric": "search.ctr", "site_id": "example-site", "source": "search-console", "unit": "ratio",
+                "value": .15, "coverage_status": "complete",
+            }],
+        }
+        body = _chart_html(result, "search.ctr", {"example-site": "Example Site"})
+        self.assertIn("15.0% window aggregate", body)
+        self.assertNotIn("30.0% total", body)
+
     def test_subreport_navigation_and_form_preserve_scope_and_window(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
         self.assertIn('name="subreport" value="forms"', body)
@@ -203,9 +349,20 @@ class WebTests(unittest.TestCase):
     def test_site_scope_is_validated_and_preserved(self):
         path = "/?report=summary&site=example-site&start=2026-07-01&end=2026-07-02"
         status, _headers, body = self.request(path)
-        self.assertEqual(status, 200); self.assertIn('<option value="example-site" selected>', body)
+        self.assertEqual(status, 200); self.assertIn('value="example-site" data-sources=', body); self.assertIn('selected>Example Site</option>', body)
         self.assertIn("site=example-site", body)
         self.assertEqual(self.request("/?report=summary&site=unknown&start=2026-07-01&end=2026-07-02")[0], 400)
+
+    def test_early_valid_dashboard_window_does_not_underflow_quick_presets(self):
+        status, _headers, body = self.request("/?report=summary&start=0001-01-02&end=0001-01-03")
+        self.assertEqual(status, 200)
+        self.assertNotIn(">365 days</a>", body)
+
+    def test_favicon_is_same_origin_and_available(self):
+        status, headers, body = self.request("/favicon.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/svg+xml")
+        self.assertIn("<svg", body)
 
     def test_css_charts_need_no_inline_style_permission(self):
         status, _headers, body = self.request("/assets/app.css")

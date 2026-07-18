@@ -7,6 +7,11 @@ V1 treats form acceptance and notification delivery as separate facts:
 3. The mail synchronization service independently observes a matching inbound notification.
 4. The dashboard compares aggregate counts and surfaces a delivery gap.
 
+Each D1 sync emits submissions plus pending/sent/failed for every requested configured form/day,
+including authoritative zeros. This reconciles a submission that changes state instead of leaving a
+stale prior status behind. Inbox delivery and unread metrics are likewise daily sums with explicit
+zero days.
+
 This distinction prevents an email outage from being mistaken for a lost form submission.
 
 ## Privacy boundary

@@ -7,6 +7,16 @@ the first stable release.
 
 ### Fixed
 
+- Excluded intentionally unconfigured site/provider combinations from coverage denominators and UI
+  choices while retaining explicit `not_configured` diagnostics.
+- Reused successful binding-window acquisition records to distinguish query-proven quiet dates from
+  never-synced data; successful empty reads now advance binding progress without inventing facts.
+- Compacted missing coverage into ranges, scoped series responses to the selected metric, suppressed
+  incomplete comparison series, and fixed partial KPI, weighted fallback, and CSV context labels.
+- Reconciled forms state transitions with explicit daily zero facts and made inbox delivery/unread
+  facts stable daily sums, including zero days.
+- Fixed the native All-sites form value, early-date quick-link underflow, source/site option filtering,
+  strict analytical query parsing, export filename collisions, and the same-origin favicon.
 - Replaced metric-presence completeness with per-site, source, metric, and date coverage; reports,
   health views, comparisons, and CSV exports now disclose missing evidence and provider semantics.
 - Recomputed portfolio Search Console CTR and average position from clicks/impressions instead of
@@ -14,8 +24,8 @@ the first stable release.
   forms states instead of fabricating zeroes.
 - Stopped silently switching visitor definitions or substituting invalid series metrics; strict,
   bounded date windows now return a controlled client error rather than underflowing the server.
-- Made empty sync results warnings that do not advance watermarks and recorded binding, requested
-  window, result kind, and actual data-through provenance in the sync ledger.
+- Recorded binding, requested window, result kind, and actual data-through provenance in the sync
+  ledger. Successful empty reads now record acquisition coverage and advance binding progress.
 - Corrected forms/mail local-day grouping, made Search Console's Pacific date basis explicit without
   changing historical fact identities, marked adaptive Cloudflare facts provisional, and upgraded
   probes from token checks to configured-resource reads where supported.

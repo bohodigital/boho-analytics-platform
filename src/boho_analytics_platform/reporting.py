@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -27,10 +27,63 @@ def _utc_iso(value: datetime | None) -> str | None:
 
 def _usable_for_window(point, window: QueryWindow) -> bool:
     if window.completeness == Completeness.FINAL:
-        return point.completeness == Completeness.FINAL
+        # Cloudflare's adaptive estimates retain provisional measurement
+        # provenance even after a completed daily bucket is temporally usable.
+        # Do not conflate sampling uncertainty with an unfinished date.
+        semantics = SOURCE_SEMANTICS.get(point.source, UNKNOWN_SOURCE_SEMANTICS)
+        return point.completeness == Completeness.FINAL or (
+            point.completeness == Completeness.PROVISIONAL
+            and semantics.data_state == "provisional"
+        )
     if window.completeness == Completeness.PROVISIONAL:
         return point.completeness in {Completeness.FINAL, Completeness.PROVISIONAL}
     return True
+
+
+def _compress_missing_cells(cells: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Compact consecutive missing dates with identical analytical causes."""
+
+    ranges: list[dict[str, object]] = []
+    for cell in cells:
+        metric = str(cell["metric"])
+        date_label = cell.get("date")
+        missing_inputs = list(cell["missing_inputs"])
+        if date_label is None:
+            ranges.append(
+                {
+                    "metric": metric,
+                    "start": None,
+                    "end": None,
+                    "cells": 1,
+                    "missing_inputs": missing_inputs,
+                }
+            )
+            continue
+        current_day = datetime.fromisoformat(str(date_label)).date()
+        previous = ranges[-1] if ranges else None
+        can_extend = bool(
+            previous
+            and previous["metric"] == metric
+            and previous["missing_inputs"] == missing_inputs
+            and previous["end"] is not None
+            and datetime.fromisoformat(str(previous["end"])).date()
+            + timedelta(days=1)
+            == current_day
+        )
+        if can_extend:
+            previous["end"] = str(date_label)
+            previous["cells"] = int(previous["cells"]) + 1
+        else:
+            ranges.append(
+                {
+                    "metric": metric,
+                    "start": str(date_label),
+                    "end": str(date_label),
+                    "cells": 1,
+                    "missing_inputs": missing_inputs,
+                }
+            )
+    return ranges
 
 
 class ReportService:
@@ -228,10 +281,30 @@ class ReportService:
 
         connection_sources = {item.id: item.provider for item in self.config.connections}
         configured_by_site: dict[str, set[str]] = defaultdict(set)
+        providers_by_site_source: dict[tuple[str, str], set[str]] = defaultdict(set)
+        binding_keys: list[str] = []
         for binding in self.config.bindings:
-            configured_by_site[binding.site_id].add(
-                connection_sources[binding.connection_id]
+            provider = connection_sources[binding.connection_id]
+            configured_by_site[binding.site_id].add(provider)
+            binding_keys.append(
+                f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}"
             )
+            if provider == "fixture":
+                for source in {METRICS[metric].source for metric in requested_metrics}:
+                    providers_by_site_source[(binding.site_id, source)].add(provider)
+            else:
+                providers_by_site_source[(binding.site_id, provider)].add(provider)
+
+        provider_sources = sorted(set(connection_sources.values()))
+        sync_coverage = self.store.query_sync_coverage(
+            site_ids=site_ids,
+            sources=provider_sources,
+            binding_keys=binding_keys,
+            window=window,
+        )
+        coverage_runs: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+        for item in sync_coverage:
+            coverage_runs[(str(item["site_id"]), str(item["source"]))].append(item)
 
         usable = [point for point in points if _usable_for_window(point, window)]
         daily_presence: set[tuple[str, str, str]] = set()
@@ -252,8 +325,8 @@ class ReportService:
             metrics_by_source[METRICS[metric].source].append(metric)
 
         by_site_source = []
-        by_metric_counts: dict[str, dict[str, int | bool]] = {
-            metric: {"expected": 0, "covered": 0, "not_configured": False}
+        by_metric_counts: dict[str, dict[str, int]] = {
+            metric: {"expected": 0, "covered": 0, "configured_sites": 0}
             for metric in requested_metrics
         }
         source_health = []
@@ -265,15 +338,24 @@ class ReportService:
             wildcard_fixture = "fixture" in configured_sources
             for source, source_metrics in sorted(metrics_by_source.items()):
                 configured = source in configured_sources or wildcard_fixture
+                configured_providers = providers_by_site_source.get((site_id, source), set())
                 expected_cells = 0
                 covered_cells = 0
                 missing_cells = []
                 metric_status: dict[str, str] = {}
+                metric_coverage: dict[str, dict[str, int | str]] = {}
 
                 for metric in source_metrics:
                     definition = METRICS[metric]
                     metric_expected = 0
                     metric_covered = 0
+                    if not configured:
+                        metric_status[metric] = "not_configured"
+                        metric_coverage[metric] = {
+                            "status": "not_configured", "expected": 0, "covered": 0,
+                        }
+                        continue
+                    by_metric_counts[metric]["configured_sites"] += 1
                     cell_dates: list[str | None] = (
                         [None] if definition.aggregation == "window" else dates
                     )
@@ -289,7 +371,30 @@ class ReportService:
                                 else (site_id, input_metric, date_label)
                                 in daily_presence
                             )
-                            if not configured or not present:
+                            if not present and date_label is not None and source not in {
+                                "cloudflare-forms", "forms-inbox"
+                            }:
+                                local_day = datetime.fromisoformat(date_label).date()
+                                cell_start = datetime.combine(local_day, time.min, zone)
+                                cell_end = datetime.combine(
+                                    local_day + timedelta(days=1), time.min, zone
+                                )
+                                present = any(
+                                    run["window_start"] <= cell_start
+                                    and (
+                                        run["data_through"]
+                                        if provider == "search-console"
+                                        else run["window_end"]
+                                    ) is not None
+                                    and (
+                                        run["data_through"]
+                                        if provider == "search-console"
+                                        else run["window_end"]
+                                    ) >= cell_end
+                                    for provider in configured_providers
+                                    for run in coverage_runs.get((site_id, provider), ())
+                                )
+                            if not present:
                                 missing_inputs.append(input_metric)
                         if not missing_inputs:
                             metric_covered += 1
@@ -303,13 +408,15 @@ class ReportService:
                                     "missing_inputs": missing_inputs,
                                 }
                             )
-                    if not configured:
-                        metric_status[metric] = "not_configured"
-                        by_metric_counts[metric]["not_configured"] = True
-                    elif metric_covered == metric_expected and metric_expected:
+                    if metric_covered == metric_expected and metric_expected:
                         metric_status[metric] = "complete"
                     else:
                         metric_status[metric] = "partial"
+                    metric_coverage[metric] = {
+                        "status": metric_status[metric],
+                        "expected": metric_expected,
+                        "covered": metric_covered,
+                    }
 
                 if not configured:
                     status = "not_configured"
@@ -325,15 +432,20 @@ class ReportService:
                     "configured": configured,
                     "expected_cells": expected_cells,
                     "covered_cells": covered_cells,
-                    "missing_cells": missing_cells,
+                    "missing_cells_count": len(missing_cells),
+                    "missing_ranges": _compress_missing_cells(missing_cells),
                     "metric_status": metric_status,
+                    "metric_coverage": metric_coverage,
                 }
                 by_site_source.append(bucket)
-                total_expected += expected_cells
-                total_covered += covered_cells
+                if configured:
+                    total_expected += expected_cells
+                    total_covered += covered_cells
 
                 # Coverage eligibility remains governed by the requested completeness,
                 # but observational health must describe every displayed source fact.
+                if not configured:
+                    continue
                 source_points = [
                     point
                     for point in points
@@ -341,7 +453,9 @@ class ReportService:
                     and point.metric in METRICS
                     and METRICS[point.metric].source == source
                 ]
-                actual_sources = sorted({point.source for point in source_points}) or [source]
+                actual_sources = sorted({point.source for point in source_points}) or sorted(
+                    configured_providers or {source}
+                )
                 for actual_source in actual_sources:
                     actual_points = [
                         point for point in source_points if point.source == actual_source
@@ -372,7 +486,7 @@ class ReportService:
 
         by_metric: dict[str, str] = {}
         for metric, counts in by_metric_counts.items():
-            if counts["not_configured"]:
+            if not counts["configured_sites"]:
                 by_metric[metric] = "not_configured"
             elif counts["expected"] and counts["expected"] == counts["covered"]:
                 by_metric[metric] = "complete"
@@ -381,7 +495,11 @@ class ReportService:
         status = (
             "complete"
             if total_expected and total_expected == total_covered
-            and all(item["status"] == "complete" for item in by_site_source)
+            and all(
+                item["status"] == "complete"
+                for item in by_site_source
+                if item["configured"]
+            )
             else "unavailable"
             if total_covered == 0
             else "partial"
@@ -392,6 +510,13 @@ class ReportService:
                 "expected_cells": total_expected,
                 "covered_cells": total_covered,
                 "by_metric": by_metric,
+                "by_metric_cells": {
+                    metric: {
+                        "expected": counts["expected"],
+                        "covered": counts["covered"],
+                    }
+                    for metric, counts in by_metric_counts.items()
+                },
                 "by_site_source": by_site_source,
             },
             source_health,
@@ -455,6 +580,12 @@ class ReportService:
             value = current_values.get(metric)
             coverage_status = coverage["by_metric"].get(metric, "unavailable")
             prior_status = prior_coverage["by_metric"].get(metric, "unavailable")
+            coverage_cells = coverage.get("by_metric_cells", {}).get(
+                metric, {"expected": 0, "covered": 0}
+            )
+            prior_coverage_cells = prior_coverage.get("by_metric_cells", {}).get(
+                metric, {"expected": 0, "covered": 0}
+            )
             current_sources = {
                 row["source"] for row in current_rows if row["metric"] == metric
             }
@@ -471,6 +602,13 @@ class ReportService:
                 else definition.source if not prior_sources
                 else "mixed"
             )
+            if (
+                value is None
+                and definition.aggregation == "sum"
+                and coverage_status == "complete"
+                and current_source != "mixed"
+            ):
+                value = Decimal()
             if definition.aggregation == "weighted" and coverage_status != "complete":
                 value = None
             if current_source == "mixed":
@@ -480,6 +618,12 @@ class ReportService:
                 and current_source == prior_source and current_source != "mixed"
             )
             previous = prior_values.get(metric) if comparison_available else None
+            if (
+                previous is None
+                and comparison_available
+                and definition.aggregation == "sum"
+            ):
+                previous = Decimal()
             change = None
             if value is not None and previous not in {None, Decimal()}:
                 change = round(float((value - previous) / previous * 100), 2)
@@ -492,6 +636,11 @@ class ReportService:
                 "previous_value": _number(previous) if previous is not None else None,
                 "change_percent": change,
                 "coverage_status": coverage_status,
+                "covered_cells": coverage_cells["covered"],
+                "expected_cells": coverage_cells["expected"],
+                "prior_covered_cells": prior_coverage_cells["covered"],
+                "prior_expected_cells": prior_coverage_cells["expected"],
+                "observed": any(row["metric"] == metric for row in current_rows),
                 "comparison_available": comparison_available,
             }
         return output
@@ -622,13 +771,24 @@ class ReportService:
             current_basis, prior_basis, metrics, coverage, prior_coverage
         )
         warnings = []
+        observed_metrics = {row["metric"] for row in current}
         missing = sorted(
-            metric
-            for metric in metrics
-            if summary_totals[metric]["value"] is None
+            metric for metric in metrics
+            if metric not in observed_metrics
+            and summary_totals[metric]["value"] is None
+            and summary_totals[metric]["coverage_status"] != "not_configured"
+        )
+        withheld = sorted(
+            metric for metric in metrics
+            if metric in observed_metrics and summary_totals[metric]["value"] is None
         )
         if missing:
-            warnings.append("No stored data for: " + ", ".join(missing))
+            warnings.append("No stored observations for: " + ", ".join(missing))
+        if withheld:
+            warnings.append(
+                "Partial aggregate withheld for: " + ", ".join(withheld)
+                + ". Observed site or daily values remain available below."
+            )
         if coverage["status"] != "complete":
             warnings.append(
                 "Coverage is incomplete for one or more requested site, source, metric, or date cells."
@@ -670,8 +830,19 @@ class ReportService:
             if prior_coverage["covered_cells"] == 0
             else "partial"
         )
+        current_series = self._series(current_points, window, metrics)
+        prior_series = self._series(previous_points, previous, metrics)
+        comparable_prior_series = [
+            item for item in prior_series
+            if self._coverage_status(
+                coverage, item["site_id"], item["metric"]
+            ) == "complete"
+            and self._coverage_status(
+                prior_coverage, item["site_id"], item["metric"]
+            ) == "complete"
+        ]
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "report_id": report.id,
             "subreport_id": subreport_id,
             "site_id": site_id,
@@ -698,8 +869,8 @@ class ReportService:
                 "coverage": prior_coverage,
             },
             "comparison_source_health": prior_source_health,
-            "series": self._series(current_points, window, metrics),
-            "comparison_series": self._series(previous_points, previous, metrics),
+            "series": current_series,
+            "comparison_series": comparable_prior_series,
             "forms_pipeline": forms,
             "warnings": warnings,
             "complete": coverage["status"] == "complete",
@@ -825,6 +996,9 @@ def to_csv(report: dict[str, Any]) -> str:
                 source=row["source"],
             )
         )
+        exported["comparison_available"] = row.get(
+            "comparison_available", exported.get("comparison_available")
+        )
         writer.writerow(exported)
     return output.getvalue()
 
@@ -846,7 +1020,7 @@ def to_series_csv(report: dict[str, Any], *, include_comparison: bool = False) -
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     groups = [("current", report.get("series", []), False)]
-    if include_comparison:
+    if include_comparison and report.get("comparison_available", False):
         groups.append(("comparison", report.get("comparison_series", []), True))
     for period, series_items, comparison in groups:
         for series in series_items:

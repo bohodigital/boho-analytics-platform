@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ..models import CapabilitySnapshot
 from .common import binding_site, connection_bindings, daily_point, timestamp_day
@@ -46,6 +47,15 @@ class FormsInboxConnector:
         return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
             ("forms.inbox-deliveries", "forms.inbox-unread"))
 
+    @staticmethod
+    def _requested_days(window, timezone):
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        day = window.start.astimezone(zone).date()
+        end = window.end.astimezone(zone).date()
+        while day < end:
+            yield day
+            day += timedelta(days=1)
+
     def collect(self, connection, _credential, request):
         # Only aggregate counts and dates leave SQLite. Content/address columns are never selected.
         options = request.binding.options; mailbox_key = str(options.get("mailbox_key", request.binding.resource_id))
@@ -71,7 +81,8 @@ class FormsInboxConnector:
             aggregate = daily.setdefault(day, [0, 0])
             aggregate[0] += int(row["aggregate_count"])
             aggregate[1] += int(row["unread_count"] or 0)
-        for day, (deliveries, unread) in sorted(daily.items()):
+        for day in self._requested_days(request.window, site.timezone):
+            deliveries, unread = daily.get(day, [0, 0])
             yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
                 metric="forms.inbox-deliveries", unit="count", day=day,
                 value=deliveries, timezone=site.timezone)

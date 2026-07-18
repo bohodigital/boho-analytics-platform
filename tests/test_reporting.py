@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import csv
 import io
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -183,7 +184,115 @@ metric_groups = ["traffic"]
             if item["site_id"] == "second-site" and item["source"] == "search-console"
         )
         self.assertEqual(bucket["status"], "partial")
-        self.assertTrue(any(cell["date"] == "2026-07-02" for cell in bucket["missing_cells"]))
+        self.assertEqual(bucket["missing_cells_count"], 4)
+        self.assertTrue(any(item["start"] == "2026-07-02" for item in bucket["missing_ranges"]))
+
+    def test_unconfigured_site_source_cells_do_not_degrade_coverage(self):
+        root = Path(self.temporary.name)
+        text = (root / "platform.toml").read_text(encoding="utf-8")
+        second_site = '''[[sites]]
+id = "second-site"
+client_id = "example-client"
+name = "Second Site"
+canonical_url = "https://second.example.com"
+timezone = "UTC"
+'''
+        text = text.replace("[[connections]]", second_site + "[[connections]]", 1)
+        text = text.replace('site_ids = ["example-site"]', 'site_ids = ["example-site", "second-site"]')
+        text = text.replace(
+            'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]',
+            'metric_ids = ["umami.pageviews"]',
+            1,
+        )
+        path = root / "partial-bindings.toml"; path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+        self.store.upsert([MetricPoint(
+            "example-client", "example-site", "fixture", "umami.pageviews", "count",
+            start, start + timedelta(days=1), TimeGrain.DAY, Decimal(12), (),
+            Completeness.FINAL, start + timedelta(hours=8),
+        )])
+
+        report = ReportService(config, self.store).render(
+            "summary", QueryWindow(start, start + timedelta(days=1), "UTC")
+        )
+
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["coverage"]["expected_cells"], 1)
+        self.assertEqual(report["coverage"]["covered_cells"], 1)
+        unsupported = next(
+            item for item in report["coverage"]["by_site_source"]
+            if item["site_id"] == "second-site" and item["source"] == "umami"
+        )
+        self.assertEqual(unsupported["status"], "not_configured")
+        self.assertEqual(unsupported["expected_cells"], 0)
+        self.assertEqual(report["coverage"]["by_metric"]["umami.pageviews"], "complete")
+
+    def test_successful_empty_sync_coverage_yields_an_authoritative_zero_total(self):
+        root = Path(self.temporary.name)
+        text = (root / "platform.toml").read_text(encoding="utf-8").replace(
+            'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]',
+            'metric_ids = ["umami.pageviews"]',
+            1,
+        )
+        path = root / "zero.toml"; path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        key = "example-site:example-connection:website:demo"
+        run = self.store.start_run(
+            "example-connection", "example-site", binding_key=key, source="fixture", window=self.window,
+        )
+        self.store.finish_run(run, "success", result_kind="empty")
+
+        report = ReportService(config, self.store).render("summary", self.window)
+
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["summary_totals"]["umami.pageviews"]["value"], 0)
+        self.assertFalse(any("No stored" in warning for warning in report["warnings"]))
+
+    def test_cloudflare_provisional_measurements_are_temporally_usable(self):
+        root = Path(self.temporary.name)
+        text = (root / "platform.toml").read_text(encoding="utf-8").replace(
+            'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]',
+            'metric_ids = ["cloudflare.requests"]',
+            1,
+        )
+        path = root / "cloudflare-usable.toml"; path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+        self.store.upsert([MetricPoint(
+            "example-client", "example-site", "cloudflare", "cloudflare.requests", "count",
+            start, start + timedelta(days=1), TimeGrain.DAY, Decimal(9), (),
+            Completeness.PROVISIONAL, start + timedelta(hours=8),
+        )])
+
+        report = ReportService(config, self.store).render(
+            "summary", QueryWindow(start, start + timedelta(days=1), "UTC")
+        )
+
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["summary_totals"]["cloudflare.requests"]["value"], 9)
+        health = next(item for item in report["source_health"] if item["source"] == "cloudflare")
+        self.assertEqual(health["sampling"], "adaptive")
+        self.assertEqual(health["data_state"], "provisional")
+
+    def test_large_missing_windows_use_compact_ranges_not_per_cell_objects(self):
+        root = Path(self.temporary.name)
+        text = (root / "platform.toml").read_text(encoding="utf-8").replace(
+            'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]',
+            'metric_ids = ["umami.pageviews"]',
+            1,
+        )
+        path = root / "compact.toml"; path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        window = QueryWindow(datetime(2016, 7, 3, tzinfo=UTC), datetime(2026, 7, 1, tzinfo=UTC), "UTC")
+
+        report = ReportService(config, self.store).render("summary", window)
+        bucket = report["coverage"]["by_site_source"][0]
+
+        self.assertNotIn("missing_cells", bucket)
+        self.assertEqual(bucket["missing_cells_count"], 3650)
+        self.assertEqual(len(bucket["missing_ranges"]), 1)
+        self.assertLess(len(json.dumps(report)), 100_000)
 
     def test_source_health_separates_data_through_from_ingestion_time(self):
         self.store.upsert([
@@ -313,10 +422,9 @@ metric_groups = ["traffic"]
             metric("search.impressions", 9, 1, "count"),
         ])
         report = ReportService(self.config, self.store).render("summary", self.window)
-        previous = next(item for item in report["comparison_series"] if item["metric"] == "search.impressions")
-        self.assertEqual(previous["points"], [{"date": "2026-06-30", "value": 4}])
+        self.assertFalse(any(item["metric"] == "search.impressions" for item in report["comparison_series"]))
         csv_body = to_series_csv(report, include_comparison=True)
-        self.assertIn("comparison,2026-06-30,search.impressions", csv_body)
+        self.assertNotIn("comparison,2026-06-30,search.impressions", csv_body)
         self.assertIn("current,2026-07-01,search.impressions", csv_body)
         self.assertIn("coverage_status", csv_body.splitlines()[0])
         self.assertFalse(report["comparison"]["available"])
@@ -344,6 +452,17 @@ metric_groups = ["traffic"]
             "ingested_at", "time_basis", "sampling", "data_state",
         ):
             self.assertIn(field, header)
+
+    def test_report_csv_preserves_each_rows_comparison_availability(self):
+        self.store.upsert([metric("forms.submissions", 1, 1, "count")])
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        row = next(item for item in report["rows"] if item["metric"] == "forms.submissions")
+        self.assertFalse(row["comparison_available"])
+        exported = next(
+            item for item in csv.DictReader(io.StringIO(to_csv(report)))
+            if item["metric"] == "forms.submissions"
+        )
+        self.assertEqual(exported["comparison_available"], "False")
 
 
 if __name__ == "__main__": unittest.main()

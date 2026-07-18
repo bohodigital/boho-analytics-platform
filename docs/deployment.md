@@ -42,8 +42,9 @@ python -m venv .venv
 
 Connect one provider at a time. Confirm reported scope, resource, dates, and metric meaning before
 enabling its timer. A failed connector returns a nonzero command status while successful bindings
-remain committed and independently visible. An empty connector result is a warning, returns nonzero,
-and does not advance its watermark; resolve or explicitly account for it before treating a timer as healthy.
+remain committed and independently visible. A connector exception returns nonzero. A successful
+empty provider read records `result_kind=empty`, advances binding progress, and provides query
+coverage without inserting invented metric facts.
 
 Upgrading an existing schema-v2 database preserves legacy forms facts but cuts reporting over to the
 corrected site-day identity. Immediately run a bounded, source-backed sync for the configured D1 and

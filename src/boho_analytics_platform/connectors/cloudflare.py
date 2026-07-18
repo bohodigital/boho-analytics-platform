@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ..credentials import require_text
 from ..models import CapabilitySnapshot, Completeness
@@ -65,6 +66,7 @@ class CloudflareAnalyticsConnector:
 
 class CloudflareFormsConnector:
     provider = "cloudflare-forms"
+    _statuses = ("failed", "pending", "sent")
 
     def __init__(self, config, http) -> None: self.config = config; self.http = http
 
@@ -85,6 +87,25 @@ class CloudflareFormsConnector:
         return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
             ("forms.failed", "forms.pending", "forms.sent", "forms.submissions"))
 
+    @staticmethod
+    def _requested_days(window, timezone):
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        day = window.start.astimezone(zone).date()
+        end = window.end.astimezone(zone).date()
+        while day < end:
+            yield day
+            day += timedelta(days=1)
+
+    def _configured_form_ids(self, site):
+        return {
+            value
+            for report in self.config.reports
+            if report.client_id == site.client_id and site.id in report.site_ids
+            for subreport in report.subreports
+            for key, value in subreport.filters
+            if key == "form_id"
+        }
+
     def collect(self, connection, credential, request):
         # Deliberately aggregate in D1. payload_json and all submission content are never selected.
         sql = """SELECT received_at, form_id, notification_status, COUNT(*) AS aggregate_count
@@ -99,18 +120,24 @@ class CloudflareFormsConnector:
         site = binding_site(self.config, request.binding.site_id)
         status_totals: dict[tuple[object, str, str], int] = {}
         totals: dict[tuple[object, str], int] = {}
+        form_ids = self._configured_form_ids(site)
         for row in rows:
             day = timestamp_day(row.get("received_at"), site.timezone)
             status = str(row["notification_status"]); count = int(row["aggregate_count"])
             form_id = str(row["form_id"])
+            form_ids.add(form_id)
             status_key = (day, form_id, status)
             status_totals[status_key] = status_totals.get(status_key, 0) + count
             totals[(day, form_id)] = totals.get((day, form_id), 0) + count
-        for (day, form_id, status), count in sorted(status_totals.items()):
-            yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                metric=f"forms.{status}", unit="count", day=day, value=count,
-                timezone=site.timezone, dimensions={"form_id": form_id})
-        for (day, form_id), count in totals.items():
-            yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                metric="forms.submissions", unit="count", day=day, value=count, timezone=site.timezone,
-                dimensions={"form_id": form_id})
+        for day in self._requested_days(request.window, site.timezone):
+            for form_id in sorted(form_ids):
+                dimensions = {"form_id": form_id}
+                yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric="forms.submissions", unit="count", day=day,
+                    value=totals.get((day, form_id), 0), timezone=site.timezone,
+                    dimensions=dimensions)
+                for status in self._statuses:
+                    yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                        metric=f"forms.{status}", unit="count", day=day,
+                        value=status_totals.get((day, form_id, status), 0),
+                        timezone=site.timezone, dimensions=dimensions)

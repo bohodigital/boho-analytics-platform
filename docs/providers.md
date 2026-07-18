@@ -59,8 +59,9 @@ aggregate query.
 ## Forms inbox
 
 The adapter is local, not an external API. It opens the existing comms-platform SQLite index in
-read-only/query-only mode, applies configured mailbox/sender/subject filters, and emits delivery and
-unread counts. It never owns synchronization or mailbox state.
+read-only/query-only mode, applies configured mailbox/sender/subject filters, and emits daily delivery
+and unread counts, including explicit zero days. Stable daily facts keep overlapping sync windows
+idempotent. It never owns synchronization or mailbox state.
 It filters by UTC instant, groups into the configured site timezone, and verifies each configured
 mailbox during probe.
 

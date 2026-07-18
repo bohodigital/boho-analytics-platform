@@ -9,7 +9,8 @@ Configuration schema and SQLite schema evolve independently. Database schema ver
 - `sync_runs`: start/end, binding/source scope, requested window, status, result kind, actual
   data-through, point count, and sanitized error category.
 - `sync_locks`: owner and expiry for safe stale-lock takeover.
-- `watermarks`: last observed data-through instant for each binding; empty results never advance it.
+- `watermarks`: binding progress. Non-empty reads retain their observed data-through instant;
+  successful empty reads advance through the completed requested window.
 - `schema_meta`: installed database version.
 
 SQLite runs with foreign keys, WAL, normal synchronous mode, and a busy timeout. The design assumes a
@@ -27,6 +28,11 @@ preserves version-1 rows as audit lineage, while normal queries expose only the 
 source-backed forms sync is therefore required after upgrade; until it runs, coverage is honestly
 missing rather than double-counting adjacent legacy and corrected days.
 
+Successful data-bearing and empty sync runs also form an acquisition-coverage ledger. Reporting
+uses only successful runs from bindings that still exist in current configuration. The ledger proves
+quiet daily cells for row-omitting providers; it never satisfies exact-window metrics or filtered
+forms dimensions, which require explicit source facts.
+
 The [metric catalog](../src/boho_analytics_platform/catalog.py) defines source, unit, aggregation,
 and meaning. Unknown metrics, wrong units, and wrong non-fixture sources fail ingestion.
 
@@ -37,7 +43,7 @@ and meaning. Unknown metrics, wrong units, and wrong non-fixture sources fail in
 - CTR is withheld when any contributing impression cell lacks matching click evidence; a missing
   click fact is not interpreted as an observed zero.
 - Search Console position is weighted by impressions.
-- Latest-state metrics select the newest contributing point.
+- Inbox unread counts are daily facts and sum across the selected window.
 - Exact-window Umami summary metrics are used only when their stored interval exactly matches the
   requested report interval.
 

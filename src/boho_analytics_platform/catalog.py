@@ -82,7 +82,7 @@ METRICS = {item.id: item for item in (
     _metric("forms.sent", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is marked sent."),
     _metric("forms.failed", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is marked failed."),
     _metric("forms.inbox-deliveries", "forms-inbox", "count", "sum", "Matching notification messages observed in the configured mailbox."),
-    _metric("forms.inbox-unread", "forms-inbox", "count", "latest", "Matching notification messages without a Seen flag."),
+    _metric("forms.inbox-unread", "forms-inbox", "count", "sum", "Matching notification messages received in the window without a Seen flag."),
 )}
 
 
