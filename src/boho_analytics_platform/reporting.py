@@ -107,6 +107,34 @@ class ReportService:
             filters = sub.filters
         return report, metrics, title, filters
 
+    def _currently_supported_points(self, points):
+        """Exclude facts whose site/provider binding is no longer configured.
+
+        Fixture bindings are deliberately wildcard bindings for local test/demo
+        metrics, but fixture-sourced facts are never accepted unless the site
+        still has an explicit fixture binding.
+        """
+
+        providers_by_site: dict[str, set[str]] = defaultdict(set)
+        connection_sources = {item.id: item.provider for item in self.config.connections}
+        for binding in self.config.bindings:
+            providers_by_site[binding.site_id].add(
+                connection_sources[binding.connection_id]
+            )
+
+        supported = []
+        for point in points:
+            definition = METRICS.get(point.metric)
+            if definition is None:
+                continue
+            configured = providers_by_site.get(point.site_id, set())
+            logical_source = definition.source
+            if point.source == "fixture" and "fixture" in configured:
+                supported.append(point)
+            elif point.source == logical_source and logical_source in configured:
+                supported.append(point)
+        return supported
+
     @staticmethod
     def _aggregate(points, window, requested_metrics):
         output: dict[tuple[str, str, str, str], Decimal] = defaultdict(Decimal)
@@ -701,6 +729,8 @@ class ReportService:
             metric_ids=query_metrics,
             window=previous,
         )
+        current_points = self._currently_supported_points(current_points)
+        previous_points = self._currently_supported_points(previous_points)
         if filters:
             required = dict(filters)
             current_points = [

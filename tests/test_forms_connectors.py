@@ -142,6 +142,21 @@ class FormsConnectorTests(unittest.TestCase):
         self.assertEqual(values["forms.submissions"], 5)
         self.assertEqual(len([point for point in points if point.metric == "forms.sent"]), 1)
 
+    def test_d1_connector_rejects_unknown_notification_status_before_aggregation(self):
+        text = config_text(self.root / "state.db", self.fixture, provider="cloudflare-forms", credential_ref="none:test",
+            options='account_id = "account"\ndatabase_id = "database"')
+        path = self.root / "config.toml"; path.write_text(text, encoding="utf-8"); config = load_config(path)
+        http = FakeHttp([
+            {"received_at": "2026-07-01T10:00:00Z", "form_id": "contact",
+             "notification_status": "sent", "aggregate_count": 2},
+            {"received_at": "2026-07-01T11:00:00Z", "form_id": "contact",
+             "notification_status": "retrying", "aggregate_count": 3},
+        ])
+        with self.assertRaisesRegex(ValueError, "unsupported notification status: retrying"):
+            list(CloudflareFormsConnector(config, http).collect(
+                config.connections[0], MemoryCredentialLease({"api_token": b"token"}),
+                SyncRequest(config.bindings[0], self._window(), ())))
+
     def test_inbox_connector_is_query_only_and_returns_counts(self):
         database = self.root / "mail.db"
         with closing(sqlite3.connect(database)) as db:

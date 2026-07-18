@@ -122,8 +122,11 @@ class CloudflareFormsConnector:
         totals: dict[tuple[object, str], int] = {}
         form_ids = self._configured_form_ids(site)
         for row in rows:
+            status = str(row["notification_status"])
+            if status not in self._statuses:
+                raise ValueError(f"Cloudflare D1 returned unsupported notification status: {status}")
             day = timestamp_day(row.get("received_at"), site.timezone)
-            status = str(row["notification_status"]); count = int(row["aggregate_count"])
+            count = int(row["aggregate_count"])
             form_id = str(row["form_id"])
             form_ids.add(form_id)
             status_key = (day, form_id, status)

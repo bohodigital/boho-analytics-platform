@@ -17,6 +17,8 @@ the first stable release.
   facts stable daily sums, including zero days.
 - Fixed the native All-sites form value, early-date quick-link underflow, source/site option filtering,
   strict analytical query parsing, export filename collisions, and the same-origin favicon.
+- Prevented stale facts from removed bindings from entering reports, rejected unsupported dashboard
+  metric/site pairs, and failed closed on unknown D1 notification states.
 - Replaced metric-presence completeness with per-site, source, metric, and date coverage; reports,
   health views, comparisons, and CSV exports now disclose missing evidence and provider semantics.
 - Recomputed portfolio Search Console CTR and average position from clicks/impressions instead of

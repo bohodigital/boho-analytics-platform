@@ -153,6 +153,26 @@ metric_groups = ["traffic"]
             status, forms_body = request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")
             self.assertEqual(status, 200)
             self.assertNotIn('value="second-site"', forms_body)
+            status, overview_body = request(
+                "/?report=summary&metric=forms.submissions&start=2026-07-01&end=2026-07-02"
+            )
+            self.assertEqual(status, 200)
+            self.assertIn(
+                'value="second-site" data-sources="umami" hidden disabled',
+                overview_body,
+            )
+            unsupported_dashboard = (
+                "/?report=summary&metric=forms.submissions&site=second-site"
+                "&start=2026-07-01&end=2026-07-02"
+            )
+            status, error_body = request(unsupported_dashboard)
+            self.assertEqual(status, 400)
+            self.assertIn("invalid report request", error_body)
+            supported_dashboard = (
+                "/?report=summary&metric=umami.pageviews&site=second-site"
+                "&start=2026-07-01&end=2026-07-02"
+            )
+            self.assertEqual(request(supported_dashboard)[0], 200)
             status, plot_body = request("/?report=summary&view=plot&source=cloudflare-forms&metric=forms.submissions&start=2026-07-01&end=2026-07-02")
             self.assertEqual(status, 200)
             self.assertIn('value="second-site" data-sources="umami" hidden disabled', plot_body)

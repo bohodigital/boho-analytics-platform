@@ -161,11 +161,13 @@ JS = r"""
 
   function updateSiteOptions() {
     const source = document.querySelector('select[name="source"]');
+    const metric = document.querySelector('select[name="metric"]');
     const site = document.querySelector('select[name="site"]');
-    if (!source || !site) return;
+    const selectedSource = source?.value || metric?.selectedOptions[0]?.dataset.source || "";
+    if (!selectedSource || !site) return;
     let first = null;
     for (const option of site.options) {
-      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(source.value);
+      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
       option.hidden = !supported;
       option.disabled = !supported;
       if (supported && first === null) first = option;
@@ -611,6 +613,11 @@ JS = r"""
     updateMetricOptions();
     updateSiteOptions();
     source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); });
+  }
+  const metric = document.querySelector('select[name="metric"]');
+  if (!source && metric) {
+    updateSiteOptions();
+    metric.addEventListener("change", updateSiteOptions);
   }
   loadChart();
   initSiteGraph();
@@ -2359,14 +2366,12 @@ def handler_factory(config, store, credentials=None):
                 site_id for site_id in report.site_ids
                 if any(site_id in available_sites.get(source, set()) for source in site_option_sources)
             )
-            selected_site_supported = (
-                result["site_id"] is None
-                or result["site_id"] in available_sites.get(selected_source, set())
-                if is_plot
-                else result["site_id"] is None or result["site_id"] in form_site_ids
+            selected_site_supported = result["site_id"] is None or result["site_id"] in (
+                available_sites.get(selected_source, set())
+                if selected_source else set(form_site_ids)
             )
             if not selected_site_supported:
-                raise ValueError("selected site is not configured for this report view")
+                raise ValueError("selected site is not configured for this dashboard metric source")
 
             if is_plot:
                 effective_query = {key: list(values) for key, values in query.items()}
@@ -2443,7 +2448,7 @@ def handler_factory(config, store, credentials=None):
                 (
                     f'<option value="{_e(site_id)}" data-sources="{_e(",".join(sorted(source for source in represented_sources if site_id in available_sites.get(source, set()))))}"'
                     f'{" selected" if site_id == result["site_id"] else ""}'
-                    f'{"" if not is_plot or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
+                    f'{"" if not selected_source or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
                     f'{_e(site_names.get(site_id, site_id))}</option>'
                 )
                 for site_id in form_site_ids

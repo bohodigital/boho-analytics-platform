@@ -31,6 +31,60 @@ class ReportingTests(unittest.TestCase):
         text = config_text(root / "state.db", fixture).replace(
             'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
             'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]')
+        native_connections = '''[[connections]]
+id = "native-umami"
+provider = "umami"
+credential_ref = "none:test"
+[[connections]]
+id = "native-search"
+provider = "search-console"
+credential_ref = "none:test"
+[[connections]]
+id = "native-cloudflare"
+provider = "cloudflare"
+credential_ref = "none:test"
+[[connections]]
+id = "native-forms"
+provider = "cloudflare-forms"
+credential_ref = "none:test"
+[[connections]]
+id = "native-inbox"
+provider = "forms-inbox"
+credential_ref = "none:test"
+'''
+        native_bindings = '''[[bindings]]
+site_id = "example-site"
+connection_id = "native-umami"
+resource_type = "website"
+resource_id = "native-demo"
+metric_groups = ["traffic"]
+[[bindings]]
+site_id = "example-site"
+connection_id = "native-search"
+resource_type = "site"
+resource_id = "sc-domain:example.com"
+metric_groups = ["search"]
+[[bindings]]
+site_id = "example-site"
+connection_id = "native-cloudflare"
+resource_type = "zone"
+resource_id = "example-zone"
+metric_groups = ["traffic"]
+[[bindings]]
+site_id = "example-site"
+connection_id = "native-forms"
+resource_type = "forms-site"
+resource_id = "example-site"
+metric_groups = ["forms"]
+[[bindings]]
+site_id = "example-site"
+connection_id = "native-inbox"
+resource_type = "mailbox"
+resource_id = "example"
+metric_groups = ["forms"]
+'''
+        text = text.replace("[[bindings]]", native_connections + "[[bindings]]", 1)
+        text = text.replace("[[reports]]", native_bindings + "[[reports]]", 1)
         path = root / "platform.toml"; path.write_text(text, encoding="utf-8"); self.config = load_config(path)
         self.store = SQLiteMetricStore(root / "state.db"); self.store.initialize()
         self.window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC), "UTC")
@@ -51,6 +105,36 @@ connection_id = "example-connection"
 resource_type = "website"
 resource_id = "second-demo"
 metric_groups = ["traffic"]
+[[bindings]]
+site_id = "second-site"
+connection_id = "native-umami"
+resource_type = "website"
+resource_id = "second-native-demo"
+metric_groups = ["traffic"]
+[[bindings]]
+site_id = "second-site"
+connection_id = "native-search"
+resource_type = "site"
+resource_id = "sc-domain:second.example.com"
+metric_groups = ["search"]
+[[bindings]]
+site_id = "second-site"
+connection_id = "native-cloudflare"
+resource_type = "zone"
+resource_id = "second-zone"
+metric_groups = ["traffic"]
+[[bindings]]
+site_id = "second-site"
+connection_id = "native-forms"
+resource_type = "forms-site"
+resource_id = "second-site"
+metric_groups = ["forms"]
+[[bindings]]
+site_id = "second-site"
+connection_id = "native-inbox"
+resource_type = "mailbox"
+resource_id = "second-example"
+metric_groups = ["forms"]
 '''
         text = text.replace("[[connections]]", second_site + "[[connections]]", 1)
         text = text.replace("[[reports]]", second_binding + "[[reports]]", 1)
@@ -207,11 +291,18 @@ timezone = "UTC"
         path = root / "partial-bindings.toml"; path.write_text(text, encoding="utf-8")
         config = load_config(path)
         start = datetime(2026, 7, 1, tzinfo=UTC)
-        self.store.upsert([MetricPoint(
-            "example-client", "example-site", "fixture", "umami.pageviews", "count",
-            start, start + timedelta(days=1), TimeGrain.DAY, Decimal(12), (),
-            Completeness.FINAL, start + timedelta(hours=8),
-        )])
+        self.store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "fixture", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(12), (),
+                Completeness.FINAL, start + timedelta(hours=8),
+            ),
+            MetricPoint(
+                "example-client", "second-site", "fixture", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(100), (),
+                Completeness.FINAL, start + timedelta(hours=8),
+            ),
+        ])
 
         report = ReportService(config, self.store).render(
             "summary", QueryWindow(start, start + timedelta(days=1), "UTC")
@@ -220,6 +311,8 @@ timezone = "UTC"
         self.assertTrue(report["complete"])
         self.assertEqual(report["coverage"]["expected_cells"], 1)
         self.assertEqual(report["coverage"]["covered_cells"], 1)
+        self.assertEqual(report["summary_totals"]["umami.pageviews"]["value"], 12)
+        self.assertFalse(any(row["site_id"] == "second-site" for row in report["rows"]))
         unsupported = next(
             item for item in report["coverage"]["by_site_source"]
             if item["site_id"] == "second-site" and item["source"] == "umami"
@@ -227,6 +320,90 @@ timezone = "UTC"
         self.assertEqual(unsupported["status"], "not_configured")
         self.assertEqual(unsupported["expected_cells"], 0)
         self.assertEqual(report["coverage"]["by_metric"]["umami.pageviews"], "complete")
+
+    def test_fixture_fact_cannot_satisfy_a_current_native_provider_binding(self):
+        root = Path(self.temporary.name)
+        text = config_text(
+            root / "native-state.db",
+            root / "unused.json",
+            provider="umami",
+            credential_ref="none:test",
+            options='base_url = "http://127.0.0.1:3000"',
+        ).replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
+            'metric_ids = ["umami.pageviews"]',
+            1,
+        )
+        path = root / "native-provider.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+        self.store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "fixture", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(100), (),
+                Completeness.FINAL, start + timedelta(hours=8),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(3), (),
+                Completeness.FINAL, start + timedelta(hours=9),
+            ),
+        ])
+
+        report = ReportService(config, self.store).render(
+            "summary", QueryWindow(start, start + timedelta(days=1), "UTC")
+        )
+
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["summary_totals"]["umami.pageviews"]["value"], 3)
+        self.assertEqual({row["source"] for row in report["rows"]}, {"umami"})
+
+    def test_native_fact_cannot_satisfy_a_current_fixture_only_binding(self):
+        root = Path(self.temporary.name)
+        text = config_text(root / "fixture-only.db", root / "unused.json").replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
+            'metric_ids = ["umami.pageviews"]',
+            1,
+        )
+        path = root / "fixture-only.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        store = SQLiteMetricStore(root / "fixture-only.db")
+        store.initialize()
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+        prior = start - timedelta(days=1)
+        store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "fixture", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(3), (),
+                Completeness.FINAL, start + timedelta(hours=8),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal(100), (),
+                Completeness.FINAL, start + timedelta(hours=9),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "fixture", "umami.pageviews", "count",
+                prior, start, TimeGrain.DAY, Decimal(2), (),
+                Completeness.FINAL, start + timedelta(hours=8),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami", "umami.pageviews", "count",
+                prior, start, TimeGrain.DAY, Decimal(90), (),
+                Completeness.FINAL, start + timedelta(hours=9),
+            ),
+        ])
+
+        report = ReportService(config, store).render(
+            "summary", QueryWindow(start, start + timedelta(days=1), "UTC")
+        )
+
+        self.assertEqual(report["summary_totals"]["umami.pageviews"]["value"], 3)
+        self.assertEqual(report["summary_totals"]["umami.pageviews"]["previous_value"], 2)
+        self.assertEqual({row["source"] for row in report["rows"]}, {"fixture"})
+        self.assertEqual({series["source"] for series in report["series"]}, {"fixture"})
 
     def test_successful_empty_sync_coverage_yields_an_authoritative_zero_total(self):
         root = Path(self.temporary.name)
