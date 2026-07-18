@@ -61,18 +61,54 @@ class SyncEngine:
             for binding in self.config.bindings:
                 connection = connection_map[binding.connection_id]
                 if connection_ids and connection.id not in connection_ids: continue
-                run_id = self.store.start_run(connection.id, binding.site_id)
+                binding_key = f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}"
+                run_id = self.store.start_run(
+                    connection.id,
+                    binding.site_id,
+                    binding_key=binding_key,
+                    source=connection.provider,
+                    window=window,
+                )
                 try:
                     request = SyncRequest(binding, window, binding.metric_groups)
                     with self.credentials.acquire(connection.credential_ref) as credential:
                         points = list(build_connector(connection.provider, self.config, self.http).collect(connection, credential, request))
                     validate_points(points, fixture=connection.provider == "fixture")
                     count = self.store.upsert(points)
-                    self.store.set_watermark(f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}", window.end)
-                    self.store.finish_run(run_id, "success", count)
-                    results.append(SyncResult(connection.id, binding.site_id, "success", count))
+                    if count:
+                        data_through = min(max(point.end for point in points), window.end)
+                        self.store.set_watermark(binding_key, data_through)
+                        self.store.finish_run(
+                            run_id,
+                            "success",
+                            count,
+                            result_kind="data",
+                            data_through=data_through,
+                        )
+                        results.append(SyncResult(connection.id, binding.site_id, "success", count))
+                    else:
+                        self.store.finish_run(
+                            run_id,
+                            "warning",
+                            category="empty-result",
+                            message="connector returned no metric points",
+                            result_kind="empty",
+                        )
+                        results.append(SyncResult(
+                            connection.id,
+                            binding.site_id,
+                            "warning",
+                            0,
+                            "empty-result",
+                        ))
                 except Exception as exc:
-                    category = _safe_category(exc); self.store.finish_run(run_id, "failed", category=category, message=type(exc).__name__)
+                    category = _safe_category(exc); self.store.finish_run(
+                        run_id,
+                        "failed",
+                        category=category,
+                        message=type(exc).__name__,
+                        result_kind="failed",
+                    )
                     results.append(SyncResult(connection.id, binding.site_id, "failed", 0, category))
         finally:
             self.store.release_lock("global-sync", owner)

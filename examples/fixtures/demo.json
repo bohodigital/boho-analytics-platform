@@ -1,0 +1,30 @@
+{
+  "points": [
+    {"resource_id":"demo","date":"2026-07-01","metric":"umami.pageviews","unit":"count","value":142},
+    {"resource_id":"demo","date":"2026-07-02","metric":"umami.pageviews","unit":"count","value":157},
+    {"resource_id":"demo","date":"2026-07-03","metric":"umami.pageviews","unit":"count","value":166},
+    {"resource_id":"demo","date":"2026-07-01","metric":"umami.sessions","unit":"count","value":91},
+    {"resource_id":"demo","date":"2026-07-02","metric":"umami.sessions","unit":"count","value":99},
+    {"resource_id":"demo","date":"2026-07-03","metric":"umami.sessions","unit":"count","value":104},
+    {"resource_id":"demo","date":"2026-07-01","metric":"cloudflare.requests","unit":"count","value":1830},
+    {"resource_id":"demo","date":"2026-07-02","metric":"cloudflare.requests","unit":"count","value":1924},
+    {"resource_id":"demo","date":"2026-07-03","metric":"cloudflare.requests","unit":"count","value":2012},
+    {"resource_id":"demo","date":"2026-07-01","metric":"google.sessions","unit":"count","value":88},
+    {"resource_id":"demo","date":"2026-07-02","metric":"google.sessions","unit":"count","value":96},
+    {"resource_id":"demo","date":"2026-07-03","metric":"google.sessions","unit":"count","value":101},
+    {"resource_id":"demo","date":"2026-07-01","metric":"search.clicks","unit":"count","value":34},
+    {"resource_id":"demo","date":"2026-07-02","metric":"search.clicks","unit":"count","value":41},
+    {"resource_id":"demo","date":"2026-07-03","metric":"search.clicks","unit":"count","value":39},
+    {"resource_id":"demo","date":"2026-07-01","metric":"search.impressions","unit":"count","value":840},
+    {"resource_id":"demo","date":"2026-07-02","metric":"search.impressions","unit":"count","value":915},
+    {"resource_id":"demo","date":"2026-07-03","metric":"search.impressions","unit":"count","value":890},
+    {"resource_id":"demo","date":"2026-07-01","metric":"forms.submissions","unit":"count","value":4},
+    {"resource_id":"demo","date":"2026-07-02","metric":"forms.submissions","unit":"count","value":3},
+    {"resource_id":"demo","date":"2026-07-03","metric":"forms.submissions","unit":"count","value":5},
+    {"resource_id":"demo","date":"2026-07-01","metric":"forms.inbox-deliveries","unit":"count","value":4},
+    {"resource_id":"demo","date":"2026-07-02","metric":"forms.inbox-deliveries","unit":"count","value":3},
+    {"resource_id":"demo","date":"2026-07-03","metric":"forms.inbox-deliveries","unit":"count","value":5},
+    {"resource_id":"demo","date":"2026-07-03","metric":"forms.pending","unit":"count","value":0},
+    {"resource_id":"demo","date":"2026-07-03","metric":"forms.failed","unit":"count","value":0}
+  ]
+}

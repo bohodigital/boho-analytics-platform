@@ -8,17 +8,18 @@ import hmac
 import html
 import json
 import math
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
-from zoneinfo import ZoneInfo
 
+from .build_info import build_identity
 from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
 from .site_graph.reporting import SiteGraphDisplayReportService
 from .site_graph.storage import SiteGraphStore
+from .time_window import report_window
 
 
 SECURITY_HEADERS = {
@@ -84,17 +85,17 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
-    ("Page views", ("umami.pageviews", "google.pageviews"), "Audience attention"),
-    ("Sessions", ("umami.sessions", "google.sessions"), "Engaged visits"),
+    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
+    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
     ("Search impressions", ("search.impressions",), "Organic visibility"),
     ("Inbox deliveries", ("forms.inbox-deliveries",), "Form notification evidence"),
 )
 
 TRAFFIC_SUMMARY = (
-    ("Page views", ("umami.pageviews", "google.pageviews"), "Audience attention"),
-    ("Sessions", ("umami.sessions", "google.sessions"), "Engaged visits"),
-    ("Visitors", ("umami.visitors", "google.active-users"), "Measured audience"),
-    ("Edge requests", ("cloudflare.requests",), "Cloudflare delivery volume"),
+    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
+    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
+    ("Umami visitors", ("umami.visitors",), "Unique within each exact provider window; summed by site"),
+    ("GA active-user days", ("google.active-users",), "Daily active users summed; not unique across days"),
 )
 
 SEARCH_SUMMARY = (
@@ -214,25 +215,41 @@ JS = r"""
       ctx.fillText(dateAt(index), xIndex(index), height - margin.bottom + 13);
     }
 
+    function contiguousSegments(points) {
+      const segments = [];
+      for (const point of points) {
+        const current = segments[segments.length - 1];
+        const previous = current?.[current.length - 1];
+        const gapDays = previous ? Math.round((dateMs(point.date) - dateMs(previous.date)) / 86400000) : 1;
+        if (!current || gapDays !== 1) segments.push([point]); else current.push(point);
+      }
+      return segments;
+    }
+
     function path(item, color, dashed, fill) {
       if (!item.points.length) return;
       const startMs = dashed ? comparisonStart : currentStart;
-      ctx.beginPath();
-      item.points.forEach((point, index) => {
-        const px = xPoint(point, startMs), py = y(Number(point.value));
-        if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      });
-      if (fill && item.points.length > 1) {
-        ctx.lineTo(xPoint(item.points[item.points.length - 1], startMs), y(min));
-        ctx.lineTo(xPoint(item.points[0], startMs), y(min)); ctx.closePath();
-        const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
-        gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
-        ctx.fillStyle = gradient; ctx.fill();
+      for (const segment of contiguousSegments(item.points)) {
         ctx.beginPath();
-        item.points.forEach((point, index) => { const px=xPoint(point,startMs),py=y(Number(point.value)); if(index===0)ctx.moveTo(px,py);else ctx.lineTo(px,py); });
+        segment.forEach((point, index) => {
+          const px = xPoint(point, startMs), py = y(Number(point.value));
+          if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        if (fill && segment.length > 1) {
+          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
+          ctx.lineTo(xPoint(segment[0], startMs), y(min)); ctx.closePath();
+          const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
+          gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
+          ctx.fillStyle = gradient; ctx.fill();
+          ctx.beginPath();
+          segment.forEach((point, index) => {
+            const px = xPoint(point, startMs), py = y(Number(point.value));
+            if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          });
+        }
+        ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
+        ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       }
-      ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
-      ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
       if (!dashed && item.points.length <= 45) {
         ctx.fillStyle = color;
@@ -266,10 +283,13 @@ JS = r"""
       });
       if (comparison.length) {
         const li = document.createElement("li"); li.textContent = "Dashed = previous period"; legend.append(li);
+      } else if (payload.compare && !payload.comparison_available) {
+        const li = document.createElement("li"); li.textContent = "Previous-period comparison unavailable"; legend.append(li);
       }
     }
     const rangeText = `${dateAt(0)} through ${dateAt(dayCount - 1)}`;
-    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`;
+    const comparisonText = payload.compare && !payload.comparison_available ? " - comparison unavailable" : "";
+    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`;
     canvas.dataset.rendered = "true";
     canvas.onpointermove = event => {
       const bounds = canvas.getBoundingClientRect();
@@ -281,7 +301,7 @@ JS = r"""
       });
       status.textContent = `${selectedDate} - ${values.join(" - ")}`;
     };
-    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}`; };
+    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`; };
   }
 
   async function loadChart() {
@@ -579,16 +599,11 @@ JS = r"""
 
 
 def _window(query, timezone, default_days):
-    zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
-    today = datetime.now(zone).date()
-    end_date = datetime.fromisoformat(query.get("end", [today.isoformat()])[0]).date()
-    start_date = datetime.fromisoformat(
-        query.get("start", [(end_date - timedelta(days=default_days)).isoformat()])[0]
-    ).date()
-    return QueryWindow(
-        datetime.combine(start_date, time.min, zone),
-        datetime.combine(end_date, time.min, zone),
-        timezone,
+    return report_window(
+        timezone=timezone,
+        default_days=default_days,
+        start=query.get("start", [None])[0],
+        end=query.get("end", [None])[0],
     )
 
 
@@ -626,14 +641,31 @@ def _format_value(value: int | float | None, unit: str = "count") -> str:
 
 
 def _metric_total(result, metric):
+    summary = result.get("summary_totals", {}).get(metric)
+    if summary is not None:
+        return {
+            "value": summary["value"],
+            "previous": summary.get("previous_value"),
+            "change": summary.get("change_percent"),
+            "unit": summary["unit"],
+            "metric": metric,
+            "source": summary.get("source"),
+            "coverage_status": summary.get("coverage_status", "unknown"),
+        }
     rows = [row for row in result["rows"] if row["metric"] == metric]
     if not rows:
+        return None
+    if metric in METRICS and METRICS[metric].aggregation in {"weighted", "latest"}:
         return None
     value = sum(float(row["value"]) for row in rows)
     prior_values = [float(row["previous_value"]) for row in rows if row["previous_value"] is not None]
     previous = sum(prior_values) if prior_values else None
     change = None if previous in {None, 0} else round((value - previous) / previous * 100, 1)
-    return {"value": value, "previous": previous, "change": change, "unit": rows[0]["unit"], "metric": metric}
+    return {
+        "value": value, "previous": previous, "change": change,
+        "unit": rows[0]["unit"], "metric": metric, "source": rows[0]["source"],
+        "coverage_status": "legacy",
+    }
 
 
 def _trend(change, *, lower_is_better=False):
@@ -664,35 +696,43 @@ def _summary_cards(result, expected_metrics):
     }
     for label, candidates, note in definitions:
         total = None
+        selected_metric = candidates[0]
         for metric in candidates:
             total = _metric_total(result, metric)
             if total:
+                selected_metric = metric
                 break
             pipeline_key = pipeline_values.get(metric)
             if pipeline_key and result["forms_pipeline"] is not None:
                 total = {
-                    "value": result["forms_pipeline"].get(pipeline_key, 0),
+                    "value": result["forms_pipeline"].get(pipeline_key),
                     "previous": None,
                     "change": None,
                     "unit": "count",
                     "metric": metric,
+                    "source": None,
+                    "coverage_status": "unknown",
                 }
+                selected_metric = metric
                 break
-        if total:
+        observed = total is not None and total["value"] is not None
+        if observed:
             value = _format_value(total["value"], total["unit"])
             source_row = next((row for row in result["rows"] if row["metric"] == total["metric"]), None)
-            source = _source_label(source_row["source"]) if source_row else "Current window"
+            source_id = total.get("source") or (source_row["source"] if source_row else None)
+            source = _source_label(source_id) if source_id else "Current window"
             badge = _trend(
                 total["change"],
                 lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
             )
-            detail = f"{note} · {source}"
+            detail = f"{note} - {source}"
         else:
-            value = "—"
-            badge = '<span class="trend flat">No data</span>'
-            detail = note
+            value = "Unknown"
+            badge = '<span class="trend flat">Not observed</span>'
+            detail = f"{note} - no stored observation"
+        state = "observed" if observed else "unknown"
         cards.append(
-            f'<article class="kpi-card"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
+            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
             f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
@@ -744,24 +784,46 @@ def _forms_html(pipeline):
         "failed": "Failed",
     }
     items = "".join(
-        f'<div class="pipeline-item"><b>{_e(labels[key])}</b><span class="pipeline-value">{_e(_format_value(value))}</span>'
+        f'<div class="pipeline-item" data-state="{"observed" if value is not None else "unknown"}"><b>{_e(labels[key])}</b>'
+        f'<span class="pipeline-value">{_e(_format_value(value))}</span>'
         f'<span>{"Current window" if key != "delivery_gap" else "Stored minus delivered"}</span></div>'
-        for key, value in pipeline.items()
+        for key, value in pipeline.items() if key in labels
     )
-    gap = pipeline.get("delivery_gap", 0)
-    note = "Storage and inbox evidence agree." if gap == 0 else "Counts differ; use the forms report to inspect notification state."
+    gap = pipeline.get("delivery_gap")
+    note = (
+        "Storage and inbox evidence agree." if gap == 0
+        else "Counts differ; use the forms report to inspect notification state." if gap is not None
+        else "Storage and inbox evidence are not both available, so no delivery gap is asserted."
+    )
     return f'<section class="panel section-panel"><div class="panel-heading"><div><h2>Forms delivery</h2><p>Independent storage and mailbox evidence.</p></div></div><div class="pipeline-grid">{items}</div><p class="pipeline-note">{_e(note)}</p></section>'
 
 
 def _health_html(result, expected_metrics):
-    present = {row["metric"] for row in result["rows"]}
-    coverage = f"{len(present)} of {len(expected_metrics)} metrics"
-    freshness = []
-    for source, observed in result["freshness"].items():
-        timestamp = datetime.fromisoformat(observed).astimezone(UTC).strftime("%b %d, %H:%M UTC")
-        freshness.append(
-            f'<div class="health-item"><b>{_e(_source_label(source))}</b><span>Observed {_e(timestamp)}</span></div>'
+    report_coverage = result.get("coverage")
+    if report_coverage:
+        coverage = (
+            f"{report_coverage['covered_cells']} of {report_coverage['expected_cells']} expected cells; "
+            f"status {report_coverage['status']}"
         )
+    else:
+        present = {row["metric"] for row in result["rows"]}
+        coverage = f"{len(present)} of {len(expected_metrics)} metrics"
+    freshness = []
+    for item in result.get("source_health", []):
+        through = item.get("data_through") or "no data"
+        ingested = item.get("ingested_at") or "never"
+        label = f"{item['site_id']} - {_source_label(item['source'])}"
+        semantics = f"{item['time_basis']}; {item['sampling']}; {item['data_state']}"
+        freshness.append(
+            f'<div class="health-item" data-state="{_e(item["status"])}"><b>{_e(label)}</b>'
+            f'<span>Data through {_e(through)}; ingested {_e(ingested)}</span><span>{_e(semantics)}</span></div>'
+        )
+    if not freshness:
+        for source, observed in result.get("freshness", {}).items():
+            timestamp = datetime.fromisoformat(observed).astimezone(UTC).strftime("%b %d, %H:%M UTC")
+            freshness.append(
+                f'<div class="health-item"><b>{_e(_source_label(source))}</b><span>Ingested {_e(timestamp)}; data date unavailable</span></div>'
+            )
     if not freshness:
         freshness.append('<div class="health-item"><b>No source data</b><span>Try a wider date window.</span></div>')
     return (
@@ -1291,6 +1353,8 @@ def _site_graph_disclosure(payload):
         f'<p><strong>Active projection and filters</strong>Projection: {_e(display["projection"])}; '
         f'layers: {_e(", ".join(display["layers"]))}; neighborhood: {_e(selected_page)}; '
         f'edge-table query: {_e(edge_query)}</p>'
+        '<p><strong>Analytical basis stays compiled contextual</strong>'
+        'Selected layers change edge counts, tables, and the drawing only; goal distance, components, resilience, and findings remain contextual.</p>'
         f'<p><strong>{payload["coverage"]["link_occurrences"]} stored internal link occurrences across all layers</strong>'
         f'Current selected layers account for {display["total_occurrences"]}; layer totals: '
         f'{_e(layer_accounting)}</p>'
@@ -1638,24 +1702,35 @@ def handler_factory(config, store, credentials=None):
                 return
             parsed = urlsplit(self.path)
             if parsed.path == "/healthz":
-                return self._send(200, "application/json", '{"ok":true}')
+                return self._send(
+                    200,
+                    "application/json",
+                    json.dumps({"ok": True, **build_identity()}, sort_keys=True, separators=(",", ":")),
+                )
             if parsed.path == "/assets/app.css":
                 return self._send(200, "text/css; charset=utf-8", CSS)
             if parsed.path == "/assets/app.js":
                 return self._send(200, "text/javascript; charset=utf-8", JS)
             try:
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                if any(
+                    value == ""
+                    for field in ("start", "end", "site", "metric", "source")
+                    for value in query.get(field, ())
+                ):
+                    raise ValueError("blank query value")
                 if parsed.path == "/":
-                    return self._dashboard(parse_qs(parsed.query))
+                    return self._dashboard(query)
                 if parsed.path == "/site-graph":
-                    return self._site_graph(parse_qs(parsed.query))
+                    return self._site_graph(query)
                 if parsed.path == "/api/v1/site-graph":
-                    return self._site_graph_api(parse_qs(parsed.query))
+                    return self._site_graph_api(query)
                 if parsed.path == "/api/v1/site-graph.csv":
-                    return self._site_graph_csv(parse_qs(parsed.query))
+                    return self._site_graph_csv(query)
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
-                    return self._api(parsed.path, parse_qs(parsed.query))
+                    return self._api(parsed.path, query)
                 self.send_error(404)
             except (ValueError, KeyError):
                 message = "invalid site graph request" if parsed.path in {
@@ -1672,6 +1747,9 @@ def handler_factory(config, store, credentials=None):
 
         def _site_graph_payload(self, query):
             site_key = query.get("site", [None])[0]
+            known_sites = {item["key"] for item in graph_reports.sites()}
+            if site_key is not None and site_key not in known_sites:
+                raise ValueError("unknown site graph site")
             selected_page = query.get("page", [None])[0]
             try:
                 edge_page = int(query.get("edge_page", ["1"])[0])
@@ -1817,6 +1895,8 @@ def handler_factory(config, store, credentials=None):
                 if metric in METRICS and METRICS[metric].aggregation != "window"
             )
             requested_metric = query.get("metric", [None])[0]
+            if requested_metric is not None and requested_metric not in candidates:
+                raise ValueError("invalid series metric")
             metric = requested_metric if requested_metric in candidates else next(
                 (item for item in CHART_PRIORITY if item in candidates), candidates[0] if candidates else ""
             )
@@ -1839,6 +1919,27 @@ def handler_factory(config, store, credentials=None):
             previous = selected(report["comparison_series"]) if compare else []
             if not current:
                 report["warnings"] = [*report["warnings"], "No stored daily values match this plot selection."]
+            current_metric_status = report.get("coverage", {}).get("by_metric", {}).get(metric)
+            prior_metric_status = (
+                report.get("comparison", {}).get("coverage", {}).get("by_metric", {}).get(metric)
+            )
+            comparison_available = bool(
+                compare
+                and current
+                and previous
+                and current_metric_status == "complete"
+                and prior_metric_status == "complete"
+            )
+            comparison_status = (
+                "not_requested" if not compare
+                else "available" if comparison_available
+                else "unavailable"
+            )
+            if compare and not comparison_available:
+                report["warnings"] = [
+                    *report["warnings"],
+                    "The requested comparison is unavailable because the prior period lacks complete stored coverage.",
+                ]
             return {
                 "schema_version": 1,
                 "report_id": report["report_id"],
@@ -1850,10 +1951,18 @@ def handler_factory(config, store, credentials=None):
                 "metric_label": _metric_label(metric) if metric else "Daily series",
                 "style": style,
                 "compare": compare,
+                "comparison_available": comparison_available,
+                "comparison_status": comparison_status,
                 "window": report["window"],
                 "comparison_window": report["comparison_window"],
                 "series": current,
                 "comparison_series": previous,
+                "generated_at": report.get("generated_at"),
+                "coverage": report.get("coverage", {}),
+                "comparison": report.get("comparison", {}),
+                "source_health": report.get("source_health", []),
+                "comparison_source_health": report.get("comparison_source_health", []),
+                "summary_totals": report.get("summary_totals", {}),
                 "site_names": {site.id: site.name for site in config.sites if site.id in definition.site_ids},
                 "warnings": report["warnings"],
             }
@@ -1914,6 +2023,16 @@ def handler_factory(config, store, credentials=None):
                 if any(METRICS[metric].source == source for metric in available_metrics)
             )
             requested_source = query.get("source", [None])[0]
+            if requested_metric is not None and requested_metric not in available_metrics:
+                raise ValueError("invalid dashboard metric")
+            if requested_source is not None and requested_source not in represented_sources:
+                raise ValueError("invalid dashboard source")
+            if (
+                requested_metric is not None
+                and requested_source is not None
+                and METRICS[requested_metric].source != requested_source
+            ):
+                raise ValueError("dashboard metric does not belong to source")
             inferred_source = METRICS[requested_metric].source if requested_metric in available_metrics else None
             selected_source = requested_source if requested_source in represented_sources else (
                 inferred_source or (represented_sources[0] if represented_sources else "")
@@ -1969,9 +2088,13 @@ def handler_factory(config, store, credentials=None):
                     for source in represented_sources
                 )
             else:
-                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None))}">Overview</a>'
+                overview_metric = next(
+                    (metric for metric in CHART_PRIORITY if metric in report.metric_ids and METRICS[metric].aggregation != "window"),
+                    next((metric for metric in report.metric_ids if METRICS[metric].aggregation != "window"), None),
+                )
+                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
                 subnav += "".join(
-                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id))}">{_e(item.title)}</a>'
+                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
                     for item in report.subreports
                 )
             site_options = '<option value="">All sites</option>' + "".join(

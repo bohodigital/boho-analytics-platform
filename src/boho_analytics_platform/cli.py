@@ -6,11 +6,9 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
-from . import __version__
+from .build_info import version_string
 from .config import ConfigError, load_config
 from .engine import SyncEngine
 from .models import QueryWindow
@@ -21,12 +19,13 @@ from .site_graph.dashboard import SiteGraphReportService
 from .site_graph.ingest import IngestError, ingest_repository, inspect_repository
 from .site_graph.storage import SiteGraphStore
 from .storage import LockBusy, SQLiteMetricStore
+from .time_window import report_window
 from .web import serve
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="boho-analytics", description="Operate a local Boho Analytics Platform installation.")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version_string()}")
     parser.add_argument("--config", default="platform.toml", help="schema-v2 TOML configuration")
     commands = parser.add_subparsers(dest="command")
     config = commands.add_parser("config", help="configuration operations"); config.add_subparsers(dest="config_command").add_parser("validate")
@@ -74,16 +73,13 @@ def _window_args(parser):
 
 def _window(args, timezone: str, default_days: int) -> QueryWindow:
     if args.days is not None and (args.start or args.end): raise ValueError("--days cannot be combined with --start or --end")
-    zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
-    if args.start or args.end:
-        if not args.start or not args.end: raise ValueError("--start and --end must be provided together")
-        start_date = datetime.fromisoformat(args.start).date(); end_date = datetime.fromisoformat(args.end).date()
-    else:
-        days = args.days if args.days is not None else default_days
-        if days < 1 or days > 3650: raise ValueError("--days must be from 1 to 3650")
-        today = datetime.now(zone).date()
-        end_date = today; start_date = end_date - timedelta(days=days)
-    return QueryWindow(datetime.combine(start_date, time.min, zone), datetime.combine(end_date, time.min, zone), timezone)
+    days = args.days if args.days is not None else default_days
+    return report_window(
+        timezone=timezone,
+        default_days=days,
+        start=args.start,
+        end=args.end,
+    )
 
 
 def _emit(value, *, error=False):

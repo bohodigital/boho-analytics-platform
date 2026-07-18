@@ -134,7 +134,18 @@ def _bucket_distances(distances: dict[str, int]) -> dict[str, int]:
     return buckets
 
 
-def compile_graph(store: SiteGraphStore, *, site_key: str, projection: str = "contextual") -> dict[str, Any]:
+def _maybe_interrupt(boundary: str, requested: str | None) -> None:
+    if requested == boundary:
+        raise RuntimeError(f"interrupted after {boundary}")
+
+
+def compile_graph(
+    store: SiteGraphStore,
+    *,
+    site_key: str,
+    projection: str = "contextual",
+    _interrupt_after: str | None = None,
+) -> dict[str, Any]:
     """Compile the latest successful repository snapshot into deterministic graph artifacts."""
     if projection not in PROJECTION_LAYERS:
         raise ValueError(f"unknown graph projection: {projection}")
@@ -196,18 +207,44 @@ def compile_graph(store: SiteGraphStore, *, site_key: str, projection: str = "co
         "edges": [(key, [row["occurrence_key"] for row in value]) for key, value in sorted(aggregates.items())],
     })
     goal_hash = _sha(manifest.get("goals", []))
-    graph_id = store.save_graph_snapshot(
-        site_key=site_key,
-        repository_snapshot_id=repository["id"],
-        manifest_version_id=repository["manifest_version_id"],
-        compiler_version=COMPILER_VERSION,
-        projection_name=projection,
-        goal_definition_hash=goal_hash,
-        content_hash=content_hash,
-    )
+    findings: dict[str, int] = defaultdict(int)
+    finding_rows: list[dict[str, Any]] = []
+    for route in nodes:
+        finding_type = None
+        severity = "warning"
+        if route != "/" and in_degree[route] == 0:
+            finding_type = "orphan"
+        elif route not in goals and not adjacency[route]:
+            finding_type = "contextual_dead_end"
+        elif full_adjacency[route] and not adjacency[route]:
+            finding_type = "menu_dependence"
+        if finding_type:
+            finding_rows.append({
+                "finding_key": f"{finding_type}:{route}",
+                "finding_type": finding_type,
+                "severity": severity,
+                "algorithm": "site-graph-v1-rules",
+                "parameters": {"projection": projection, "layers": sorted(selected_layers)},
+                "affected_nodes": [route],
+                "affected_edges": [],
+                "source_fact_keys": [route_to_page[route]["fact_key"]],
+                "content_hash": _sha([finding_type, route, content_hash]),
+            })
+            findings[finding_type] += 1
 
     aggregate_ids: dict[tuple[str, str, str], str] = {}
     with store.connect() as db:
+        graph_id = store.save_graph_snapshot(
+            site_key=site_key,
+            repository_snapshot_id=repository["id"],
+            manifest_version_id=repository["manifest_version_id"],
+            compiler_version=COMPILER_VERSION,
+            projection_name=projection,
+            goal_definition_hash=goal_hash,
+            content_hash=content_hash,
+            _connection=db,
+        )
+        _maybe_interrupt("snapshot", _interrupt_after)
         for (source_page_id, destination, layer), occurrences in sorted(aggregates.items()):
             aggregate_id = _id("sge", repository["id"], source_page_id, destination, layer)
             aggregate_ids[(source_page_id, destination, layer)] = aggregate_id
@@ -220,6 +257,7 @@ def compile_graph(store: SiteGraphStore, *, site_key: str, projection: str = "co
                     "occurrence_keys": [row["occurrence_key"] for row in occurrences],
                 })),
             )
+        _maybe_interrupt("aggregates", _interrupt_after)
         for route, page in sorted(route_to_page.items()):
             metrics = {
                 "in_degree": float(in_degree[route]),
@@ -237,6 +275,7 @@ def compile_graph(store: SiteGraphStore, *, site_key: str, projection: str = "co
                     (metric_id, graph_id, page["id"], metric_name, metric_value, COMPILER_VERSION,
                      _json({"projection": projection, "layers": sorted(selected_layers)})),
                 )
+        _maybe_interrupt("metrics", _interrupt_after)
         for position, component in enumerate(components):
             edge_ids = sorted(
                 aggregate_id for (source_page_id, destination, _layer), aggregate_id in aggregate_ids.items()
@@ -250,31 +289,22 @@ def compile_graph(store: SiteGraphStore, *, site_key: str, projection: str = "co
                 (_id("sgc", graph_id, component_key), graph_id, component_key, "strongly_connected",
                  _json(component), _json(edge_ids), "kosaraju-iterative", _json({"projection": projection})),
             )
-
-    findings: dict[str, int] = defaultdict(int)
-    for route in nodes:
-        finding_type = None
-        severity = "warning"
-        if route != "/" and in_degree[route] == 0:
-            finding_type = "orphan"
-        elif route not in goals and not adjacency[route]:
-            finding_type = "contextual_dead_end"
-        elif full_adjacency[route] and not adjacency[route]:
-            finding_type = "menu_dependence"
-        if finding_type:
+        _maybe_interrupt("components", _interrupt_after)
+        for finding in finding_rows:
             store.save_finding(
                 graph_snapshot_id=graph_id,
-                finding_key=f"{finding_type}:{route}",
-                finding_type=finding_type,
-                severity=severity,
-                algorithm="site-graph-v1-rules",
-                parameters={"projection": projection, "layers": sorted(selected_layers)},
-                affected_nodes=[route],
-                affected_edges=[],
-                source_fact_keys=[route_to_page[route]["fact_key"]],
-                content_hash=_sha([finding_type, route, content_hash]),
+                finding_key=finding["finding_key"],
+                finding_type=finding["finding_type"],
+                severity=finding["severity"],
+                algorithm=finding["algorithm"],
+                parameters=finding["parameters"],
+                affected_nodes=finding["affected_nodes"],
+                affected_edges=finding["affected_edges"],
+                source_fact_keys=finding["source_fact_keys"],
+                content_hash=finding["content_hash"],
+                _connection=db,
             )
-            findings[finding_type] += 1
+        _maybe_interrupt("findings", _interrupt_after)
 
     return {
         "schema_version": 1,

@@ -42,7 +42,21 @@ python -m venv .venv
 
 Connect one provider at a time. Confirm reported scope, resource, dates, and metric meaning before
 enabling its timer. A failed connector returns a nonzero command status while successful bindings
-remain committed and independently visible.
+remain committed and independently visible. An empty connector result is a warning, returns nonzero,
+and does not advance its watermark; resolve or explicitly account for it before treating a timer as healthy.
+
+Upgrading an existing schema-v2 database preserves legacy forms facts but cuts reporting over to the
+corrected site-day identity. Immediately run a bounded, source-backed sync for the configured D1 and
+forms-inbox connections across the retained reporting horizon. Verify coverage and raw lineage counts
+before re-enabling their timer; do not manufacture replacement values from the old date labels.
+
+Inject the exact reviewed Git identities into every web, sync, and backup unit so `--version` and
+`/healthz` expose the running build rather than only a package label:
+
+```ini
+Environment=BOHO_ANALYTICS_BUILD_COMMIT=<full-commit-id>
+Environment=BOHO_ANALYTICS_BUILD_TREE=<full-tree-id>
+```
 
 ## Backup and restore
 
@@ -51,6 +65,10 @@ Use SQLite's online backup API rather than copying a live WAL database:
 ```bash
 boho-analytics --config /private/platform.toml db backup /private/backups/analytics.db
 ```
+
+The bundled scheduled-backup wrapper writes only beneath a `scheduled/` child directory and applies
+retention only there. Keep pre-migration, preview, rollback, and manual evidence outside that child so
+scheduled pruning cannot match it.
 
 Test restores away from the live state path. A live restore requires `--confirm`, validates source
 integrity, checkpoints the current WAL, and creates a `.pre-restore` backup before replacement:
