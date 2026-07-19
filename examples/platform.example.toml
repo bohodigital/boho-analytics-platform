@@ -72,6 +72,9 @@ connection_id = "example-umami"
 resource_type = "website"
 resource_id = "replace-with-umami-website-id"
 metric_groups = ["traffic"]
+[bindings.options]
+# First site-local date on which this tracker is independently known active.
+observation_start = "2026-01-01"
 
 [[bindings]]
 site_id = "example-site"

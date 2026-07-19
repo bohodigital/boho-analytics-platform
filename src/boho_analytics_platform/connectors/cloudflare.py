@@ -16,6 +16,29 @@ GRAPHQL_QUERY = """query Traffic($zone: String!, $start: Date!, $end: Date!) {
       dimensions { date } count sum { visits edgeResponseBytes }
   } } } }"""
 
+PROBE_QUERY = """query Probe($zone: String!, $start: Date!, $end: Date!) {
+  viewer { zones(filter: {zoneTag: $zone}) {
+    settings {
+      httpRequestsAdaptiveGroups { enabled maxDuration maxNumberOfFields maxPageSize notOlderThan }
+    }
+    httpRequestsAdaptiveGroups(
+      limit: 10000, filter: {date_geq: $start, date_lt: $end, requestSource: \"eyeball\"}, orderBy: [date_ASC]) {
+        dimensions { date } count sum { visits edgeResponseBytes }
+    }
+  } }
+}"""
+
+_SECONDS_PER_DAY = 24 * 60 * 60
+
+
+def _duration_label(seconds: int) -> str:
+    for divisor, unit in ((_SECONDS_PER_DAY, "day"), (60 * 60, "hour"), (60, "minute")):
+        if seconds % divisor == 0:
+            value = seconds // divisor
+            suffix = "" if value == 1 else "s"
+            return f"{value} {unit}{suffix}"
+    return f"{seconds} seconds"
+
 
 class CloudflareAnalyticsConnector:
     provider = "cloudflare"
@@ -39,16 +62,63 @@ class CloudflareAnalyticsConnector:
             raise ValueError(f"Cloudflare adaptive analytics are unavailable for configured zone: {resource_id}")
         return groups
 
+    @staticmethod
+    def _settings(result, resource_id: str) -> tuple[int, int]:
+        if not isinstance(result, dict) or result.get("errors"):
+            raise ValueError("Cloudflare GraphQL settings query returned errors")
+        zones = result.get("data", {}).get("viewer", {}).get("zones")
+        if not isinstance(zones, list) or not zones:
+            raise ValueError(f"Cloudflare configured zone is not accessible: {resource_id}")
+        zone = zones[0]
+        settings = zone.get("settings") if isinstance(zone, dict) else None
+        limits = settings.get("httpRequestsAdaptiveGroups") if isinstance(settings, dict) else None
+        if not isinstance(limits, dict):
+            raise ValueError("Cloudflare did not report httpRequestsAdaptiveGroups settings")
+        enabled = limits.get("enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError("Cloudflare reported an invalid httpRequestsAdaptiveGroups enabled flag")
+        if not enabled:
+            raise ValueError("Cloudflare httpRequestsAdaptiveGroups are unavailable for a configured zone")
+        values = []
+        for key in ("maxDuration", "notOlderThan"):
+            value = limits.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(
+                    f"Cloudflare reported an invalid httpRequestsAdaptiveGroups {key} limit"
+                )
+            values.append(value)
+        return values[0], values[1]
+
     def probe(self, connection, credential):
-        end = datetime.now(UTC).date(); start = end - timedelta(days=1)
+        probed_at = datetime.now(UTC)
+        end = probed_at.date()
+        start = end - timedelta(days=1)
         resources = tuple(sorted({binding.resource_id for binding in connection_bindings(self.config, connection.id)}))
+        max_durations = []
+        lookbacks = []
         for resource_id in resources:
-            result = self._call(credential, {"query": GRAPHQL_QUERY, "variables": {
-                "zone": resource_id, "start": start.isoformat(), "end": end.isoformat()}})
+            result = self._call(credential, {
+                "query": PROBE_QUERY,
+                "variables": {
+                    "zone": resource_id,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                },
+            })
             self._groups(result, resource_id)
-        return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
-            ("cloudflare.bytes", "cloudflare.requests", "cloudflare.visits"), warnings=(
-                "Cloudflare httpRequestsAdaptiveGroups facts use adaptive sampling and are provisional; values are not rescaled.",))
+            max_duration, not_older_than = self._settings(result, resource_id)
+            max_durations.append(max_duration)
+            lookbacks.append(not_older_than)
+        max_duration = min(max_durations)
+        max_lookback_days = min(lookbacks) // _SECONDS_PER_DAY
+        return CapabilitySnapshot(connection.id, self.provider, probed_at, True, resources,
+            ("cloudflare.bytes", "cloudflare.requests", "cloudflare.visits"),
+            max_lookback_days=max_lookback_days,
+            warnings=(
+                "Cloudflare httpRequestsAdaptiveGroups facts use adaptive sampling and are provisional; values are not rescaled.",
+                f"Cloudflare plan limits httpRequestsAdaptiveGroups history to {max_lookback_days} days across configured zones.",
+                f"Cloudflare plan limits each httpRequestsAdaptiveGroups query to a maximum of {_duration_label(max_duration)} across configured zones.",
+            ))
 
     def collect(self, connection, credential, request):
         result = self._call(credential, {"query": GRAPHQL_QUERY, "variables": {

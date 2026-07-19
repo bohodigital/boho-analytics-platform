@@ -10,6 +10,11 @@ username/password login credentials. Daily pageviews/sessions come from `pagevie
 visitors, visits, bounces, and total time come from `stats`. Exact-window metrics are never summed
 across overlapping sync intervals.
 
+Set each Umami binding's `observation_start` to the first site-local date on which the tracker and
+website record are independently verified. This prevents successful queries and legacy facts from
+turning pre-instrumentation dates into authoritative zeroes. Reports crossing that boundary remain
+partial, and exact-window totals spanning it cannot become complete decision inputs.
+
 Umami Cloud and differently versioned self-hosted installations may use different base paths or
 authentication behavior. Confirm live version compatibility during connection testing.
 
@@ -19,7 +24,8 @@ V1 uses the GraphQL Analytics endpoint and `httpRequestsAdaptiveGroups` grouped 
 `requestSource: eyeball`. It stores returned estimated requests, visits, and edge-response bytes
 without multiplying sampling intervals. Those facts are provisional and reports disclose adaptive
 sampling. Probe runs the configured zone query rather than validating the token alone. A dedicated
-read-only Analytics token is preferred.
+read-only Analytics token is preferred. Probe also discovers each zone's plan-bound `maxDuration`
+and `notOlderThan` limits and reports the conservative minimum across configured zones.
 
 ## Google Analytics
 

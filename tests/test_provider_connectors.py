@@ -37,6 +37,18 @@ class ProviderConnectorTests(unittest.TestCase):
         path = self.root / f"{provider}.toml"; path.write_text(text, encoding="utf-8")
         return load_config(path)
 
+    @staticmethod
+    def cloudflare_settings(*, enabled=True, max_duration=86400, not_older_than=691200):
+        return {"data": {"viewer": {"zones": [{"settings": {
+            "httpRequestsAdaptiveGroups": {
+                "enabled": enabled,
+                "maxDuration": max_duration,
+                "maxNumberOfFields": 40,
+                "maxPageSize": 10000,
+                "notOlderThan": not_older_than,
+            }
+        }, "httpRequestsAdaptiveGroups": []}]}}}
+
     def test_umami_parses_daily_series_and_summary(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
         http = QueueHttp([{"pageviews": [{"x": "2026-07-01T00:00:00Z", "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]}, {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120}])
@@ -62,13 +74,62 @@ class ProviderConnectorTests(unittest.TestCase):
 
     def test_cloudflare_probe_queries_the_configured_zone_and_discloses_sampling(self):
         config = self.config("cloudflare")
-        http = QueueHttp([{"data": {"viewer": {"zones": [{"httpRequestsAdaptiveGroups": []}]}}}])
+        http = QueueHttp([self.cloudflare_settings()])
         snapshot = CloudflareAnalyticsConnector(config, http).probe(
             config.connections[0], MemoryCredentialLease({"api_token": b"test"}))
         self.assertEqual(snapshot.resources, ("demo",))
+        self.assertEqual(snapshot.max_lookback_days, 8)
+        self.assertEqual(len(snapshot.warnings), 3)
         self.assertTrue(any("adaptive" in warning.casefold() for warning in snapshot.warnings))
+        self.assertTrue(any("1 day" in warning for warning in snapshot.warnings))
+        self.assertNotIn("demo", " ".join(snapshot.warnings))
         self.assertEqual(http.calls[0][0], "POST")
         self.assertEqual(http.calls[0][3]["variables"]["zone"], "demo")
+        self.assertIn("start", http.calls[0][3]["variables"])
+        self.assertIn("end", http.calls[0][3]["variables"])
+        self.assertIn("settings", http.calls[0][3]["query"])
+        self.assertIn("maxNumberOfFields", http.calls[0][3]["query"])
+        self.assertIn("requestSource", http.calls[0][3]["query"])
+
+    def test_cloudflare_probe_uses_conservative_limits_across_resources(self):
+        config = self.config("cloudflare")
+        config = replace(config, bindings=config.bindings + (
+            replace(config.bindings[0], resource_id="secondary"),
+        ))
+        http = QueueHttp([
+            self.cloudflare_settings(max_duration=172800, not_older_than=777600),
+            self.cloudflare_settings(max_duration=86400, not_older_than=176400),
+        ])
+
+        snapshot = CloudflareAnalyticsConnector(config, http).probe(
+            config.connections[0], MemoryCredentialLease({"api_token": b"test"}))
+
+        self.assertEqual(snapshot.resources, ("demo", "secondary"))
+        self.assertEqual(snapshot.max_lookback_days, 2)
+        self.assertTrue(any("1 day" in warning for warning in snapshot.warnings))
+        self.assertEqual(
+            [call[3]["variables"]["zone"] for call in http.calls],
+            ["demo", "secondary"],
+        )
+
+    def test_cloudflare_probe_rejects_disabled_or_invalid_settings(self):
+        config = self.config("cloudflare")
+        cases = (
+            (self.cloudflare_settings(enabled=False), "unavailable"),
+            (self.cloudflare_settings(max_duration=True), "maxDuration"),
+            (self.cloudflare_settings(not_older_than=None), "notOlderThan"),
+            ({"data": {"viewer": {"zones": [{
+                "settings": {}, "httpRequestsAdaptiveGroups": [],
+            }]}}}, "did not report"),
+        )
+        for response, message in cases:
+            with self.subTest(message=message):
+                connector = CloudflareAnalyticsConnector(config, QueueHttp([response]))
+                with self.assertRaisesRegex(ValueError, message):
+                    connector.probe(
+                        config.connections[0],
+                        MemoryCredentialLease({"api_token": b"test"}),
+                    )
 
     def test_cloudflare_probe_fails_when_the_configured_zone_is_not_accessible(self):
         config = self.config("cloudflare")

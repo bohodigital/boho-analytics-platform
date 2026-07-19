@@ -460,6 +460,207 @@ timezone = "UTC"
         )
         self.assertFalse(any("No stored" in warning for warning in report["warnings"]))
 
+    def test_missing_observation_warning_is_scoped_to_selected_window(self):
+        report = ReportService(self.config, self.store).render("summary", self.window)
+
+        warning = next(
+            item for item in report["warnings"]
+            if item.startswith("No observations match")
+        )
+        self.assertIn("the selected window", warning)
+        self.assertNotIn("No stored observations for:", warning)
+
+    def test_observation_boundary_withholds_pre_start_facts_and_run_coverage(self):
+        root = Path(self.temporary.name)
+        text = config_text(
+            root / "observation.db",
+            root / "fixture.json",
+            provider="umami",
+            options='base_url = "https://analytics.example.invalid"',
+        ).replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options]\n'
+            'observation_start = "2026-07-02"',
+        ).replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
+            'metric_ids = ["umami.pageviews", "umami.visits"]',
+            1,
+        )
+        path = root / "observation.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        store = SQLiteMetricStore(root / "observation.db")
+        store.initialize()
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            "UTC",
+        )
+        store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.pageviews", "count", window.start,
+                window.start + timedelta(days=1), TimeGrain.DAY,
+                Decimal(999), (), Completeness.FINAL,
+                window.start + timedelta(hours=12),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.pageviews", "count", window.start + timedelta(days=1),
+                window.start + timedelta(days=2), TimeGrain.DAY,
+                Decimal(5), (), Completeness.FINAL,
+                window.start + timedelta(days=1, hours=12),
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.visits", "count", window.start, window.end,
+                TimeGrain.TOTAL, Decimal(100), (), Completeness.FINAL,
+                window.end,
+            ),
+        ])
+        key = "example-site:example-connection:website:demo"
+        run = store.start_run(
+            "example-connection", "example-site", binding_key=key,
+            source="umami", window=window,
+        )
+        store.finish_run(run, "success", 3, result_kind="data")
+
+        report = ReportService(config, store).render("summary", window)
+
+        pageviews = report["summary_totals"]["umami.pageviews"]
+        visits = report["summary_totals"]["umami.visits"]
+        self.assertEqual(pageviews["value"], 5)
+        self.assertEqual(pageviews["coverage_status"], "partial")
+        self.assertEqual(
+            (pageviews["covered_cells"], pageviews["expected_cells"]),
+            (2, 3),
+        )
+        self.assertEqual(visits["value"], 100)
+        self.assertTrue(visits["observed"])
+        self.assertEqual(visits["coverage_status"], "partial")
+        self.assertFalse(report["complete"])
+        engagement = {
+            item["id"]: item
+            for item in report["decision_support"]["engagement"]
+        }
+        self.assertEqual(
+            engagement["umami_views_per_visit"]["state"], "withheld"
+        )
+        self.assertIsNone(engagement["umami_views_per_visit"]["value"])
+        self.assertEqual(
+            report["series"][0]["points"],
+            [{"date": "2026-07-02", "value": 5}],
+        )
+        self.assertTrue(any(
+            "pre-instrumentation" in warning
+            for warning in report["warnings"]
+        ))
+
+        post_window = QueryWindow(
+            datetime(2026, 7, 2, tzinfo=UTC),
+            datetime(2026, 7, 4, tzinfo=UTC),
+            "UTC",
+        )
+        store.upsert([MetricPoint(
+            "example-client", "example-site", "umami",
+            "umami.visits", "count", post_window.start, post_window.end,
+            TimeGrain.TOTAL, Decimal(7), (), Completeness.FINAL,
+            post_window.end,
+        )])
+        post_report = ReportService(config, store).render(
+            "summary", post_window, include_decision_support=False
+        )
+        self.assertTrue(post_report["complete"])
+        self.assertEqual(
+            post_report["summary_totals"]["umami.pageviews"]["value"], 5
+        )
+        self.assertEqual(
+            post_report["summary_totals"]["umami.visits"]["value"], 7
+        )
+
+    def test_entirely_pre_observation_window_is_unknown_not_zero(self):
+        root = Path(self.temporary.name)
+        text = config_text(
+            root / "pre-observation.db",
+            root / "fixture.json",
+            provider="umami",
+            options='base_url = "https://analytics.example.invalid"',
+        ).replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options]\n'
+            'observation_start = "2026-07-02"',
+        ).replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
+            'metric_ids = ["umami.pageviews", "umami.visits"]',
+            1,
+        )
+        path = root / "pre-observation.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        store = SQLiteMetricStore(root / "pre-observation.db")
+        store.initialize()
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.pageviews", "count", window.start, window.end,
+                TimeGrain.DAY, Decimal(999), (), Completeness.FINAL,
+                window.end,
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.visits", "count", window.start, window.end,
+                TimeGrain.TOTAL, Decimal(100), (), Completeness.FINAL,
+                window.end,
+            ),
+        ])
+        key = "example-site:example-connection:website:demo"
+        run = store.start_run(
+            "example-connection", "example-site", binding_key=key,
+            source="umami", window=window,
+        )
+        store.finish_run(run, "success", 2, result_kind="data")
+
+        report = ReportService(config, store).render(
+            "summary", window, include_decision_support=False
+        )
+
+        self.assertEqual(report["rows"], [])
+        self.assertEqual(report["series"], [])
+        for metric_id in ("umami.pageviews", "umami.visits"):
+            total = report["summary_totals"][metric_id]
+            self.assertIsNone(total["value"])
+            self.assertFalse(total["observed"])
+            self.assertEqual(total["coverage_status"], "partial")
+            self.assertEqual(total["covered_cells"], 0)
+        self.assertFalse(report["complete"])
+
+    def test_observation_boundary_warning_ignores_unrequested_sources(self):
+        bindings = tuple(
+            replace(
+                binding,
+                options={**binding.options, "observation_start": "2026-07-02"},
+            )
+            if binding.connection_id == "native-umami"
+            else binding
+            for binding in self.config.bindings
+        )
+        config = replace(self.config, bindings=bindings)
+
+        report = ReportService(config, self.store).render(
+            "summary", self.window, subreport_id="forms",
+            include_decision_support=False,
+        )
+
+        self.assertFalse(any(
+            "observation boundaries" in warning
+            for warning in report["warnings"]
+        ))
+
     def test_empty_fixture_supporting_metric_keeps_fixture_provenance(self):
         root = Path(self.temporary.name)
         path = root / "supporting-zero.toml"

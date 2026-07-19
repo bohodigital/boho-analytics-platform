@@ -52,6 +52,22 @@ tokens and refresh-token exchange work without the optional SDK. Inline keys inc
 | `forms-inbox` | `database_path` | mailbox key |
 | `fixture` | `path` | fixture resource ID |
 
+Any binding may opt into a strict site-local observation floor:
+
+```toml
+[bindings.options]
+observation_start = "2026-07-12"
+```
+
+The value must use `YYYY-MM-DD` and means the first local date on which that
+site/provider binding is known to have trustworthy instrumentation or source
+coverage. Reporting keeps the originally requested cells: facts and successful
+sync runs cannot prove daily cells before the boundary, so a window that crosses
+the boundary remains partial instead of being silently shortened. Exact-window
+facts that span the boundary may remain visible as partial evidence, but cannot
+make a decision input complete; a window entirely before the boundary remains
+unknown. Existing rows are retained as lineage.
+
 `cloudflare-forms.source_retention_days` is required and must match the forms Worker's verified D1
 retention policy; the Boho deployment uses `90`. Values above 90 are rejected. Sync windows must use
 complete site-local days, end no later than the current site-local day, and start after the local
@@ -59,7 +75,7 @@ retention cutoff day. The connector fails closed instead of manufacturing zeroes
 trustworthy horizon.
 
 Forms inbox binding options are `mailbox_key`, `sender_contains`, `subject_contains`, the optional
-`subject_excludes` array, and `observation_start`. Matching is case-insensitive substring matching.
+`subject_excludes` array, and the generic `observation_start`. Matching is case-insensitive substring matching.
 Use the narrowest stable filters available so unrelated inbound mail is not counted, and configure
 stable synthetic-notification markers explicitly, for example:
 
@@ -73,9 +89,9 @@ observation_start = "2026-07-13"
 ```
 
 Exclusions apply before both delivery and unread counts. Up to 16 unique, non-empty markers of 128
-characters each are accepted. `observation_start` is the first site-local date on which the mail
-index is independently known complete. Without it, the connector emits facts only for matching
-messages and does not invent quiet-day zeroes. These values remain private deployment configuration
+characters each are accepted. For this connector, `observation_start` additionally authorizes
+quiet-day zero facts on and after the independently verified mail-index boundary. Without it, the
+connector emits facts only for matching messages and does not invent quiet-day zeroes. These values remain private deployment configuration
 even though they are not credentials.
 
 ## Reports and subreports

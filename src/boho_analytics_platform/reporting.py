@@ -11,7 +11,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from .catalog import METRICS, SOURCE_SEMANTICS, SourceSemantics
-from .models import Completeness, QueryWindow
+from .config import binding_observation_boundary
+from .models import Completeness, QueryWindow, TimeGrain
 
 
 UNKNOWN_SOURCE_SEMANTICS = SourceSemantics("unknown", "unknown", "unknown")
@@ -171,6 +172,50 @@ class ReportService:
             filters = sub.filters
         return report, metrics, title, filters
 
+    def _observation_boundaries(self):
+        """Return conservative site/source and exact-binding evidence floors.
+
+        Facts do not retain a binding key, so when several current bindings use
+        the same provider for one site, the latest opted-in boundary is the only
+        floor that cannot accidentally attribute an earlier fact to the newer
+        observation scope. Run coverage remains binding-aware as well.
+        """
+
+        connection_sources = {
+            item.id: item.provider for item in self.config.connections
+        }
+        by_site_source = {}
+        by_binding_key = {}
+        for binding in self.config.bindings:
+            boundary = binding_observation_boundary(self.config, binding)
+            if boundary is None:
+                continue
+            source = connection_sources[binding.connection_id]
+            source_key = (binding.site_id, source)
+            current = by_site_source.get(source_key)
+            if current is None or boundary > current:
+                by_site_source[source_key] = boundary
+            binding_key = (
+                f"{binding.site_id}:{binding.connection_id}:"
+                f"{binding.resource_type}:{binding.resource_id}"
+            )
+            by_binding_key[binding_key] = boundary
+        return by_site_source, by_binding_key
+
+    def _window_has_observation_boundary(
+        self, site_ids, window, requested_metrics
+    ) -> bool:
+        boundaries, _binding_boundaries = self._observation_boundaries()
+        relevant_sources = {
+            METRICS[metric].source for metric in requested_metrics
+        }
+        return any(
+            site_id in site_ids
+            and (source in relevant_sources or source == "fixture")
+            and window.start < boundary
+            for (site_id, source), boundary in boundaries.items()
+        )
+
     def _currently_supported_points(self, points):
         """Exclude facts whose site/provider binding is no longer configured.
 
@@ -186,6 +231,9 @@ class ReportService:
                 connection_sources[binding.connection_id]
             )
 
+        observation_boundaries, _binding_boundaries = (
+            self._observation_boundaries()
+        )
         supported = []
         for point in points:
             definition = METRICS.get(point.metric)
@@ -193,10 +241,20 @@ class ReportService:
                 continue
             configured = providers_by_site.get(point.site_id, set())
             logical_source = definition.source
-            if point.source == "fixture" and "fixture" in configured:
-                supported.append(point)
-            elif point.source == logical_source and logical_source in configured:
-                supported.append(point)
+            source_is_supported = (
+                point.source == "fixture" and "fixture" in configured
+            ) or (
+                point.source == logical_source and logical_source in configured
+            )
+            if not source_is_supported:
+                continue
+            boundary = observation_boundaries.get((point.site_id, point.source))
+            if boundary is not None:
+                if point.end <= boundary:
+                    continue
+                if point.grain is not TimeGrain.TOTAL and point.start < boundary:
+                    continue
+            supported.append(point)
         return supported
 
     @staticmethod
@@ -372,6 +430,9 @@ class ReportService:
             day += timedelta(days=1)
 
         connection_sources = {item.id: item.provider for item in self.config.connections}
+        observation_boundaries, binding_observation_boundaries = (
+            self._observation_boundaries()
+        )
         configured_by_site: dict[str, set[str]] = defaultdict(set)
         providers_by_site_source: dict[tuple[str, str], set[str]] = defaultdict(set)
         binding_keys: list[str] = []
@@ -407,7 +468,12 @@ class ReportService:
                 point.metric,
                 point.start.astimezone(zone).date().isoformat(),
             )].add(point.source)
-            if point.start == window.start and point.end == window.end:
+            boundary = observation_boundaries.get((point.site_id, point.source))
+            if (
+                point.start == window.start
+                and point.end == window.end
+                and (boundary is None or point.start >= boundary)
+            ):
                 exact_window_presence[(point.site_id, point.metric)].add(
                     point.source
                 )
@@ -482,13 +548,27 @@ class ReportService:
                                     for run in coverage_runs.get(
                                         (site_id, provider), ()
                                     ):
+                                        run_start = run["window_start"]
+                                        floors = tuple(
+                                            item for item in (
+                                                observation_boundaries.get(
+                                                    (site_id, provider)
+                                                ),
+                                                binding_observation_boundaries.get(
+                                                    str(run["binding_key"])
+                                                ),
+                                            )
+                                            if item is not None
+                                        )
+                                        if floors:
+                                            run_start = max(run_start, *floors)
                                         effective_end = (
                                             run["data_through"]
                                             if provider == "search-console"
                                             else run["window_end"]
                                         )
                                         if (
-                                            run["window_start"] <= cell_start
+                                            run_start <= cell_start
                                             and effective_end is not None
                                             and effective_end >= cell_end
                                         ):
@@ -1708,7 +1788,10 @@ class ReportService:
             if metric in observed_metrics and summary_totals[metric]["value"] is None
         )
         if missing:
-            warnings.append("No stored observations for: " + ", ".join(missing))
+            warnings.append(
+                "No observations match the selected window for: "
+                + ", ".join(missing)
+            )
         if withheld:
             warnings.append(
                 "Partial aggregate withheld for: " + ", ".join(withheld)
@@ -1717,6 +1800,11 @@ class ReportService:
         if coverage["status"] != "complete":
             warnings.append(
                 "Coverage is incomplete for one or more requested site, source, metric, or date cells."
+            )
+        if self._window_has_observation_boundary(site_ids, window, metrics):
+            warnings.append(
+                "Configured observation boundaries exclude pre-instrumentation evidence; "
+                "requested cells before those boundaries remain incomplete."
             )
 
         forms = None
