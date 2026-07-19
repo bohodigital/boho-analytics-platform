@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from boho_analytics_platform.config import ConfigError, load_config
+from boho_analytics_platform.config import (
+    ConfigError,
+    binding_observation_boundary,
+    binding_observation_start,
+    load_config,
+)
 from support import config_text, write_fixture
 
 
@@ -47,6 +52,40 @@ class ConfigTests(unittest.TestCase):
                 'metric_ids = ["made.up"]',
                 1,
             ))
+
+    def test_binding_observation_start_is_strict_and_uses_site_timezone(self):
+        config = self._load(lambda text: text.replace(
+            'timezone = "UTC"',
+            'timezone = "America/Chicago"',
+        ).replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options]\n'
+            'observation_start = "2026-07-12"',
+        ))
+
+        self.assertEqual(
+            binding_observation_start(config.bindings[0]).isoformat(),
+            "2026-07-12",
+        )
+        self.assertEqual(
+            binding_observation_boundary(
+                config, config.bindings[0]
+            ).isoformat(),
+            "2026-07-12T00:00:00-05:00",
+        )
+
+    def test_binding_observation_start_rejects_non_iso_values_at_load_time(self):
+        for raw in ('"07/12/2026"', '"20260712"', "2026-07-12"):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(
+                    ConfigError,
+                    r"bindings\[0\]\.options\.observation_start must use YYYY-MM-DD",
+                ):
+                    self._load(lambda text, raw=raw: text.replace(
+                        'metric_groups = ["traffic"]',
+                        'metric_groups = ["traffic"]\n[bindings.options]\n'
+                        f'observation_start = {raw}',
+                    ))
 
 
 if __name__ == "__main__": unittest.main()

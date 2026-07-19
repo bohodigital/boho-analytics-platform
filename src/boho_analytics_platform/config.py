@@ -6,6 +6,7 @@ import ipaddress
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -121,6 +122,39 @@ class AppConfig:
     def resolve_path(self, value: str) -> Path:
         path = Path(value).expanduser()
         return path if path.is_absolute() else (self.source_path.parent / path).resolve()
+
+
+def binding_observation_start(binding: BindingConfig) -> date | None:
+    """Return a strict site-local observation boundary for an opted-in binding."""
+
+    raw = binding.options.get("observation_start")
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ConfigError("binding observation_start must use YYYY-MM-DD")
+    try:
+        value = date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ConfigError("binding observation_start must use YYYY-MM-DD") from exc
+    if value.isoformat() != raw:
+        raise ConfigError("binding observation_start must use YYYY-MM-DD")
+    return value
+
+
+def binding_observation_boundary(
+    config: AppConfig, binding: BindingConfig
+) -> datetime | None:
+    """Resolve an observation start to the bound site's local midnight."""
+
+    value = binding_observation_start(binding)
+    if value is None:
+        return None
+    site = next((item for item in config.sites if item.id == binding.site_id), None)
+    if site is None:
+        raise ConfigError(
+            f"binding observation_start references unknown site {binding.site_id}"
+        )
+    return datetime.combine(value, time.min, ZoneInfo(site.timezone))
 
 
 def _as_mapping(value: object, label: str) -> dict[str, Any]:
@@ -328,14 +362,21 @@ def load_config(path: str | Path) -> AppConfig:
     bindings: list[BindingConfig] = []
     for index, table in enumerate(_as_table_list(root.get("bindings"), "bindings")):
         label = f"bindings[{index}]"; _reject_unknown(table, {"site_id", "connection_id", "resource_type", "resource_id", "metric_groups", "options"}, label)
-        bindings.append(BindingConfig(
+        binding = BindingConfig(
             _validate_id(_required_text(table, "site_id", label), f"{label}.site_id"),
             _validate_id(_required_text(table, "connection_id", label), f"{label}.connection_id"),
             _validate_id(_required_text(table, "resource_type", label), f"{label}.resource_type"),
             _required_text(table, "resource_id", label),
             _text_list(table.get("metric_groups"), f"{label}.metric_groups"),
             _as_mapping(table.get("options", {}), f"{label}.options"),
-        ))
+        )
+        try:
+            binding_observation_start(binding)
+        except ConfigError as exc:
+            raise ConfigError(
+                f"{label}.options.observation_start must use YYYY-MM-DD"
+            ) from exc
+        bindings.append(binding)
 
     reports: list[ReportConfig] = []
     for index, table in enumerate(_as_table_list(root.get("reports"), "reports")):

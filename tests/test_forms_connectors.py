@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from boho_analytics_platform.config import load_config
+from boho_analytics_platform.config import ConfigError, load_config
 from boho_analytics_platform.connectors.cloudflare import CloudflareFormsConnector
 from boho_analytics_platform.connectors.forms_inbox import FormsInboxConnector
 from boho_analytics_platform.contracts import SyncRequest
@@ -317,11 +317,11 @@ class FormsConnectorTests(unittest.TestCase):
             'resource_id = "demo"',
             'resource_id = "forms"\n[bindings.options]\nmailbox_key = "forms"\nobservation_start = "07/01/2026"',
         )
-        path = self.root / "config.toml"; path.write_text(text, encoding="utf-8"); config = load_config(path)
-        with self.assertRaisesRegex(ValueError, "observation_start must be an ISO date string"):
-            list(FormsInboxConnector(config, None).collect(
-                config.connections[0], MemoryCredentialLease({}),
-                SyncRequest(config.bindings[0], self._window(), ())))
+        path = self.root / "config.toml"; path.write_text(text, encoding="utf-8")
+        with self.assertRaisesRegex(
+            ConfigError, "observation_start must use YYYY-MM-DD"
+        ):
+            load_config(path)
 
     def test_inbox_connector_filters_by_instant_and_groups_in_site_timezone(self):
         database = self.root / "mail.db"
