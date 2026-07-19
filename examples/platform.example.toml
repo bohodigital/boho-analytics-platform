@@ -57,6 +57,7 @@ credential_ref = "env:CLOUDFLARE_FORMS_READ_CREDENTIAL"
 [connections.options]
 account_id = "replace-with-account-id"
 database_id = "replace-with-d1-database-id"
+source_retention_days = 90
 
 [[connections]]
 id = "example-forms-inbox"
@@ -110,6 +111,9 @@ metric_groups = ["forms"]
 mailbox_key = "replace-with-mailbox-key"
 sender_contains = "forms-sender.example"
 subject_contains = "Form submission"
+subject_excludes = ["Synthetic monitoring"]
+# First site-local date on which this mail index is independently known complete.
+observation_start = "2026-01-01"
 
 [[reports]]
 id = "summary"

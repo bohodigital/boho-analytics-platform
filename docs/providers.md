@@ -54,14 +54,18 @@ grouped into the configured site timezone. Missing, naive, or invalid timestamps
 being silently assigned to a day. Multiple provider rows for the same local day, form, and status are
 summed before storage. The corrected day identity is versioned so legacy UTC-date aggregates remain
 available as lineage without being included in current reports. Probe executes a resource-specific
-aggregate query.
+aggregate query and reports the explicitly configured D1 source retention. The connector requires
+`source_retention_days`, rejects values above the verified 90-day ceiling, and fails closed unless a
+sync request contains only completed site-local days strictly newer than the retention cutoff day.
 
 ## Forms inbox
 
 The adapter is local, not an external API. It opens the existing comms-platform SQLite index in
 read-only/query-only mode, applies configured mailbox/sender/subject filters, and emits daily delivery
-and unread counts, including explicit zero days. Stable daily facts keep overlapping sync windows
-idempotent. It never owns synchronization or mailbox state.
+and unread counts. It counts distinct message identities, may exclude configured synthetic subject
+markers, and emits quiet-day zeroes only from a configured trustworthy `observation_start`. Without
+that boundary, only actual matching-message days are facts. Stable daily facts keep overlapping sync
+windows idempotent. It never owns synchronization or mailbox state.
 It filters by UTC instant, groups into the configured site timezone, and verifies each configured
 mailbox during probe.
 

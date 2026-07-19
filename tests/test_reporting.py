@@ -5,6 +5,7 @@ import unittest
 import csv
 import io
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +45,10 @@ id = "native-cloudflare"
 provider = "cloudflare"
 credential_ref = "none:test"
 [[connections]]
+id = "native-google"
+provider = "google-analytics"
+credential_ref = "none:test"
+[[connections]]
 id = "native-forms"
 provider = "cloudflare-forms"
 credential_ref = "none:test"
@@ -72,6 +77,12 @@ resource_id = "example-zone"
 metric_groups = ["traffic"]
 [[bindings]]
 site_id = "example-site"
+connection_id = "native-google"
+resource_type = "property"
+resource_id = "123456"
+metric_groups = ["traffic"]
+[[bindings]]
+site_id = "example-site"
 connection_id = "native-forms"
 resource_type = "forms-site"
 resource_id = "example-site"
@@ -89,7 +100,9 @@ metric_groups = ["forms"]
         self.store = SQLiteMetricStore(root / "state.db"); self.store.initialize()
         self.window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC), "UTC")
 
-    def _multi_site_config(self):
+    def _multi_site_config(
+        self, *, include_second_inbox=True, include_second_fixture=True
+    ):
         root = Path(self.temporary.name)
         text = (root / "platform.toml").read_text(encoding="utf-8")
         second_site = '''[[sites]]
@@ -136,6 +149,22 @@ resource_type = "mailbox"
 resource_id = "second-example"
 metric_groups = ["forms"]
 '''
+        if not include_second_inbox:
+            second_binding = second_binding.replace('''[[bindings]]
+site_id = "second-site"
+connection_id = "native-inbox"
+resource_type = "mailbox"
+resource_id = "second-example"
+metric_groups = ["forms"]
+''', "")
+        if not include_second_fixture:
+            second_binding = second_binding.replace('''[[bindings]]
+site_id = "second-site"
+connection_id = "example-connection"
+resource_type = "website"
+resource_id = "second-demo"
+metric_groups = ["traffic"]
+''', "")
         text = text.replace("[[connections]]", second_site + "[[connections]]", 1)
         text = text.replace("[[reports]]", second_binding + "[[reports]]", 1)
         text = text.replace('site_ids = ["example-site"]', 'site_ids = ["example-site", "second-site"]')
@@ -407,8 +436,10 @@ timezone = "UTC"
 
     def test_successful_empty_sync_coverage_yields_an_authoritative_zero_total(self):
         root = Path(self.temporary.name)
-        text = (root / "platform.toml").read_text(encoding="utf-8").replace(
-            'metric_ids = ["search.clicks", "search.impressions", "search.ctr", "search.position", "forms.submissions"]',
+        text = config_text(
+            root / "fixture-zero.db", root / "fixture.json"
+        ).replace(
+            'metric_ids = ["umami.pageviews", "forms.submissions", "forms.inbox-deliveries"]',
             'metric_ids = ["umami.pageviews"]',
             1,
         )
@@ -424,7 +455,33 @@ timezone = "UTC"
 
         self.assertTrue(report["complete"])
         self.assertEqual(report["summary_totals"]["umami.pageviews"]["value"], 0)
+        self.assertEqual(
+            report["summary_totals"]["umami.pageviews"]["source"], "fixture"
+        )
         self.assertFalse(any("No stored" in warning for warning in report["warnings"]))
+
+    def test_empty_fixture_supporting_metric_keeps_fixture_provenance(self):
+        root = Path(self.temporary.name)
+        path = root / "supporting-zero.toml"
+        path.write_text(
+            config_text(root / "supporting-zero.db", root / "fixture.json"),
+            encoding="utf-8",
+        )
+        config = load_config(path)
+        key = "example-site:example-connection:website:demo"
+        run = self.store.start_run(
+            "example-connection", "example-site", binding_key=key,
+            source="fixture", window=self.window,
+        )
+        self.store.finish_run(run, "success", result_kind="empty")
+
+        support = ReportService(config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+        clicks = support["supporting_metrics"]["search.clicks"]
+
+        self.assertEqual(clicks["value"], 0)
+        self.assertEqual(clicks["source"], "fixture")
 
     def test_cloudflare_provisional_measurements_are_temporally_usable(self):
         root = Path(self.temporary.name)
@@ -615,6 +672,67 @@ timezone = "UTC"
         self.assertIsNone(report["forms_pipeline"]["pending"])
         self.assertIsNone(report["forms_pipeline"]["failed"])
 
+    def test_forms_pipeline_requires_complete_identical_coverage_before_asserting_gap(self):
+        start = self.window.start
+        report_config = replace(
+            self.config.reports[0],
+            metric_ids=tuple(dict.fromkeys((
+                *self.config.reports[0].metric_ids, "forms.inbox-deliveries",
+            ))),
+        )
+        config = replace(self.config, reports=(report_config, *self.config.reports[1:]))
+
+        def inbox(value, day):
+            point_start = start + timedelta(days=day)
+            return MetricPoint(
+                "example-client", "example-site", "forms-inbox",
+                "forms.inbox-deliveries", "count", point_start,
+                point_start + timedelta(days=1), TimeGrain.DAY,
+                Decimal(value), (), Completeness.FINAL,
+                point_start + timedelta(hours=12),
+            )
+
+        self.store.upsert([
+            metric("forms.submissions", 1, 1, "count"),
+            metric("forms.submissions", 0, 2, "count"),
+            inbox(1, 0),
+        ])
+        partial = ReportService(config, self.store).render("summary", self.window)
+        self.assertEqual(partial["forms_pipeline"]["submissions"], 1)
+        self.assertEqual(partial["forms_pipeline"]["inbox_deliveries"], 1)
+        self.assertFalse(partial["forms_pipeline"]["delivery_comparable"])
+        self.assertIsNone(partial["forms_pipeline"]["delivery_gap"])
+        self.assertTrue(any("no delivery gap is asserted" in item for item in partial["warnings"]))
+
+        self.store.upsert([inbox(0, 1)])
+        complete = ReportService(config, self.store).render("summary", self.window)
+        self.assertTrue(complete["forms_pipeline"]["delivery_comparable"])
+        self.assertEqual(complete["forms_pipeline"]["delivery_gap"], 0)
+
+    def test_prior_forms_identity_zeroes_cannot_make_current_reports_complete(self):
+        inbox_start = datetime(2026, 7, 1, tzinfo=UTC)
+        self.store.upsert([
+            metric("forms.submissions", 0, 1, "count"),
+            metric("forms.submissions", 0, 2, "count"),
+            MetricPoint(
+                "example-client", "example-site", "forms-inbox",
+                "forms.inbox-deliveries", "count", inbox_start,
+                inbox_start + timedelta(days=1), TimeGrain.DAY, Decimal(0), (),
+                Completeness.FINAL, inbox_start + timedelta(hours=12),
+            ),
+        ])
+        with self.store.connect() as db:
+            db.execute(
+                "UPDATE metric_facts SET identity_version=2 "
+                "WHERE source IN ('cloudflare-forms','forms-inbox')"
+            )
+
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        self.assertIsNone(report["forms_pipeline"]["submissions"])
+        self.assertIsNone(report["forms_pipeline"]["inbox_deliveries"])
+        self.assertIsNone(report["forms_pipeline"]["delivery_gap"])
+        self.assertNotEqual(report["coverage"]["by_metric"]["forms.submissions"], "complete")
+
     def test_report_csv_repeats_window_coverage_and_source_context(self):
         self.store.upsert([
             metric("search.clicks", 1, 1, "count"),
@@ -640,6 +758,447 @@ timezone = "UTC"
             if item["metric"] == "forms.submissions"
         )
         self.assertEqual(exported["comparison_available"], "False")
+
+    def test_decision_support_derives_complete_metrics_without_false_attribution(self):
+        start = self.window.start
+
+        def native(metric_id, value, *, source, unit="count", day=None):
+            point_start = start if day is None else start + timedelta(days=day)
+            point_end = self.window.end if day is None else point_start + timedelta(days=1)
+            return MetricPoint(
+                "example-client", "example-site", source, metric_id, unit,
+                point_start, point_end, TimeGrain.DAY, Decimal(str(value)), (),
+                Completeness.FINAL, point_end,
+            )
+
+        self.store.upsert([
+            native("umami.pageviews", 60, source="umami", day=0),
+            native("umami.pageviews", 90, source="umami", day=1),
+            native("umami.visits", 100, source="umami"),
+            native("umami.bounces", 40, source="umami"),
+            native("umami.total-time", 6000, source="umami", unit="seconds"),
+            native("google.sessions", 40, source="google-analytics", day=0),
+            native("google.sessions", 60, source="google-analytics", day=1),
+            native("google.pageviews", 80, source="google-analytics", day=0),
+            native("google.pageviews", 120, source="google-analytics", day=1),
+            native("google.events", 120, source="google-analytics", day=0),
+            native("google.events", 180, source="google-analytics", day=1),
+            native("forms.submissions", 2, source="cloudflare-forms", day=0),
+            native("forms.submissions", 3, source="cloudflare-forms", day=1),
+            native("forms.sent", 2, source="cloudflare-forms", day=0),
+            native("forms.sent", 2, source="cloudflare-forms", day=1),
+            native("forms.pending", 0, source="cloudflare-forms", day=0),
+            native("forms.pending", 1, source="cloudflare-forms", day=1),
+            native("forms.failed", 0, source="cloudflare-forms", day=0),
+            native("forms.failed", 0, source="cloudflare-forms", day=1),
+        ])
+
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        support = report["decision_support"]
+        outcomes = {item["id"]: item for item in support["outcomes"]}
+        engagement = {item["id"]: item for item in support["engagement"]}
+
+        self.assertEqual(outcomes["durable_leads"]["value"], 5)
+        self.assertEqual(outcomes["durable_leads"]["scope_site_ids"], ["example-site"])
+        self.assertEqual(outcomes["visit_to_submission"]["value"], .05)
+        self.assertEqual(outcomes["visit_to_submission"]["scope_site_ids"], ["example-site"])
+        self.assertIn("not attribution", outcomes["visit_to_submission"]["note"])
+        self.assertEqual(outcomes["notification_sent_rate"]["value"], .8)
+        self.assertEqual(engagement["umami_bounce_rate"]["value"], .4)
+        self.assertEqual(engagement["umami_views_per_visit"]["value"], 1.5)
+        self.assertEqual(engagement["umami_average_visit_duration"]["value"], 60)
+        self.assertEqual(engagement["ga_views_per_session"]["value"], 2)
+        self.assertEqual(engagement["ga_events_per_session"]["value"], 3)
+        self.assertEqual(
+            support["supporting_metrics"]["umami.visits"]["value"], 100
+        )
+        self.assertFalse(any(
+            "conversion rate" in item["label"].casefold()
+            for item in (*support["outcomes"], *support["engagement"])
+        ))
+        self.assertNotIn("notification_pipeline_mismatch", {
+            item["id"] for item in support["attention_items"]
+        })
+
+    def test_decision_support_withholds_partial_inputs_and_preserves_report_completeness(self):
+        start = self.window.start
+        self.store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "umami", "umami.visits", "count",
+                start, self.window.end, TimeGrain.DAY, Decimal("100"), (),
+                Completeness.FINAL, self.window.end,
+            ),
+            MetricPoint(
+                "example-client", "example-site", "umami", "umami.pageviews", "count",
+                start, start + timedelta(days=1), TimeGrain.DAY, Decimal("40"), (),
+                Completeness.FINAL, start + timedelta(days=1),
+            ),
+        ])
+
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        engagement = {
+            item["id"]: item for item in report["decision_support"]["engagement"]
+        }
+
+        self.assertEqual(engagement["umami_views_per_visit"]["state"], "withheld")
+        self.assertIsNone(engagement["umami_views_per_visit"]["value"])
+        self.assertIn("complete inputs", engagement["umami_views_per_visit"]["note"])
+        attention_ids = {
+            item["id"] for item in report["decision_support"]["attention_items"]
+        }
+        self.assertIn("decision_input_coverage", attention_ids)
+        self.assertNotIn("no_immediate_action", attention_ids)
+        self.assertEqual(report["complete"], report["coverage"]["status"] == "complete")
+
+    def test_decision_site_metric_withholds_mixed_provider_sources(self):
+        coverage = {"by_site_source": [{
+            "site_id": "example-site",
+            "source": "umami",
+            "metric_status": {"umami.visits": "complete"},
+        }]}
+        rows = [
+            {"site_id": "example-site", "metric": "umami.visits", "source": "fixture", "value": 1},
+            {"site_id": "example-site", "metric": "umami.visits", "source": "umami", "value": 2},
+        ]
+
+        self.assertEqual(
+            ReportService._site_metric_value(
+                rows, coverage, "example-site", "umami.visits"
+            ),
+            ("withheld", None, None),
+        )
+
+    def test_decision_ratio_withholds_cross_site_provider_blending(self):
+        coverage = {"by_site_source": [
+            {
+                "site_id": site_id,
+                "source": "umami",
+                "configured_providers": [source],
+                "metric_status": {
+                    "umami.pageviews": "complete",
+                    "umami.visits": "complete",
+                },
+            }
+            for site_id, source in (
+                ("example-site", "fixture"), ("second-site", "umami")
+            )
+        ]}
+        rows = [
+            {"site_id": site_id, "metric": metric_id, "source": source, "value": value}
+            for site_id, source in (
+                ("example-site", "fixture"), ("second-site", "umami")
+            )
+            for metric_id, value in (
+                ("umami.pageviews", 10), ("umami.visits", 5)
+            )
+        ]
+
+        state, value, scope, source_pair = ReportService._ratio_values(
+            rows,
+            coverage,
+            ("example-site", "second-site"),
+            "umami.pageviews",
+            "umami.visits",
+        )
+
+        self.assertEqual(state, "withheld")
+        self.assertIsNone(value)
+        self.assertEqual(scope, ("example-site", "second-site"))
+        self.assertIsNone(source_pair)
+
+    def test_decision_ratio_rejects_hybrid_provider_pairs(self):
+        same_source_coverage = {"by_site_source": [{
+            "site_id": "example-site",
+            "source": "umami",
+            "configured_providers": ["fixture", "umami"],
+            "metric_status": {
+                "umami.bounces": "complete", "umami.visits": "complete",
+            },
+        }]}
+        same_source_rows = [
+            {"site_id": "example-site", "metric": "umami.bounces", "source": "fixture", "value": 2},
+            {"site_id": "example-site", "metric": "umami.visits", "source": "umami", "value": 10},
+        ]
+        cross_source_coverage = {"by_site_source": [
+            {
+                "site_id": "example-site", "source": "cloudflare-forms",
+                "configured_providers": ["cloudflare-forms"],
+                "metric_status": {"forms.submissions": "complete"},
+            },
+            {
+                "site_id": "example-site", "source": "umami",
+                "configured_providers": ["fixture"],
+                "metric_status": {"umami.visits": "complete"},
+            },
+        ]}
+        cross_source_rows = [
+            {"site_id": "example-site", "metric": "forms.submissions", "source": "cloudflare-forms", "value": 1},
+            {"site_id": "example-site", "metric": "umami.visits", "source": "fixture", "value": 10},
+        ]
+
+        for rows, coverage, numerator, denominator in (
+            (same_source_rows, same_source_coverage, "umami.bounces", "umami.visits"),
+            (cross_source_rows, cross_source_coverage, "forms.submissions", "umami.visits"),
+        ):
+            state, value, _scope, source_pair = ReportService._ratio_values(
+                rows, coverage, ("example-site",), numerator, denominator
+            )
+            self.assertEqual(state, "withheld")
+            self.assertIsNone(value)
+            self.assertIsNone(source_pair)
+
+    def test_decision_support_alerts_on_cross_site_source_conflict(self):
+        config = self._multi_site_config()
+        points = []
+        for site_id, source in (
+            ("example-site", "fixture"), ("second-site", "umami")
+        ):
+            points.append(MetricPoint(
+                "example-client", site_id, source, "umami.visits", "count",
+                self.window.start, self.window.end, TimeGrain.DAY,
+                Decimal("10"), (), Completeness.FINAL, self.window.end,
+            ))
+            for day in (1, 2):
+                start = datetime(2026, 7, day, tzinfo=UTC)
+                points.append(MetricPoint(
+                    "example-client", site_id, source, "umami.pageviews", "count",
+                    start, start + timedelta(days=1), TimeGrain.DAY,
+                    Decimal("20"), (), Completeness.FINAL,
+                    start + timedelta(hours=12),
+                ))
+        self.store.upsert(points)
+
+        support = ReportService(config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+        card = next(
+            item for item in support["engagement"]
+            if item["id"] == "umami_views_per_visit"
+        )
+        attention_ids = {item["id"] for item in support["attention_items"]}
+
+        self.assertEqual(card["state"], "withheld")
+        self.assertEqual(card["withheld_reason"], "source_conflict")
+        self.assertIn("decision_source_conflict", attention_ids)
+
+    def test_supporting_metric_source_conflict_is_an_attention_item(self):
+        config = self._multi_site_config()
+        self.store.upsert([
+            MetricPoint(
+                "example-client", site_id, source, "search.clicks", "count",
+                datetime(2026, 7, day, tzinfo=UTC),
+                datetime(2026, 7, day, tzinfo=UTC) + timedelta(days=1),
+                TimeGrain.DAY, Decimal("2"), (), Completeness.FINAL,
+                datetime(2026, 7, day, 12, tzinfo=UTC),
+            )
+            for site_id, source in (
+                ("example-site", "fixture"),
+                ("second-site", "search-console"),
+            )
+            for day in (1, 2)
+        ])
+
+        support = ReportService(config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+
+        self.assertEqual(
+            support["supporting_metrics"]["search.clicks"]["source"],
+            "mixed",
+        )
+        self.assertIn("decision_source_conflict", {
+            item["id"] for item in support["attention_items"]
+        })
+
+    def test_fact_and_query_proven_empty_provider_are_not_blended(self):
+        self.store.upsert([
+            MetricPoint(
+                "example-client", "example-site", "fixture", metric_id,
+                "count", datetime(2026, 7, day, tzinfo=UTC),
+                datetime(2026, 7, day, tzinfo=UTC) + timedelta(days=1),
+                TimeGrain.DAY,
+                Decimal(str(value)), (), Completeness.FINAL,
+                datetime(2026, 7, day, 12, tzinfo=UTC),
+            )
+            for day in (1, 2)
+            for metric_id, value in (
+                ("search.clicks", 2),
+                ("umami.pageviews", 10),
+                ("umami.visits", 5),
+            )
+        ])
+        for connection_id, source, key in (
+            (
+                "native-search", "search-console",
+                "example-site:native-search:site:sc-domain:example.com",
+            ),
+            (
+                "native-umami", "umami",
+                "example-site:native-umami:website:native-demo",
+            ),
+        ):
+            run = self.store.start_run(
+                connection_id, "example-site", binding_key=key,
+                source=source, window=self.window,
+            )
+            self.store.finish_run(
+                run, "success", result_kind="empty",
+                data_through=(
+                    self.window.end if source == "search-console" else None
+                ),
+            )
+
+        report = ReportService(self.config, self.store).render(
+            "summary", self.window
+        )
+        support = report["decision_support"]
+        views_per_visit = next(
+            item for item in support["engagement"]
+            if item["id"] == "umami_views_per_visit"
+        )
+        search_pulse = support["site_pulse"][0]["metrics"]["search.clicks"]
+
+        self.assertEqual(report["summary_totals"]["search.clicks"]["source"], "mixed")
+        self.assertIsNone(report["summary_totals"]["search.clicks"]["value"])
+        self.assertEqual(search_pulse["state"], "withheld")
+        self.assertEqual(views_per_visit["state"], "withheld")
+        self.assertIn("decision_source_conflict", {
+            item["id"] for item in support["attention_items"]
+        })
+
+    def test_complete_report_still_alerts_on_incomplete_decision_inputs(self):
+        self.store.upsert([
+            point
+            for day in (1, 2)
+            for point in (
+                metric("search.clicks", 1, day, "count"),
+                metric("search.impressions", 10, day, "count"),
+                metric("search.ctr", .1, day, "ratio"),
+                metric("search.position", 5, day, "position"),
+                metric("forms.submissions", 0, day, "count"),
+            )
+        ])
+
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        attention_ids = {
+            item["id"] for item in report["decision_support"]["attention_items"]
+        }
+
+        self.assertEqual(report["coverage"]["status"], "complete")
+        self.assertNotEqual(report["decision_support"]["coverage"]["status"], "complete")
+        self.assertIn("decision_input_coverage", attention_ids)
+        self.assertNotIn("no_immediate_action", attention_ids)
+
+    def test_series_render_can_skip_decision_only_queries(self):
+        report = ReportService(self.config, self.store).render(
+            "summary", self.window, include_decision_support=False
+        )
+
+        self.assertIsNone(report["decision_support"])
+        self.assertEqual(
+            set(report["summary_totals"]), set(self.config.reports[0].metric_ids)
+        )
+
+    def test_decision_support_represents_never_run_and_unfinished_bindings(self):
+        key = "example-site:native-umami:website:native-demo"
+        self.store.start_run(
+            "native-umami", "example-site", binding_key=key,
+            source="umami", window=self.window,
+        )
+
+        support = ReportService(self.config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+        statuses = {item["status"] for item in support["operations_health"]}
+        attention_ids = {item["id"] for item in support["attention_items"]}
+        expected_bindings = [
+            binding for binding in self.config.bindings
+            if binding.site_id == "example-site"
+        ]
+
+        self.assertEqual(len(support["operations_health"]), len(expected_bindings))
+        self.assertIn("running", statuses)
+        self.assertIn("never_run", statuses)
+        self.assertIn("sync_unfinished", attention_ids)
+        self.assertIn("sync_never_run", attention_ids)
+
+    def test_decision_support_represents_connections_never_probed(self):
+        support = ReportService(self.config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+        selected_connections = {
+            binding.connection_id for binding in self.config.bindings
+            if binding.site_id == "example-site"
+        }
+
+        self.assertEqual(len(support["capabilities"]), len(selected_connections))
+        self.assertTrue(all(
+            item["state"] == "not_recorded"
+            for item in support["capabilities"]
+        ))
+        self.assertNotIn("connection_id", repr(support["capabilities"]))
+        self.assertIn("capability_never_probed", {
+            item["id"] for item in support["attention_items"]
+        })
+
+    def test_mailbox_reconciliation_requires_identical_site_scope(self):
+        config = self._multi_site_config(
+            include_second_inbox=False, include_second_fixture=False
+        )
+
+        def form_point(metric_id, value, day, site_id, source):
+            start = datetime(2026, 7, day, tzinfo=UTC)
+            return MetricPoint(
+                "example-client", site_id, source, metric_id, "count",
+                start, start + timedelta(days=1), TimeGrain.DAY,
+                Decimal(str(value)), (), Completeness.FINAL,
+                start + timedelta(hours=12),
+            )
+
+        self.store.upsert([
+            form_point("forms.submissions", 1, day, site_id, "cloudflare-forms")
+            for day in (1, 2)
+            for site_id in ("example-site", "second-site")
+        ] + [
+            form_point("forms.inbox-deliveries", 1, day, "example-site", "forms-inbox")
+            for day in (1, 2)
+        ])
+
+        support = ReportService(config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+        attention_ids = {item["id"] for item in support["attention_items"]}
+
+        self.assertIn("mailbox_scope_mismatch", attention_ids)
+        self.assertNotIn("mailbox_reconciliation", attention_ids)
+
+    def test_decision_support_surfaces_safe_latest_sync_failure(self):
+        key = "example-site:native-umami:website:native-demo"
+        run = self.store.start_run(
+            "native-umami", "example-site", binding_key=key,
+            source="umami", window=self.window,
+        )
+        self.store.finish_run(
+            run, "failed", category="provider_http",
+            message="private response text", result_kind="failed",
+        )
+
+        support = ReportService(self.config, self.store).render(
+            "summary", self.window
+        )["decision_support"]
+
+        operation = next(
+            item for item in support["operations_health"]
+            if item["site_id"] == "example-site" and item["source"] == "umami"
+        )
+        self.assertEqual(operation["status"], "failed")
+        self.assertEqual(operation["error_category"], "provider_http")
+        self.assertNotIn("private response text", repr(support))
+        self.assertNotIn("connection_id", repr(support))
+        self.assertIn("sync_failure", {
+            item["id"] for item in support["attention_items"]
+        })
+        self.assertEqual(support["attention_items"][0]["id"], "sync_failure")
 
 
 if __name__ == "__main__": unittest.main()
