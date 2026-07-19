@@ -16,6 +16,70 @@ from .models import Completeness, QueryWindow
 
 UNKNOWN_SOURCE_SEMANTICS = SourceSemantics("unknown", "unknown", "unknown")
 
+DECISION_INPUT_METRICS = (
+    "umami.pageviews",
+    "umami.visits",
+    "umami.bounces",
+    "umami.total-time",
+    "google.sessions",
+    "google.pageviews",
+    "google.events",
+    "search.clicks",
+    "search.impressions",
+    "forms.submissions",
+    "forms.sent",
+    "forms.pending",
+    "forms.failed",
+    "forms.inbox-deliveries",
+)
+
+SUPPORTING_SUMMARY_METRICS = (
+    "search.clicks",
+    "umami.pageviews",
+    "umami.visits",
+    "google.sessions",
+)
+
+SUPPORTING_SUMMARY_LABELS = {
+    "search.clicks": "Search clicks",
+    "umami.pageviews": "Umami page views",
+    "umami.visits": "Umami visits",
+    "google.sessions": "GA sessions",
+}
+
+MEASUREMENT_GAPS = (
+    {
+        "id": "commercial_outcomes",
+        "label": "Qualified leads and revenue",
+        "question": "Which leads became qualified opportunities, wins, and revenue?",
+        "requires": "A controlled CRM or business-outcome feed with response, qualification, win, and revenue stages.",
+    },
+    {
+        "id": "acquisition_content",
+        "label": "Acquisition and content drivers",
+        "question": "Which channels, campaigns, landing pages, queries, and pages create useful demand?",
+        "requires": "Bounded GA, Umami, and Search Console dimension ingestion; totals must remain provider-labeled.",
+    },
+    {
+        "id": "funnel_attribution",
+        "label": "True funnel and attribution",
+        "question": "Where do people drop between intent, form start, durable acceptance, and follow-up?",
+        "requires": "Meaningful-action events, consistent UTMs, and a defined goal; current visit-to-submission is only directional.",
+    },
+    {
+        "id": "retention",
+        "label": "Retention cohorts",
+        "question": "Do useful visitors return after 1, 7, or 30 days?",
+        "requires": "GA or Umami cohort reports; daily unique counts cannot be summed into retention.",
+    },
+    {
+        "id": "experience_reliability",
+        "label": "Core Web Vitals and errors",
+        "question": "Are real users seeing slow pages, 404s, or server failures?",
+        "requires": "Privacy-safe RUM plus bounded edge/origin status, cache, and error dimensions.",
+    },
+)
+
 
 def _number(value: Decimal) -> int | float:
     return int(value) if value == value.to_integral() else float(value)
@@ -335,18 +399,18 @@ class ReportService:
             coverage_runs[(str(item["site_id"]), str(item["source"]))].append(item)
 
         usable = [point for point in points if _usable_for_window(point, window)]
-        daily_presence: set[tuple[str, str, str]] = set()
-        exact_window_presence: set[tuple[str, str]] = set()
+        daily_presence: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+        exact_window_presence: dict[tuple[str, str], set[str]] = defaultdict(set)
         for point in usable:
-            daily_presence.add(
-                (
-                    point.site_id,
-                    point.metric,
-                    point.start.astimezone(zone).date().isoformat(),
-                )
-            )
+            daily_presence[(
+                point.site_id,
+                point.metric,
+                point.start.astimezone(zone).date().isoformat(),
+            )].add(point.source)
             if point.start == window.start and point.end == window.end:
-                exact_window_presence.add((point.site_id, point.metric))
+                exact_window_presence[(point.site_id, point.metric)].add(
+                    point.source
+                )
 
         metrics_by_source: dict[str, list[str]] = defaultdict(list)
         for metric in requested_metrics:
@@ -372,11 +436,13 @@ class ReportService:
                 missing_cells = []
                 metric_status: dict[str, str] = {}
                 metric_coverage: dict[str, dict[str, int | str]] = {}
+                metric_evidence_providers: dict[str, list[str]] = {}
 
                 for metric in source_metrics:
                     definition = METRICS[metric]
                     metric_expected = 0
                     metric_covered = 0
+                    evidence_providers: set[str] = set()
                     if not configured:
                         metric_status[metric] = "not_configured"
                         metric_coverage[metric] = {
@@ -393,13 +459,18 @@ class ReportService:
                         by_metric_counts[metric]["expected"] += 1
                         missing_inputs = []
                         for input_metric in definition.coverage_inputs:
-                            present = (
-                                (site_id, input_metric) in exact_window_presence
+                            fact_providers = (
+                                exact_window_presence.get(
+                                    (site_id, input_metric), set()
+                                )
                                 if date_label is None
-                                else (site_id, input_metric, date_label)
-                                in daily_presence
+                                else daily_presence.get(
+                                    (site_id, input_metric, date_label), set()
+                                )
                             )
-                            if not present and date_label is not None and source not in {
+                            present = bool(fact_providers)
+                            cell_providers = set(fact_providers)
+                            if date_label is not None and source not in {
                                 "cloudflare-forms", "forms-inbox"
                             }:
                                 local_day = datetime.fromisoformat(date_label).date()
@@ -407,23 +478,26 @@ class ReportService:
                                 cell_end = datetime.combine(
                                     local_day + timedelta(days=1), time.min, zone
                                 )
-                                present = any(
-                                    run["window_start"] <= cell_start
-                                    and (
-                                        run["data_through"]
-                                        if provider == "search-console"
-                                        else run["window_end"]
-                                    ) is not None
-                                    and (
-                                        run["data_through"]
-                                        if provider == "search-console"
-                                        else run["window_end"]
-                                    ) >= cell_end
-                                    for provider in configured_providers
-                                    for run in coverage_runs.get((site_id, provider), ())
-                                )
+                                for provider in configured_providers:
+                                    for run in coverage_runs.get(
+                                        (site_id, provider), ()
+                                    ):
+                                        effective_end = (
+                                            run["data_through"]
+                                            if provider == "search-console"
+                                            else run["window_end"]
+                                        )
+                                        if (
+                                            run["window_start"] <= cell_start
+                                            and effective_end is not None
+                                            and effective_end >= cell_end
+                                        ):
+                                            cell_providers.add(provider)
+                                present = bool(cell_providers)
                             if not present:
                                 missing_inputs.append(input_metric)
+                            else:
+                                evidence_providers.update(cell_providers)
                         if not missing_inputs:
                             metric_covered += 1
                             covered_cells += 1
@@ -445,6 +519,9 @@ class ReportService:
                         "expected": metric_expected,
                         "covered": metric_covered,
                     }
+                    metric_evidence_providers[metric] = sorted(
+                        evidence_providers
+                    )
 
                 if not configured:
                     status = "not_configured"
@@ -456,6 +533,7 @@ class ReportService:
                 bucket = {
                     "site_id": site_id,
                     "source": source,
+                    "configured_providers": sorted(configured_providers),
                     "status": status,
                     "configured": configured,
                     "expected_cells": expected_cells,
@@ -464,6 +542,7 @@ class ReportService:
                     "missing_ranges": _compress_missing_cells(missing_cells),
                     "metric_status": metric_status,
                     "metric_coverage": metric_coverage,
+                    "metric_evidence_providers": metric_evidence_providers,
                 }
                 by_site_source.append(bucket)
                 if configured:
@@ -602,6 +681,41 @@ class ReportService:
     ):
         current_values = cls._summary_values(current_rows, requested_metrics)
         prior_values = cls._summary_values(prior_rows, requested_metrics)
+
+        def aggregate_source(rows, metric, metric_coverage):
+            actual_sources = {
+                row["source"] for row in rows if row["metric"] == metric
+            }
+            logical_source = METRICS[metric].source
+            evidence_providers = {
+                provider
+                for bucket in metric_coverage.get("by_site_source", [])
+                if bucket.get("source") == logical_source
+                and bucket.get("metric_status", {}).get(metric)
+                not in {None, "not_configured", "unavailable"}
+                for provider in bucket.get(
+                    "metric_evidence_providers", {}
+                ).get(metric, [])
+            }
+            sources = actual_sources | evidence_providers
+            if len(sources) == 1:
+                return next(iter(sources))
+            if len(sources) > 1:
+                return "mixed"
+            configured_providers = {
+                provider
+                for bucket in metric_coverage.get("by_site_source", [])
+                if bucket.get("source") == logical_source
+                and bucket.get("metric_status", {}).get(metric)
+                not in {None, "not_configured", "unavailable"}
+                for provider in bucket.get("configured_providers", [])
+            }
+            if len(configured_providers) == 1:
+                return next(iter(configured_providers))
+            if len(configured_providers) > 1:
+                return "mixed"
+            return logical_source
+
         output = {}
         for metric in requested_metrics:
             definition = METRICS[metric]
@@ -614,21 +728,9 @@ class ReportService:
             prior_coverage_cells = prior_coverage.get("by_metric_cells", {}).get(
                 metric, {"expected": 0, "covered": 0}
             )
-            current_sources = {
-                row["source"] for row in current_rows if row["metric"] == metric
-            }
-            prior_sources = {
-                row["source"] for row in prior_rows if row["metric"] == metric
-            }
-            current_source = (
-                next(iter(current_sources)) if len(current_sources) == 1
-                else definition.source if not current_sources
-                else "mixed"
-            )
-            prior_source = (
-                next(iter(prior_sources)) if len(prior_sources) == 1
-                else definition.source if not prior_sources
-                else "mixed"
+            current_source = aggregate_source(current_rows, metric, coverage)
+            prior_source = aggregate_source(
+                prior_rows, metric, prior_coverage
             )
             if (
                 value is None
@@ -690,12 +792,743 @@ class ReportService:
             else "unavailable"
         )
 
+    @classmethod
+    def _metric_scope(cls, coverage, site_ids, metric: str) -> tuple[str, ...]:
+        """Return configured sites for a metric without treating missing as zero."""
+
+        return tuple(
+            site_id for site_id in site_ids
+            if cls._coverage_status(coverage, site_id, metric)
+            not in {"not_configured", "unavailable"}
+        )
+
+    @classmethod
+    def _site_metric_value(cls, rows, coverage, site_id: str, metric: str):
+        """Return one site's complete value and its actual provider source."""
+
+        status = cls._coverage_status(coverage, site_id, metric)
+        if status in {"not_configured", "unavailable"}:
+            return status, None, None
+        if status != "complete":
+            return "withheld", None, None
+        matches = [
+            row
+            for row in rows
+            if row["site_id"] == site_id and row["metric"] == metric
+        ]
+        source = METRICS[metric].source
+        bucket = next(
+            (
+                item for item in coverage["by_site_source"]
+                if item["site_id"] == site_id and item["source"] == source
+            ),
+            None,
+        )
+        evidence_sources = set(
+            bucket.get("metric_evidence_providers", {}).get(metric, ())
+            if bucket else ()
+        )
+        actual_sources = {row["source"] for row in matches}
+        represented_sources = actual_sources | evidence_sources
+        if len(represented_sources) > 1:
+            return "withheld", None, None
+        actual_source = next(iter(represented_sources), None)
+        if actual_source is None:
+            configured_providers = tuple(
+                bucket.get("configured_providers", ()) if bucket else ()
+            )
+            if len(configured_providers) == 1:
+                actual_source = configured_providers[0]
+        if matches:
+            return "observed", _number(sum(
+                (Decimal(str(row["value"])) for row in matches), Decimal()
+            )), actual_source
+        if METRICS[metric].aggregation == "sum" and actual_source is not None:
+            return "observed", 0, actual_source
+        return "withheld", None, None
+
+    @classmethod
+    def _ratio_values(
+        cls,
+        rows,
+        coverage,
+        site_ids,
+        numerator_metric: str,
+        denominator_metric: str,
+        *,
+        fixed_scope: tuple[str, ...] | None = None,
+    ):
+        candidates = fixed_scope if fixed_scope is not None else tuple(site_ids)
+        scope = cls._metric_scope(coverage, candidates, numerator_metric)
+        scope = tuple(
+            site_id for site_id in scope
+            if cls._coverage_status(coverage, site_id, denominator_metric)
+            not in {"not_configured", "unavailable"}
+        )
+        numerator = Decimal()
+        denominator = Decimal()
+        numerator_sources = set()
+        denominator_sources = set()
+        for site_id in scope:
+            numerator_state, numerator_value, numerator_source = cls._site_metric_value(
+                rows, coverage, site_id, numerator_metric
+            )
+            denominator_state, denominator_value, denominator_source = cls._site_metric_value(
+                rows, coverage, site_id, denominator_metric
+            )
+            if "withheld" in {numerator_state, denominator_state}:
+                return "withheld", None, scope, None
+            numerator += Decimal(str(numerator_value))
+            denominator += Decimal(str(denominator_value))
+            numerator_sources.add(numerator_source)
+            denominator_sources.add(denominator_source)
+        if not scope:
+            return "not_measured", None, (), None
+        if (
+            None in numerator_sources or None in denominator_sources
+            or len(numerator_sources) != 1 or len(denominator_sources) != 1
+        ):
+            return "withheld", None, scope, None
+        source_pair = (
+            next(iter(numerator_sources)), next(iter(denominator_sources))
+        )
+        logical_pair = (
+            METRICS[numerator_metric].source,
+            METRICS[denominator_metric].source,
+        )
+        compatible_sources = (
+            source_pair[0] == source_pair[1]
+            if logical_pair[0] == logical_pair[1]
+            else source_pair == logical_pair or source_pair == ("fixture", "fixture")
+        )
+        if not compatible_sources:
+            return "withheld", None, scope, None
+        if denominator == 0:
+            return "unavailable", None, scope, source_pair
+        return "observed", _number(numerator / denominator), scope, source_pair
+
+    @classmethod
+    def _ratio_card(
+        cls,
+        *,
+        identifier: str,
+        label: str,
+        numerator_metric: str,
+        denominator_metric: str,
+        unit: str,
+        note: str,
+        rows,
+        prior_rows,
+        coverage,
+        prior_coverage,
+        site_ids,
+    ):
+        state, value, scope, source_pair = cls._ratio_values(
+            rows, coverage, site_ids, numerator_metric, denominator_metric
+        )
+        previous_value = None
+        change_percent = None
+        change_state = None
+        comparison_available = False
+        if state == "observed":
+            prior_state, previous_value, _prior_scope, prior_source_pair = cls._ratio_values(
+                prior_rows,
+                prior_coverage,
+                site_ids,
+                numerator_metric,
+                denominator_metric,
+                fixed_scope=scope,
+            )
+            comparison_available = (
+                prior_state == "observed" and prior_source_pair == source_pair
+            )
+            if comparison_available and previous_value == 0 and value != 0:
+                change_state = "new"
+            elif comparison_available and previous_value not in {None, 0}:
+                change_percent = round(
+                    (float(value) - float(previous_value))
+                    / float(previous_value)
+                    * 100,
+                    2,
+                )
+        state_note = note
+        withheld_reason = None
+        if state == "withheld":
+            complete_cells = all(
+                cls._coverage_status(coverage, site_id, metric) == "complete"
+                for site_id in scope
+                for metric in (numerator_metric, denominator_metric)
+            )
+            withheld_reason = (
+                "source_conflict" if complete_cells else "incomplete_coverage"
+            )
+            state_note += (
+                " Withheld: complete inputs and one consistent actual provider "
+                "per metric are required across the card scope."
+            )
+        elif state == "not_measured":
+            state_note += " No site in this scope has both required sources configured."
+        elif state == "unavailable":
+            state_note += " The complete denominator is zero for this window."
+        return {
+            "id": identifier,
+            "label": label,
+            "value": value,
+            "previous_value": previous_value if comparison_available else None,
+            "change_percent": change_percent,
+            "change_state": change_state,
+            "comparison_available": comparison_available,
+            "unit": unit,
+            "state": state,
+            "withheld_reason": withheld_reason,
+            "source": (
+                f"{source_pair[0]} / {source_pair[1]}"
+                if source_pair else "provider scope unavailable"
+            ),
+            "scope_site_ids": list(scope),
+            "note": state_note,
+        }
+
+    @staticmethod
+    def _metric_card(
+        identifier: str,
+        label: str,
+        metric: str,
+        total,
+        note: str,
+        *,
+        scope_site_ids=(),
+    ):
+        coverage_status = total["coverage_status"]
+        withheld_reason = None
+        if total.get("source") == "mixed":
+            state = "withheld"
+            withheld_reason = "source_conflict"
+        elif coverage_status == "complete" and total["value"] is not None:
+            state = "observed"
+        elif coverage_status == "partial":
+            state = "withheld"
+            withheld_reason = "incomplete_coverage"
+        else:
+            state = "not_measured"
+        change_state = (
+            "new"
+            if total.get("comparison_available")
+            and total.get("previous_value") == 0
+            and total.get("value") not in {None, 0}
+            else None
+        )
+        if withheld_reason == "source_conflict":
+            note += " Aggregate withheld because more than one actual provider source is present."
+        elif state == "withheld":
+            note += " Aggregate withheld because configured coverage is partial."
+        elif state == "not_measured":
+            note += " No complete configured observation is available."
+        return {
+            "id": identifier,
+            "label": label,
+            "metric": metric,
+            "value": total["value"] if state == "observed" else None,
+            "previous_value": total.get("previous_value"),
+            "change_percent": total.get("change_percent"),
+            "change_state": change_state,
+            "comparison_available": bool(total.get("comparison_available")),
+            "unit": total["unit"],
+            "state": state,
+            "withheld_reason": withheld_reason,
+            "source": total["source"],
+            "scope_site_ids": list(scope_site_ids),
+            "note": note,
+        }
+
+    @classmethod
+    def _site_pulse(cls, site_ids, rows, coverage):
+        metrics = (
+            "umami.visits",
+            "google.sessions",
+            "search.clicks",
+            "forms.submissions",
+        )
+        output = []
+        for site_id in site_ids:
+            cells = {}
+            for metric in metrics:
+                state, value, source = cls._site_metric_value(
+                    rows, coverage, site_id, metric
+                )
+                cells[metric] = {
+                    "state": state, "value": value, "source": source,
+                }
+            buckets = [
+                item for item in coverage["by_site_source"]
+                if item["site_id"] == site_id and item["configured"]
+            ]
+            expected = sum(int(item["expected_cells"]) for item in buckets)
+            covered = sum(int(item["covered_cells"]) for item in buckets)
+            status = (
+                "complete" if expected and expected == covered
+                else "unavailable" if not covered
+                else "partial"
+            )
+            output.append({
+                "site_id": site_id,
+                "metrics": cells,
+                "coverage": {
+                    "status": status,
+                    "covered_cells": covered,
+                    "expected_cells": expected,
+                },
+            })
+        return output
+
+    @staticmethod
+    def _binding_operations(bindings, connection_sources, latest_rows):
+        """Represent every current binding, including bindings with no run yet."""
+
+        latest_by_index = {
+            int(item["binding_index"]): item for item in latest_rows
+        }
+        output = []
+        for index, binding in enumerate(bindings):
+            source = connection_sources[binding.connection_id]
+            latest = latest_by_index.get(index)
+            if latest is None:
+                output.append({
+                    "site_id": binding.site_id,
+                    "source": source,
+                    "started_at": None,
+                    "finished_at": None,
+                    "status": "never_run",
+                    "points_written": 0,
+                    "error_category": None,
+                    "result_kind": None,
+                    "data_through": None,
+                })
+                continue
+            output.append({
+                key: value for key, value in latest.items()
+                if key not in {"binding_index", "connection_id"}
+            } | {
+                "site_id": binding.site_id,
+                "source": source,
+            })
+        return output
+
+    @staticmethod
+    def _connection_capabilities(
+        connection_ids, connection_sources, snapshots
+    ):
+        """Represent every selected connection, including one never probed.
+
+        Capability records are dated observations only.  A missing record is
+        an explicit measurement gap, not evidence that authentication or the
+        provider feature set is healthy.
+        """
+
+        by_connection = {
+            str(item["connection_id"]): item for item in snapshots
+        }
+        output = []
+        for connection_id in connection_ids:
+            snapshot = by_connection.get(connection_id)
+            if snapshot is None:
+                output.append({
+                    "provider": connection_sources[connection_id],
+                    "state": "not_recorded",
+                    "probed_at": None,
+                    "max_lookback_days": None,
+                    "warning_count": 0,
+                })
+                continue
+            output.append({
+                "provider": connection_sources[connection_id],
+                "state": "recorded",
+                "probed_at": snapshot.get("probed_at"),
+                "max_lookback_days": snapshot.get("max_lookback_days"),
+                "warning_count": len(snapshot.get("warnings", [])),
+            })
+        return output
+
+    @classmethod
+    def _build_decision_support(
+        cls,
+        *,
+        site_ids,
+        current_rows,
+        prior_rows,
+        report_coverage,
+        insight_coverage,
+        prior_insight_coverage,
+        insight_totals,
+        operations_health,
+        capabilities,
+    ):
+        outcomes = [
+            cls._metric_card(
+                "durable_leads", "Durable leads", "forms.submissions",
+                insight_totals["forms.submissions"],
+                "Accepted records in the forms database; this is the lead-count source of truth.",
+                scope_site_ids=cls._metric_scope(
+                    insight_coverage, site_ids, "forms.submissions"
+                ),
+            ),
+            cls._ratio_card(
+                identifier="visit_to_submission",
+                label="Visit-to-submission proxy",
+                numerator_metric="forms.submissions",
+                denominator_metric="umami.visits",
+                unit="ratio",
+                note="Directional cross-system ratio on same-site complete inputs; not attribution or a user conversion rate.",
+                rows=current_rows,
+                prior_rows=prior_rows,
+                coverage=insight_coverage,
+                prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+            cls._ratio_card(
+                identifier="notification_sent_rate",
+                label="Notification sent state",
+                numerator_metric="forms.sent",
+                denominator_metric="forms.submissions",
+                unit="ratio",
+                note="Forms database notification state; mailbox arrival remains independent reconciliation evidence.",
+                rows=current_rows,
+                prior_rows=prior_rows,
+                coverage=insight_coverage,
+                prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+        ]
+        expected = int(report_coverage["expected_cells"])
+        covered = int(report_coverage["covered_cells"])
+        outcomes.append({
+            "id": "report_coverage",
+            "label": "Report coverage",
+            "value": covered / expected if expected else None,
+            "previous_value": None,
+            "change_percent": None,
+            "change_state": None,
+            "comparison_available": False,
+            "unit": "ratio",
+            "state": report_coverage["status"],
+            "source": "sync ledger",
+            "scope_site_ids": list(site_ids),
+            "note": f"{covered} of {expected} expected site/source/metric/date cells are covered.",
+        })
+
+        engagement = [
+            cls._ratio_card(
+                identifier="umami_bounce_rate",
+                label="Umami bounce rate",
+                numerator_metric="umami.bounces",
+                denominator_metric="umami.visits",
+                unit="ratio",
+                note="Umami defines a bounce as a visit with one event; do not compare this directly with GA bounce rate.",
+                rows=current_rows, prior_rows=prior_rows,
+                coverage=insight_coverage, prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+            cls._ratio_card(
+                identifier="umami_views_per_visit",
+                label="Umami views per visit",
+                numerator_metric="umami.pageviews",
+                denominator_metric="umami.visits",
+                unit="number",
+                note="Page views divided by exact-window Umami visits using complete same-site inputs.",
+                rows=current_rows, prior_rows=prior_rows,
+                coverage=insight_coverage, prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+            cls._ratio_card(
+                identifier="umami_average_visit_duration",
+                label="Umami average visit duration",
+                numerator_metric="umami.total-time",
+                denominator_metric="umami.visits",
+                unit="seconds",
+                note="Total Umami visit time divided by visits; single-event visits contribute no elapsed duration.",
+                rows=current_rows, prior_rows=prior_rows,
+                coverage=insight_coverage, prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+            cls._ratio_card(
+                identifier="ga_views_per_session",
+                label="GA views per session",
+                numerator_metric="google.pageviews",
+                denominator_metric="google.sessions",
+                unit="number",
+                note="GA screen/page views per GA session; kept separate from Umami definitions.",
+                rows=current_rows, prior_rows=prior_rows,
+                coverage=insight_coverage, prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+            cls._ratio_card(
+                identifier="ga_events_per_session",
+                label="GA events per session",
+                numerator_metric="google.events",
+                denominator_metric="google.sessions",
+                unit="number",
+                note="Event frequency, not conversion rate; a session can contain multiple events.",
+                rows=current_rows, prior_rows=prior_rows,
+                coverage=insight_coverage, prior_coverage=prior_insight_coverage,
+                site_ids=site_ids,
+            ),
+        ]
+
+        supporting_metrics = {
+            metric: insight_totals[metric]
+            for metric in SUPPORTING_SUMMARY_METRICS
+        }
+
+        attention = []
+        source_conflicts = [
+            item for item in (*outcomes, *engagement)
+            if item.get("withheld_reason") == "source_conflict"
+        ]
+        source_conflicts.extend(
+            {
+                "label": SUPPORTING_SUMMARY_LABELS[metric],
+                "withheld_reason": "source_conflict",
+            }
+            for metric, total in supporting_metrics.items()
+            if total.get("source") == "mixed"
+        )
+        if source_conflicts:
+            labels = ", ".join(
+                item["label"] for item in source_conflicts[:5]
+            )
+            remainder = len(source_conflicts) - 5
+            attention.append({
+                "id": "decision_source_conflict",
+                "severity": "review",
+                "title": "Decision inputs mix incompatible provider sources",
+                "evidence": (
+                    f"Withheld cards: {labels}"
+                    + (f" and {remainder} more" if remainder > 0 else "")
+                    + "."
+                ),
+                "action": (
+                    "Remove stale fixture or duplicate-provider facts, or narrow "
+                    "the scope until each card uses compatible actual sources."
+                ),
+            })
+        if report_coverage["status"] != "complete":
+            attention.append({
+                "id": "data_coverage",
+                "severity": "review",
+                "title": "Coverage is incomplete",
+                "evidence": f"{covered} of {expected} expected report cells are covered.",
+                "action": "Review source health and missing ranges; do not use withheld aggregates or period changes for decisions.",
+            })
+            source_gaps: dict[str, dict[str, object]] = {}
+            for bucket in report_coverage["by_site_source"]:
+                if not bucket["configured"] or bucket["status"] == "complete":
+                    continue
+                gap = source_gaps.setdefault(bucket["source"], {
+                    "expected": 0, "covered": 0, "sites": [], "ranges": [],
+                })
+                gap["expected"] = int(gap["expected"]) + int(bucket["expected_cells"])
+                gap["covered"] = int(gap["covered"]) + int(bucket["covered_cells"])
+                gap["sites"].append(bucket["site_id"])
+                gap["ranges"].extend(bucket.get("missing_ranges", []))
+            ranked_gaps = sorted(
+                source_gaps.items(),
+                key=lambda item: int(item[1]["expected"]) - int(item[1]["covered"]),
+                reverse=True,
+            )[:3]
+            for source, gap in ranked_gaps:
+                examples = []
+                for missing in gap["ranges"][:2]:
+                    span = (
+                        f"{missing['start']} to {missing['end']}"
+                        if missing.get("start") else "the exact requested window"
+                    )
+                    examples.append(f"{missing['metric']} ({span})")
+                evidence = (
+                    f"{source} covers {gap['covered']} of {gap['expected']} expected cells "
+                    f"across {len(set(gap['sites']))} configured site(s)"
+                    + (f"; examples: {', '.join(examples)}" if examples else "")
+                    + "."
+                )
+                action = (
+                    "Use the provider data-through date or a fully covered earlier end date; do not interpret the newest missing Search day as zero."
+                    if source == "search-console"
+                    else "Use a window inside verified edge history and keep older Cloudflare totals provisional and partial."
+                    if source == "cloudflare"
+                    else "Review the latest current-binding sync and exact-window availability for this provider."
+                )
+                attention.append({
+                    "id": "coverage_gap",
+                    "severity": "review",
+                    "title": f"{source} limits this decision window",
+                    "evidence": evidence,
+                    "action": action,
+                })
+        if insight_coverage["status"] != "complete":
+            insight_expected = int(insight_coverage["expected_cells"])
+            insight_covered = int(insight_coverage["covered_cells"])
+            attention.append({
+                "id": "decision_input_coverage",
+                "severity": "review",
+                "title": "Decision inputs are incomplete",
+                "evidence": (
+                    f"{insight_covered} of {insight_expected} expected decision-input "
+                    "cells are covered; one or more derived cards may be withheld."
+                ),
+                "action": (
+                    "Treat withheld KPIs as unknown and repair or narrow the exact "
+                    "provider window before acting on them."
+                ),
+            })
+        for item in operations_health:
+            if item["status"] == "failed":
+                attention.append({
+                    "id": "sync_failure",
+                    "severity": "immediate",
+                    "title": "A current data binding failed its latest sync",
+                    "evidence": (
+                        f"{item['site_id']} / {item['source']} failed"
+                        + (f" ({item['error_category']})" if item["error_category"] else "")
+                        + "."
+                    ),
+                    "action": "Inspect the bounded provider job and retry only after the underlying access or response issue is understood.",
+                })
+            elif item["status"] == "never_run":
+                attention.append({
+                    "id": "sync_never_run",
+                    "severity": "review",
+                    "title": "A current data binding has no sync history",
+                    "evidence": f"{item['site_id']} / {item['source']} has no recorded attempt.",
+                    "action": "Verify the binding is intentional, then run its bounded sync before relying on this source.",
+                })
+            elif item["status"] == "running":
+                attention.append({
+                    "id": "sync_unfinished",
+                    "severity": "review",
+                    "title": "A current data binding has an unfinished sync",
+                    "evidence": (
+                        f"{item['site_id']} / {item['source']} started at "
+                        f"{item['started_at'] or 'an unknown time'} and has not finished."
+                    ),
+                    "action": "Confirm whether the job is active; investigate and safely clear it only if it is genuinely stale.",
+                })
+
+        missing_capabilities = [
+            item for item in capabilities
+            if item.get("state") == "not_recorded"
+        ]
+        if missing_capabilities:
+            providers = sorted({
+                str(item["provider"]) for item in missing_capabilities
+            })
+            attention.append({
+                "id": "capability_never_probed",
+                "severity": "review",
+                "title": "Provider capability limits have not been recorded",
+                "evidence": (
+                    f"{len(missing_capabilities)} current connection(s) have no "
+                    f"dated capability snapshot: {', '.join(providers)}."
+                ),
+                "action": (
+                    "Run the bounded provider probe before relying on lookback "
+                    "limits or supported metric groups; absence is not health."
+                ),
+            })
+
+        def complete(metric):
+            total = insight_totals[metric]
+            value = total["value"] if total["coverage_status"] == "complete" else None
+            return value, cls._metric_scope(insight_coverage, site_ids, metric)
+
+        submissions, submission_scope = complete("forms.submissions")
+        sent, sent_scope = complete("forms.sent")
+        pending, pending_scope = complete("forms.pending")
+        failed, failed_scope = complete("forms.failed")
+        delivered, delivered_scope = complete("forms.inbox-deliveries")
+        if failed not in {None, 0}:
+            attention.append({
+                "id": "notification_failures",
+                "severity": "immediate",
+                "title": "Form notifications are marked failed",
+                "evidence": f"{failed} accepted submission notification(s) are failed in the selected window.",
+                "action": "Inspect and retry the notification pipeline while preserving the durable submissions.",
+            })
+        if pending not in {None, 0}:
+            attention.append({
+                "id": "pending_notifications",
+                "severity": "immediate",
+                "title": "Form notifications remain pending",
+                "evidence": f"{pending} accepted submission notification(s) are pending in the selected window.",
+                "action": "Check age and worker state; escalate stale pending records rather than treating them as delivered.",
+            })
+        pipeline_values = {submissions, sent, pending, failed}
+        pipeline_scopes = {submission_scope, sent_scope, pending_scope, failed_scope}
+        if None not in pipeline_values:
+            if len(pipeline_scopes) != 1:
+                attention.append({
+                    "id": "notification_scope_mismatch",
+                    "severity": "review",
+                    "title": "Notification-state scopes do not match",
+                    "evidence": "Accepted, sent, pending, and failed facts cover different configured sites.",
+                    "action": "Align the forms-database bindings before reconciling portfolio notification states.",
+                })
+            elif submissions != sent + pending + failed:
+                attention.append({
+                    "id": "notification_pipeline_mismatch",
+                    "severity": "immediate",
+                    "title": "Notification states do not conserve accepted submissions",
+                    "evidence": f"Accepted {submissions}; sent + pending + failed equals {sent + pending + failed}.",
+                    "action": "Inspect form-state classification before using notification rates.",
+                })
+        if submissions is not None and delivered is not None:
+            if submission_scope != delivered_scope:
+                attention.append({
+                    "id": "mailbox_scope_mismatch",
+                    "severity": "review",
+                    "title": "Mailbox and durable-lead scopes differ",
+                    "evidence": "Forms database and inbox evidence cover different configured sites, so portfolio totals are not comparable.",
+                    "action": "Align mailbox bindings or compare only the shared site scope before reconciling counts.",
+                })
+            elif submissions != delivered:
+                attention.append({
+                    "id": "mailbox_reconciliation",
+                    "severity": "review",
+                    "title": "Mailbox evidence differs from durable leads",
+                    "evidence": f"Forms database accepted {submissions}; inbox evidence observed {delivered}.",
+                    "action": "Correlate canary-excluded message identities; inbox count is reconciliation evidence, not the lead total.",
+                })
+        if not attention:
+            attention.append({
+                "id": "no_immediate_action",
+                "severity": "clear",
+                "title": "No evidence-backed issue needs immediate action",
+                "evidence": "Configured decision inputs and current operations show no triggered rule.",
+                "action": "Continue watching equal-period trends and source freshness.",
+            })
+        attention.sort(key=lambda item: {
+            "immediate": 0, "review": 1, "clear": 2,
+        }.get(item["severity"], 1))
+
+        return {
+            "schema_version": 1,
+            "outcomes": outcomes,
+            "engagement": engagement,
+            "site_pulse": cls._site_pulse(site_ids, current_rows, insight_coverage),
+            "attention_items": attention,
+            "operations_health": operations_health,
+            "capabilities": capabilities,
+            "supporting_metrics": supporting_metrics,
+            "measurement_gaps": list(MEASUREMENT_GAPS),
+            "coverage": insight_coverage,
+        }
+
     def render(
         self,
         report_id: str,
         window: QueryWindow,
         subreport_id: str | None = None,
         site_id: str | None = None,
+        *,
+        include_decision_support: bool = True,
     ) -> dict[str, Any]:
         report, metrics, title, filters = self.definition(report_id, subreport_id)
         if site_id is not None and site_id not in report.site_ids:
@@ -716,7 +1549,14 @@ class ReportService:
             if any(item in metrics for item in ("search.ctr", "search.position"))
             else ()
         )
-        query_metrics = tuple(dict.fromkeys((*metrics, *weighted_inputs)))
+        decision_metrics = (
+            DECISION_INPUT_METRICS
+            if subreport_id is None and include_decision_support
+            else ()
+        )
+        query_metrics = tuple(dict.fromkeys(
+            (*metrics, *weighted_inputs, *decision_metrics)
+        ))
         current_points = self.store.query(
             client_id=report.client_id,
             site_ids=site_ids,
@@ -765,6 +1605,61 @@ class ReportService:
         prior_coverage, prior_source_health = self._coverage(
             site_ids, metrics, previous_points, previous
         )
+        decision_support = None
+        if decision_metrics:
+            insight_coverage, _insight_source_health = self._coverage(
+                site_ids, decision_metrics, current_points, window
+            )
+            prior_insight_coverage, _prior_insight_source_health = self._coverage(
+                site_ids, decision_metrics, previous_points, previous
+            )
+            insight_totals = self._summary_totals(
+                current_basis,
+                prior_basis,
+                decision_metrics,
+                insight_coverage,
+                prior_insight_coverage,
+            )
+            selected_bindings = [
+                binding for binding in self.config.bindings
+                if binding.site_id in site_ids
+            ]
+            binding_keys = [
+                f"{binding.site_id}:{binding.connection_id}:"
+                f"{binding.resource_type}:{binding.resource_id}"
+                for binding in selected_bindings
+            ]
+            connection_ids = sorted({
+                binding.connection_id for binding in selected_bindings
+            })
+            connection_sources = {
+                connection.id: connection.provider
+                for connection in self.config.connections
+            }
+            latest_operations = self.store.query_latest_sync_status(
+                binding_keys=binding_keys
+            )
+            decision_support = self._build_decision_support(
+                site_ids=site_ids,
+                current_rows=current_basis,
+                prior_rows=prior_basis,
+                report_coverage=coverage,
+                insight_coverage=insight_coverage,
+                prior_insight_coverage=prior_insight_coverage,
+                insight_totals=insight_totals,
+                operations_health=self._binding_operations(
+                    selected_bindings,
+                    connection_sources,
+                    latest_operations,
+                ),
+                capabilities=self._connection_capabilities(
+                    connection_ids,
+                    connection_sources,
+                    self.store.query_capability_summaries(
+                        connection_ids=connection_ids
+                    ),
+                ),
+            )
         prior_map = {
             (row["metric"], row["site_id"], row["source"], row["unit"]): row[
                 "value"
@@ -902,6 +1797,7 @@ class ReportService:
             "series": current_series,
             "comparison_series": comparable_prior_series,
             "forms_pipeline": forms,
+            "decision_support": decision_support,
             "warnings": warnings,
             "complete": coverage["status"] == "complete",
         }

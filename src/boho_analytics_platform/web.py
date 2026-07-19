@@ -71,6 +71,7 @@ SOURCE_LABELS = {
     "search-console": "Google Search Console",
     "cloudflare-forms": "Forms database",
     "forms-inbox": "Forms inbox",
+    "fixture": "Fixture replay",
 }
 
 CHART_PRIORITY = (
@@ -87,10 +88,10 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
+    ("Organic clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
     ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
-    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
-    ("Search impressions", ("search.impressions",), "Organic visibility"),
-    ("Inbox deliveries", ("forms.inbox-deliveries",), "Form notification evidence"),
+    ("Umami visits", ("umami.visits",), "Exact-window Umami visits"),
+    ("GA sessions", ("google.sessions",), "Google Analytics sessions"),
 )
 
 TRAFFIC_SUMMARY = (
@@ -102,7 +103,7 @@ TRAFFIC_SUMMARY = (
 
 SEARCH_SUMMARY = (
     ("Impressions", ("search.impressions",), "Search result visibility"),
-    ("Clicks", ("search.clicks",), "Organic visits from Google"),
+    ("Clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
     ("CTR", ("search.ctr",), "Clicks per impression"),
     ("Average position", ("search.position",), "Impression-weighted rank"),
 )
@@ -116,24 +117,29 @@ FORMS_SUMMARY = (
 
 
 BASE_CSS = """
-:root{--ink:#17201d;--ink-2:#26312d;--paper:#f4f2ec;--surface:#fff;--line:#deddd5;--muted:#6d746f;--accent:#e86d3d;--accent-soft:#fff0e8;--green:#1f7a5a;--green-soft:#e7f5ef;--amber:#a55c12;--amber-soft:#fff4dc;--red:#a43f35;--red-soft:#fdebe8;--shadow:0 12px 35px rgba(25,35,31,.07)}
+:root{--ink:#17201d;--ink-2:#26312d;--paper:#f4f2ec;--surface:#fff;--line:#deddd5;--muted:#525a55;--accent:#e86d3d;--accent-soft:#fff0e8;--green:#1f7a5a;--green-soft:#e7f5ef;--amber:#a55c12;--amber-soft:#fff4dc;--red:#a43f35;--red-soft:#fdebe8;--shadow:0 12px 35px rgba(25,35,31,.07)}
 *{box-sizing:border-box}html{max-width:100%;overflow-x:hidden;scroll-behavior:smooth}body{max-width:100%;margin:0;overflow-x:hidden;background:var(--paper);color:var(--ink);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit}button,input,select{font:inherit}.skip-link{position:fixed;left:12px;top:-80px;z-index:20;background:#fff;padding:10px 14px;border-radius:8px}.skip-link:focus{top:12px}
 .topbar{background:var(--ink);color:#fff}.topbar-inner{max-width:1240px;margin:auto;padding:18px 28px;display:flex;justify-content:space-between;gap:24px;align-items:center}.brand{display:flex;align-items:center;gap:12px}.brand-mark{display:grid;place-items:center;width:38px;height:38px;border:1px solid rgba(255,255,255,.28);border-radius:11px;color:#ffd4c2;font-weight:800;letter-spacing:-.04em}.brand strong{display:block;font-size:15px}.brand span{display:block;color:#aeb9b4;font-size:12px}.live-state{display:flex;align-items:center;gap:8px;color:#dfe9e5;font-size:13px}.live-dot{width:8px;height:8px;border-radius:50%;background:#4fd49c;box-shadow:0 0 0 4px rgba(79,212,156,.12)}
 .shell{max-width:1240px;margin:auto;padding:34px 28px 48px}.hero{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:end;margin-bottom:22px}.eyebrow{margin:0 0 7px;overflow-wrap:anywhere;color:var(--accent);font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}.hero h1{margin:0;font-size:clamp(29px,4vw,46px);line-height:1.08;letter-spacing:-.045em}.hero-copy{max-width:720px;margin:11px 0 0;color:var(--muted);font-size:16px}.coverage-badge{align-self:start;display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border-radius:999px;background:var(--green-soft);color:var(--green);font-size:13px;font-weight:750}.coverage-badge.partial{background:var(--amber-soft);color:var(--amber)}
 .report-nav,.subnav,.quick-links{display:flex;flex-wrap:wrap;gap:8px}.report-nav{margin:0 0 12px}.report-nav a,.subnav a,.quick-links a{padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.6);color:var(--ink-2);font-size:13px;font-weight:700;text-decoration:none}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{background:#fff;border-color:#b9bab4}.report-nav a.active,.subnav a.active{background:var(--ink);border-color:var(--ink);color:#fff}.subnav{margin-bottom:16px}
 .panel{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:17px;box-shadow:var(--shadow)}.control-panel{padding:18px;margin-bottom:18px}.panel-heading{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:14px}.panel-heading h2{margin:0;font-size:18px;letter-spacing:-.02em}.panel-heading p{margin:3px 0 0;color:var(--muted);font-size:13px}.filter-form{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr)) auto;gap:12px;align-items:end}.field{display:grid;min-width:0;gap:6px}fieldset.field{min-width:0;margin:0}.field span{font-size:12px;font-weight:750;color:var(--ink-2)}input,select{width:100%;min-height:42px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus,button:focus,a:focus{outline:3px solid rgba(232,109,61,.28);outline-offset:2px;border-color:var(--accent)}button{min-height:42px;padding:9px 16px;border:1px solid var(--ink);border-radius:9px;background:var(--ink);color:#fff;font-weight:800;cursor:pointer}button:hover{background:#283530}.tools-row{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid #ecebe5}.tools-label{color:var(--muted);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.08em}
 .alerts{display:grid;gap:9px;margin:0 0 18px}.alert{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border:1px solid #f0d7b4;border-radius:11px;background:var(--amber-soft);color:#77440f}.alert-mark{display:grid;place-items:center;flex:0 0 22px;height:22px;border-radius:50%;background:#d98627;color:#fff;font-size:12px;font-weight:900}
-.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card[data-state="partial"]{border-color:#e0b16d;background:#fffaf0}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}.trend.partial{background:var(--amber-soft);color:var(--amber)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.kpi-card{position:relative;overflow:hidden;min-height:154px;padding:18px;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}.kpi-card[data-state="partial"],.kpi-card[data-state="withheld"]{border-color:#e0b16d;background:#fffaf0}.kpi-card:after{content:"";position:absolute;right:-25px;bottom:-38px;width:105px;height:105px;border-radius:50%;background:var(--accent-soft)}.kpi-top{display:flex;justify-content:space-between;gap:8px;align-items:center}.kpi-label{color:var(--muted);font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}.kpi-value{position:relative;z-index:1;display:block;margin:13px 0 5px;font-size:34px;line-height:1;font-weight:850;letter-spacing:-.045em}.kpi-note{position:relative;z-index:1;margin:0;color:var(--muted);font-size:12px}.trend{padding:4px 7px;border-radius:999px;font-size:11px;font-weight:800}.trend.up{background:var(--green-soft);color:var(--green)}.trend.down{background:var(--red-soft);color:var(--red)}.trend.flat{background:#efefeb;color:#616762}.trend.partial{background:var(--amber-soft);color:var(--amber)}
 .chart-panel{padding:20px;margin-bottom:18px}.chart-panel .panel-heading{margin-bottom:18px}.metric-description{max-width:650px}.chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.chart-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:linear-gradient(180deg,#fff,#fbfaf7)}.chart-card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px}.chart-card h3{margin:0;font-size:14px}.chart-total{color:var(--muted);font-size:12px;font-weight:750}.chart-scroll{overflow-x:auto;padding:4px 0 0}.bar-grid{position:relative;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(12px,1fr);align-items:end;gap:4px;height:205px;min-width:100%;border-bottom:1px solid #cfd1cc;background:repeating-linear-gradient(to top,transparent 0,transparent 50px,#ecece7 51px)}.bar-grid.density-mid{grid-auto-columns:minmax(9px,1fr)}.bar-grid.density-wide{grid-auto-columns:minmax(6px,1fr)}.bar-slot{height:100%;display:flex;align-items:end;justify-content:center}.bar{display:block;width:72%;min-height:2px;border-radius:5px 5px 2px 2px;background:var(--accent)}.bar.tone-1{background:#357a68}.bar.tone-2{background:#6772a8}.bar.tone-3{background:#ba8b32}.axis-labels{display:flex;justify-content:space-between;gap:12px;margin-top:7px;color:var(--muted);font-size:11px}.chart-data{margin-top:10px;color:var(--muted);font-size:12px}.chart-data summary{cursor:pointer;font-weight:700}.empty-state{padding:34px;border:1px dashed #cacbc5;border-radius:12px;text-align:center;color:var(--muted)}
 .split-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:18px;margin-bottom:18px}.split-grid>.section-panel:only-child{grid-column:1/-1}.section-panel{padding:20px}.health-grid,.pipeline-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.health-item,.pipeline-item{padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.health-item b,.pipeline-item b{display:block;margin-bottom:3px;font-size:13px}.health-item span,.pipeline-item span{color:var(--muted);font-size:12px}.pipeline-value{display:block!important;margin:5px 0 1px;font-size:24px!important;line-height:1;font-weight:850;color:var(--ink)!important}.pipeline-note{margin:12px 0 0;color:var(--muted);font-size:12px}
+.decision-panel{padding:20px;margin-bottom:18px}.decision-grid,.engagement-grid,.roadmap-grid{display:grid;gap:12px}.decision-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.engagement-grid{grid-template-columns:repeat(5,minmax(0,1fr))}.roadmap-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.decision-card,.engagement-card,.roadmap-card{min-width:0;padding:15px;border:1px solid #e6e5df;border-radius:13px;background:#fbfaf7}.decision-card[data-state="withheld"],.engagement-card[data-state="withheld"],.decision-card[data-state="partial"]{border-color:#e0b16d;background:#fffaf0}.decision-card h3,.engagement-card h3,.roadmap-card h3{margin:0;font-size:13px}.decision-value{display:block;margin:12px 0 7px;font-size:30px;line-height:1;font-weight:850;letter-spacing:-.04em}.decision-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}.decision-note,.roadmap-card p{margin:0;color:var(--muted);font-size:12px}.decision-scope{display:block;margin-top:7px;color:var(--ink-2);font-size:11px;font-weight:750}.roadmap-card p+p{margin-top:8px}.roadmap-card strong{color:var(--ink-2)}.attention-list{display:grid;gap:9px;margin:0;padding:0;list-style:none}.attention-item{display:grid;grid-template-columns:auto minmax(0,1fr);gap:11px;padding:13px;border:1px solid #e6e5df;border-radius:12px;background:#fbfaf7}.attention-item[data-severity="immediate"]{border-color:#e9aaa3;background:var(--red-soft)}.attention-item[data-severity="review"]{border-color:#e0b16d;background:var(--amber-soft)}.attention-item[data-severity="clear"]{border-color:#a7d5c2;background:var(--green-soft)}.attention-rank{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:var(--ink);color:#fff;font-size:11px;font-weight:850;text-transform:uppercase}.attention-severity{display:inline-block!important;margin:0 0 4px!important;color:var(--ink-2)!important;font-size:11px!important;font-weight:850;text-transform:uppercase;letter-spacing:.06em}.attention-copy h3{margin:0;font-size:14px}.attention-copy p{margin:3px 0 0;color:var(--muted);font-size:12px}.attention-copy strong{color:var(--ink-2)}.operations-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.operation-card{min-width:0;padding:13px;border:1px solid #e6e5df;border-radius:11px;background:#fbfaf7}.operation-card[data-state="failed"]{border-color:#e9aaa3;background:var(--red-soft)}.operation-card b{display:block;font-size:13px}.operation-card span{display:block;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.capability-strip{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.capability-chip{max-width:100%;padding:7px 9px;border-radius:9px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:700}.capability-chip[data-state="not_recorded"]{background:var(--amber-soft);color:var(--ink-2)}.pulse-table td[data-state="withheld"]{color:var(--amber);font-weight:750}.pulse-table td[data-state="not_configured"],.pulse-table td[data-state="unavailable"]{color:var(--muted)}
+.operation-card[data-state="never_run"],.operation-card[data-state="running"]{border-color:#e0b16d;background:var(--amber-soft)}
+.pulse-source{display:block;color:var(--muted);font-size:10px;font-weight:700}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
 .plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
 .graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 .graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
 .graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{position:relative;min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.graph-canvas-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}.graph-canvas-toolbar button{min-height:32px;padding:5px 9px;border-color:#c8c9c3;background:rgba(255,255,255,.88);color:var(--ink-2);font-size:12px;font-weight:800}.graph-canvas-toolbar button:hover{background:#fff;color:var(--ink)}.graph-zoom-status{padding:4px 7px;border-radius:999px;background:#efefeb;color:var(--muted);font-size:11px;font-weight:800}.site-graph-svg{min-height:430px;cursor:grab;touch-action:none;user-select:none}.graph-map.is-panning .site-graph-svg{cursor:grabbing}.graph-viewport{transform-origin:0 0}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{stroke-width:3}.graph-edge.is-related{stroke-width:2.2}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
 @media(max-width:980px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form,.plot-form{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-form button{grid-column:span 2}.chart-grid,.split-grid{grid-template-columns:1fr}}
+@media(max-width:980px){.decision-grid,.engagement-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.roadmap-grid,.operations-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:980px){.graph-form,.edge-tools{grid-template-columns:1fr 1fr}.graph-form button,.edge-tools button{grid-column:span 2}.graph-stage,.graph-view-grid{grid-template-columns:1fr}.graph-disclosure{grid-template-columns:1fr 1fr}.distance-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:650px){.topbar-inner,.shell{padding-left:16px;padding-right:16px}.topbar-inner{align-items:flex-start}.live-state{margin-top:9px}.hero{grid-template-columns:1fr}.coverage-badge{justify-self:start}.filter-form,.plot-form,.graph-form,.edge-tools{grid-template-columns:1fr}.filter-form button,.graph-form button,.edge-tools button{grid-column:auto}.tools-row,.footer,.pager{align-items:flex-start;flex-direction:column}.kpi-grid{grid-template-columns:1fr 1fr;gap:10px}.kpi-card{min-height:132px;padding:15px}.kpi-value{font-size:28px}.chart-panel,.section-panel{padding:16px}.health-grid,.pipeline-grid{grid-template-columns:1fr 1fr}.bar-grid{height:175px}.chart-stage{min-height:315px}.time-series-chart{height:315px}th,td{padding:10px 12px}.panel-heading{display:block}.quick-links{margin-top:10px}.graph-disclosure{grid-template-columns:1fr}.distance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.site-graph-svg{min-height:240px}}
+@media(max-width:650px){.decision-grid,.engagement-grid,.roadmap-grid,.operations-grid{grid-template-columns:1fr}.decision-panel{padding:16px}.attention-item{grid-template-columns:1fr}.attention-rank{width:auto;padding:0 9px;justify-self:start}.pulse-table{min-width:670px}}
 @media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}.live-state{max-width:100%;overflow-wrap:anywhere}}
 """
 
@@ -678,6 +684,10 @@ def _format_value(value: int | float | None, unit: str = "count") -> str:
 
 def _metric_total(result, metric):
     summary = result.get("summary_totals", {}).get(metric)
+    if summary is None:
+        summary = (
+            result.get("decision_support", {}) or {}
+        ).get("supporting_metrics", {}).get(metric)
     if summary is not None:
         return {
             "value": summary["value"],
@@ -710,11 +720,11 @@ def _metric_total(result, metric):
     }
 
 
-def _trend(change, *, lower_is_better=False):
+def _trend(change, *, lower_is_better=False, neutral=False):
     if change is None:
         return '<span class="trend flat">No prior</span>'
     favorable = change < 0 if lower_is_better else change > 0
-    state = "flat" if change == 0 else "up" if favorable else "down"
+    state = "flat" if neutral or change == 0 else "up" if favorable else "down"
     prefix = "+" if change > 0 else ""
     return f'<span class="trend {state}">{prefix}{change:.1f}%</span>'
 
@@ -762,9 +772,14 @@ def _summary_cards(result, expected_metrics):
                 break
         observed = total is not None and total["value"] is not None
         partial = bool(total and total.get("coverage_status") == "partial")
+        source_conflict = bool(total and total.get("source") == "mixed")
         withheld = bool(
-            total and total["value"] is None and partial
-            and any(row["metric"] == selected_metric for row in result["rows"])
+            total and total["value"] is None and (partial or source_conflict)
+            and (
+                source_conflict
+                or total.get("observed", False)
+                or any(row["metric"] == selected_metric for row in result["rows"])
+            )
         )
         if observed:
             value = _format_value(total["value"], total["unit"])
@@ -786,21 +801,267 @@ def _summary_cards(result, expected_metrics):
             detail = f"{note} - {source}{coverage_note}"
         elif withheld:
             value = "Withheld"
-            badge = '<span class="trend partial">Partial data</span>'
+            badge = (
+                '<span class="trend partial">Source conflict</span>'
+                if source_conflict
+                else '<span class="trend partial">Partial data</span>'
+            )
             detail = (
-                f'{note} - aggregate withheld; observed '
+                f'{note} - aggregate withheld because multiple actual provider sources are present'
+                if source_conflict
+                else f'{note} - aggregate withheld; observed '
                 f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
             )
         else:
             value = "Unknown"
             badge = '<span class="trend flat">Not observed</span>'
             detail = f"{note} - no stored observation"
-        state = "partial" if partial else "observed" if observed else "unknown"
+        state = "withheld" if withheld else "partial" if partial else "observed" if observed else "unknown"
         cards.append(
             f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
             f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
+
+
+def _decision_badge(item):
+    state = item.get("state", "unavailable")
+    if state == "observed":
+        direction = {
+            "durable_leads": "higher",
+            "notification_sent_rate": "higher",
+            "report_coverage": "higher",
+            "umami_bounce_rate": "lower",
+        }.get(item.get("id"))
+        if item.get("change_state") == "new":
+            css_class = (
+                "up" if direction == "higher"
+                else "down" if direction == "lower"
+                else "flat"
+            )
+            return f'<span class="trend {css_class}">New</span>'
+        return _trend(
+            item.get("change_percent"),
+            lower_is_better=direction == "lower",
+            neutral=direction is None,
+        )
+    labels = {
+        "complete": ("up", "Complete"),
+        "partial": ("partial", "Partial"),
+        "withheld": ("partial", "Withheld"),
+        "not_measured": ("flat", "Not measured"),
+        "not_configured": ("flat", "Not configured"),
+        "unavailable": ("flat", "Unavailable"),
+    }
+    css_class, label = labels.get(state, ("flat", state.replace("_", " ").title()))
+    return f'<span class="trend {_e(css_class)}">{_e(label)}</span>'
+
+
+def _decision_card(item, *, card_class, site_names):
+    state = str(item.get("state", "unavailable"))
+    value = item.get("value")
+    value_label = (
+        _format_value(value, str(item.get("unit", "count")))
+        if value is not None
+        else "Withheld" if state == "withheld"
+        else "Not measured" if state in {"not_measured", "not_configured"}
+        else "Unavailable"
+    )
+    source = str(item.get("source") or "Current report")
+    scope = [
+        site_names.get(site_id, site_id)
+        for site_id in item.get("scope_site_ids", [])
+    ]
+    scope_html = (
+        f'<span class="decision-scope">Scope: {_e(", ".join(scope))}</span>'
+        if scope else ""
+    )
+    return (
+        f'<article class="{_e(card_class)}" data-state="{_e(state)}">'
+        f'<div class="decision-meta"><h3>{_e(item["label"])}</h3>{_decision_badge(item)}</div>'
+        f'<strong class="decision-value">{_e(value_label)}</strong>'
+        f'<p class="decision-note">{_e(item["note"])} <b>{_e(source)}</b></p>'
+        f'{scope_html}</article>'
+    )
+
+
+def _decision_summary_html(support, site_names):
+    cards = "".join(
+        _decision_card(item, card_class="decision-card", site_names=site_names)
+        for item in support.get("outcomes", [])
+    )
+    return (
+        '<section class="panel decision-panel" aria-labelledby="decision-summary-title">'
+        '<div class="panel-heading"><div><h2 id="decision-summary-title">Decision summary</h2>'
+        '<p>Four outcome and trust signals first; provider inventory stays supporting evidence.</p>'
+        f'</div></div><div class="decision-grid">{cards}</div></section>'
+    )
+
+
+def _attention_html(support):
+    rows = []
+    for index, item in enumerate(support.get("attention_items", []), start=1):
+        severity = str(item.get("severity", "review"))
+        rank = "OK" if severity == "clear" else str(index)
+        severity_label = {
+            "immediate": "Immediate",
+            "review": "Review",
+            "clear": "Clear",
+        }.get(severity, severity.replace("_", " ").title())
+        rows.append(
+            f'<li class="attention-item" data-severity="{_e(severity)}">'
+            f'<span class="attention-rank">{_e(rank)}</span><div class="attention-copy">'
+            f'<p class="attention-severity">{_e(severity_label)}</p>'
+            f'<h3>{_e(item["title"])}</h3><p>{_e(item["evidence"])}</p>'
+            f'<p><strong>Next action:</strong> {_e(item["action"])}</p></div></li>'
+        )
+    return (
+        '<section class="panel decision-panel" aria-labelledby="attention-title">'
+        '<div class="panel-heading"><div><h2 id="attention-title">What needs attention</h2>'
+        '<p>Deterministic evidence and a next action; ordinary movement is not called an anomaly.</p>'
+        f'</div></div><ol class="attention-list">{"".join(rows)}</ol></section>'
+    )
+
+
+def _engagement_html(support, site_names):
+    cards = "".join(
+        _decision_card(item, card_class="engagement-card", site_names=site_names)
+        for item in support.get("engagement", [])
+    )
+    return (
+        '<section class="panel decision-panel" aria-labelledby="engagement-title">'
+        '<div class="panel-heading"><div><h2 id="engagement-title">Engagement and lead health</h2>'
+        '<p>Interpretable ratios with visible provider definitions and complete-input guards.</p>'
+        f'</div></div><div class="engagement-grid">{cards}</div></section>'
+    )
+
+
+def _pulse_cell(cell, unit="count", *, expected_source=None):
+    state = str(cell.get("state", "unavailable"))
+    value = cell.get("value")
+    labels = {
+        "withheld": "Withheld",
+        "not_configured": "Not configured",
+        "unavailable": "Unknown",
+        "not_measured": "Not measured",
+    }
+    label = _format_value(value, unit) if value is not None else labels.get(state, "Unknown")
+    source = cell.get("source")
+    source_html = (
+        f'<small class="pulse-source">{_e(_source_label(source))}</small>'
+        if source and source != expected_source else ""
+    )
+    return f'<td data-state="{_e(state)}">{_e(label)}{source_html}</td>'
+
+
+def _site_pulse_html(support, site_names):
+    rows = []
+    for item in support.get("site_pulse", []):
+        metrics = item["metrics"]
+        coverage = item["coverage"]
+        coverage_label = (
+            f'{coverage["covered_cells"]}/{coverage["expected_cells"]} '
+            f'{coverage["status"]}'
+        )
+        rows.append(
+            f'<tr><th scope="row" class="metric-name">{_e(site_names.get(item["site_id"], item["site_id"]))}</th>'
+            + _pulse_cell(metrics["umami.visits"], expected_source="umami")
+            + _pulse_cell(metrics["google.sessions"], expected_source="google-analytics")
+            + _pulse_cell(metrics["search.clicks"], expected_source="search-console")
+            + _pulse_cell(metrics["forms.submissions"], expected_source="cloudflare-forms")
+            + f'<td data-state="{_e(coverage["status"])}">{_e(coverage_label)}</td></tr>'
+        )
+    return (
+        '<section class="panel table-panel" aria-labelledby="site-pulse-title">'
+        '<div class="panel-heading"><div><h2 id="site-pulse-title">Site pulse</h2>'
+        '<p>Separate source facts by site; unavailable never becomes zero.</p></div></div>'
+        '<div class="table-scroll"><table class="pulse-table"><caption class="sr-only">Per-site decision metrics and data coverage</caption>'
+        '<thead><tr><th scope="col">Site</th>'
+        '<th scope="col">Umami visits</th><th scope="col">GA sessions</th><th scope="col">Search clicks</th><th scope="col">Durable leads</th><th scope="col">Decision coverage</th>'
+        f'</tr></thead><tbody>{"".join(rows)}</tbody></table></div></section>'
+    )
+
+
+def _operations_html(support, site_names):
+    operation_cards = []
+    for item in support.get("operations_health", []):
+        status = str(item.get("status") or "unknown")
+        result = item.get("result_kind") or "no result"
+        points = int(item.get("points_written") or 0)
+        through = item.get("data_through") or "not reported"
+        finished = (
+            item.get("finished_at") or
+            ("not recorded" if status == "never_run" else "still running")
+        )
+        error = (
+            f'; category {item["error_category"]}'
+            if item.get("error_category") else ""
+        )
+        operation_cards.append(
+            f'<article class="operation-card" data-state="{_e(status)}">'
+            f'<b>{_e(site_names.get(item["site_id"], item["site_id"]))} - {_e(_source_label(item["source"]))}</b>'
+            f'<span>{_e(status)} / {_e(result)} / {_e(points)} points{_e(error)}</span>'
+            f'<span>Data through {_e(through)}</span><span>Finished {_e(finished)}</span></article>'
+        )
+    if not operation_cards:
+        operation_cards.append(
+            '<div class="empty-state">No current binding has a recorded sync attempt yet.</div>'
+        )
+    capability_chips = []
+    for item in support.get("capabilities", []):
+        state = str(item.get("state") or "not_recorded")
+        if state == "not_recorded":
+            capability_chips.append(
+                f'<span class="capability-chip" data-state="not_recorded">'
+                f'{_e(_source_label(item["provider"]))} - no capability snapshot</span>'
+            )
+            continue
+        lookback = (
+            f'{item["max_lookback_days"]}d verified lookback'
+            if item.get("max_lookback_days") is not None else "lookback not reported"
+        )
+        warning_count = int(item.get("warning_count") or 0)
+        probed_at = item.get("probed_at") or "time not reported"
+        capability_chips.append(
+            f'<span class="capability-chip" data-state="recorded">{_e(_source_label(item["provider"]))} - '
+            f'snapshot {_e(probed_at)}; {_e(lookback)}'
+            f'{f"; {warning_count} recorded warning(s)" if warning_count else ""}</span>'
+        )
+    return (
+        '<section class="panel decision-panel" aria-labelledby="operations-title">'
+        '<div class="panel-heading"><div><h2 id="operations-title">Data operations</h2>'
+        '<p>Every current binding plus dated capability limits; resource IDs and provider error bodies stay hidden.</p>'
+        f'</div></div><div class="operations-grid">{"".join(operation_cards)}</div>'
+        f'<div class="capability-strip">{"".join(capability_chips)}</div></section>'
+    )
+
+
+def _roadmap_html(support):
+    cards = []
+    for item in support.get("measurement_gaps", []):
+        cards.append(
+            f'<article class="roadmap-card"><h3>{_e(item["label"])}</h3>'
+            f'<p>{_e(item["question"])}</p><p><strong>Needs:</strong> {_e(item["requires"])}</p></article>'
+        )
+    return (
+        '<section class="panel decision-panel" aria-labelledby="roadmap-title">'
+        '<div class="panel-heading"><div><h2 id="roadmap-title">Measurement roadmap</h2>'
+        '<p>High-value questions the current facts cannot answer; shown as gaps instead of invented KPIs.</p>'
+        f'</div></div><div class="roadmap-grid">{"".join(cards)}</div></section>'
+    )
+
+
+def _decision_support_html(support, site_names):
+    if not support:
+        return ""
+    return (
+        _decision_summary_html(support, site_names)
+        + _attention_html(support)
+        + _engagement_html(support, site_names)
+        + _site_pulse_html(support, site_names)
+        + _operations_html(support, site_names)
+        + _roadmap_html(support)
+    )
 
 
 def _chart_html(result, metric, site_names):
@@ -2117,7 +2378,10 @@ def handler_factory(config, store, credentials=None):
 <footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Read-only - loopback-first - no browser ingest, build, compile, or provider sync</span></footer></main></body></html>"""
             return self._send(200, "text/html; charset=utf-8", page)
 
-        def _request(self, query, *, force_overview=False):
+        def _request(
+            self, query, *, force_overview=False,
+            include_decision_support=True,
+        ):
             report_id = query.get("report", [config.reports[0].id])[0]
             report = next((item for item in config.reports if item.id == report_id), None)
             if report is None:
@@ -2133,14 +2397,21 @@ def handler_factory(config, store, credentials=None):
             if site_id == "all":
                 site_id = None
             window = _window(query, config.platform.default_timezone, default_days)
-            return reports.render(report_id, window, subreport_id, site_id), report
+            return reports.render(
+                report_id, window, subreport_id, site_id,
+                include_decision_support=include_decision_support,
+            ), report
 
         def _series_payload(self, query, *, rendered=None):
             view = query.get("view", [""])[0]
             if view not in {"", "plot"}:
                 raise ValueError("invalid series view")
             is_plot = view == "plot"
-            report, definition = rendered or self._request(query, force_overview=is_plot)
+            report, definition = rendered or self._request(
+                query,
+                force_overview=is_plot,
+                include_decision_support=False,
+            )
             candidates = tuple(
                 metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
                 if metric in METRICS and METRICS[metric].aggregation != "window"
@@ -2314,7 +2585,11 @@ def handler_factory(config, store, credentials=None):
             if view not in {"dashboard", "plot"}:
                 raise ValueError("invalid view")
             is_plot = view == "plot"
-            result, report = self._request(query, force_overview=is_plot)
+            result, report = self._request(
+                query,
+                force_overview=is_plot,
+                include_decision_support=not is_plot,
+            )
             start = result["window"]["start"][:10]
             end = result["window"]["end"][:10]
             site_names = {site.id: site.name for site in config.sites}
@@ -2535,6 +2810,10 @@ def handler_factory(config, store, credentials=None):
                 series_params["compare"] = "1"
             series_url = "/api/v1/series?" + urlencode(series_params)
             summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            decision_html = (
+                "" if is_plot
+                else _decision_support_html(result.get("decision_support"), site_names)
+            )
             if is_plot:
                 supporting_html = _health_html(result, expected_metrics)
             else:
@@ -2558,7 +2837,7 @@ def handler_factory(config, store, credentials=None):
 {source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></section>
-{_warnings_html(result['warnings'])}{summary_html}
+            {_warnings_html(result['warnings'])}{decision_html}{summary_html}
 <section class="panel chart-panel"><div class="panel-heading"><div><h2>{_e(_metric_label(selected_metric)) if selected_metric else 'Daily trend'}</h2><p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div><span class="source-chip">{_e(_source_label(selected_source)) if selected_source else 'Daily series'}</span></div>
 <div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else 'Daily time series'}"></canvas></div><ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>
 <p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p><details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>

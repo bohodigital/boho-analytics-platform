@@ -13,9 +13,16 @@ from pathlib import Path
 
 from boho_analytics_platform.config import load_config
 from boho_analytics_platform.engine import SyncEngine
-from boho_analytics_platform.models import Completeness, MetricPoint, QueryWindow, TimeGrain
+from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 from boho_analytics_platform.storage import SQLiteMetricStore
-from boho_analytics_platform.web import _chart_html, _summary_cards, handler_factory
+from boho_analytics_platform.web import (
+    PORTFOLIO_SUMMARY,
+    SEARCH_SUMMARY,
+    _chart_html,
+    _decision_badge,
+    _summary_cards,
+    handler_factory,
+)
 from support import config_text, write_fixture
 from tests.site_graph.test_analysis import seed_site_graph
 
@@ -46,6 +53,124 @@ class WebTests(unittest.TestCase):
         self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
+
+    def test_dashboard_renders_decision_support_and_measurement_roadmap(self):
+        status, _headers, body = self.request(
+            "/?report=summary&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("Decision summary", body)
+        self.assertIn("What needs attention", body)
+        self.assertIn("Engagement and lead health", body)
+        self.assertIn("Site pulse", body)
+        self.assertIn("Data operations", body)
+        self.assertIn("Measurement roadmap", body)
+        self.assertIn("not attribution", body)
+        self.assertIn("Scope: Example Site", body)
+        self.assertIn("Qualified leads and revenue", body)
+        self.assertIn("Core Web Vitals and errors", body)
+        self.assertIn('<th scope="row" class="metric-name">Example Site</th>', body)
+        self.assertIn('<caption class="sr-only">Per-site decision metrics and data coverage</caption>', body)
+        self.assertIn('<th scope="col">Umami visits</th>', body)
+        self.assertIn('class="attention-severity">Review</p>', body)
+        self.assertIn("no capability snapshot", body)
+        payload = json.loads(self.request(
+            "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2])
+        self.assertIn("decision_support", payload)
+        self.assertTrue(payload["decision_support"]["measurement_gaps"])
+
+    def test_report_api_projects_safe_operational_capabilities(self):
+        self.store.save_capability(CapabilitySnapshot(
+            "example-connection", "fixture",
+            datetime(2026, 7, 2, tzinfo=UTC), True,
+            ("private-resource",), ("traffic",), 30,
+            ("Private provider detail",),
+        ))
+
+        payload = json.loads(self.request(
+            "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2])
+        support = payload["decision_support"]
+
+        self.assertNotIn("connection_id", repr(support))
+        self.assertNotIn("example-connection", repr(support))
+        self.assertNotIn("private-resource", repr(support))
+        self.assertNotIn("Private provider detail", repr(support))
+        self.assertEqual(support["capabilities"][0]["warning_count"], 1)
+
+    def test_portfolio_summary_uses_loaded_decision_metrics(self):
+        self.store.upsert([MetricPoint(
+            "example-client", "example-site", "fixture", "umami.visits",
+            "count", datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC), TimeGrain.DAY,
+            Decimal("7"), (), Completeness.FINAL,
+            datetime(2026, 7, 2, tzinfo=UTC),
+        )])
+
+        status, _headers, body = self.request(
+            "/?report=summary&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            '<article class="kpi-card" data-metric="umami.visits" data-state="observed">',
+            body,
+        )
+        self.assertIn('<strong class="kpi-value">7</strong>', body)
+
+    def test_portfolio_summary_withholds_mixed_decision_sources(self):
+        result = {
+            "subreport_id": None,
+            "summary_totals": {},
+            "rows": [],
+            "forms_pipeline": None,
+            "decision_support": {"supporting_metrics": {
+                "search.clicks": {
+                    "metric": "search.clicks", "source": "mixed",
+                    "unit": "count", "value": None, "previous_value": None,
+                    "change_percent": None, "coverage_status": "complete",
+                    "covered_cells": 2, "expected_cells": 2,
+                    "observed": False,
+                },
+            }},
+        }
+
+        html = _summary_cards(result, ())
+
+        self.assertIn('data-metric="search.clicks" data-state="withheld"', html)
+        self.assertIn("Source conflict", html)
+        self.assertIn("multiple actual provider sources", html)
+        self.assertNotIn("search.clicks\" data-state=\"unknown", html)
+
+    def test_decision_trends_are_neutral_unless_direction_has_meaning(self):
+        neutral = _decision_badge({
+            "id": "ga_events_per_session", "state": "observed",
+            "change_percent": 12.5,
+        })
+        bounce_new = _decision_badge({
+            "id": "umami_bounce_rate", "state": "observed",
+            "change_state": "new", "change_percent": None,
+        })
+
+        self.assertIn('class="trend flat"', neutral)
+        self.assertIn("+12.5%", neutral)
+        self.assertIn('class="trend down"', bounce_new)
+
+    def test_search_console_click_copy_does_not_claim_visits(self):
+        notes = [item[2] for item in (*PORTFOLIO_SUMMARY, *SEARCH_SUMMARY)]
+
+        self.assertIn("Clicks recorded by Google Search Console", notes)
+        self.assertFalse(any("visit" in note.casefold() for note in notes if "Click" in note))
+
+    def test_decision_support_mobile_css_collapses_without_page_overflow(self):
+        css = self.request("/assets/app.css")[2]
+
+        self.assertIn(".decision-grid", css)
+        self.assertIn(".attention-list", css)
+        self.assertIn(".roadmap-grid", css)
+        self.assertIn(".decision-grid,.engagement-grid", css)
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 

@@ -262,6 +262,99 @@ class SQLiteMetricStore:
             for row in rows
         ]
 
+    def query_latest_sync_status(
+        self, *, binding_keys: Sequence[str]
+    ) -> list[dict[str, object]]:
+        """Return the newest safe operational status for current bindings only.
+
+        Binding keys and provider error messages may contain resource identity or
+        response detail, so neither leaves the storage boundary. Callers receive
+        only fields suitable for an aggregated private operations dashboard.
+        """
+
+        if not binding_keys:
+            return []
+        bindings = ",".join("?" for _ in binding_keys)
+        sql = f"""WITH ranked AS (
+                    SELECT binding_key,connection_id,site_id,source,started_at,finished_at,
+                           status,points_written,error_category,result_kind,
+                           data_through,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY binding_key
+                               ORDER BY started_at DESC,id DESC
+                           ) AS position
+                      FROM sync_runs
+                     WHERE binding_key IN ({bindings})
+                )
+                SELECT binding_key,connection_id,site_id,source,started_at,finished_at,
+                       status,points_written,error_category,result_kind,data_through
+                  FROM ranked
+                 WHERE position=1
+              ORDER BY site_id,source,connection_id"""
+        with self.connect(readonly=True) as db:
+            rows = db.execute(sql, list(binding_keys)).fetchall()
+        binding_indexes = {key: index for index, key in enumerate(binding_keys)}
+        return [
+            {
+                "binding_index": binding_indexes[row["binding_key"]],
+                "connection_id": row["connection_id"],
+                "site_id": row["site_id"],
+                "source": row["source"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "status": row["status"],
+                "points_written": int(row["points_written"]),
+                "error_category": row["error_category"],
+                "result_kind": row["result_kind"],
+                "data_through": row["data_through"],
+            }
+            for row in rows
+        ]
+
+    def query_capability_summaries(
+        self, *, connection_ids: Sequence[str]
+    ) -> list[dict[str, object]]:
+        """Return last-recorded provider capability limits without resource IDs.
+
+        A capability row is a dated snapshot, not current authentication health.
+        Failed probes are represented by sync runs and do not replace the last
+        successful snapshot.
+        """
+
+        if not connection_ids:
+            return []
+        connections = ",".join("?" for _ in connection_ids)
+        sql = f"""SELECT connection_id,provider,probed_at,resources_json,
+                         metric_groups_json,max_lookback_days,warnings_json
+                    FROM capability_snapshots
+                   WHERE connection_id IN ({connections})
+                ORDER BY provider,connection_id"""
+        with self.connect(readonly=True) as db:
+            rows = db.execute(sql, list(connection_ids)).fetchall()
+        output = []
+        for row in rows:
+            resources = sorted(
+                (str(item) for item in json.loads(row["resources_json"])),
+                key=len,
+                reverse=True,
+            )
+            warnings = []
+            for item in json.loads(row["warnings_json"]):
+                safe = str(item)
+                for resource in resources:
+                    if resource:
+                        safe = safe.replace(resource, "[resource]")
+                warnings.append(safe[:200])
+            output.append({
+                "connection_id": row["connection_id"],
+                "provider": row["provider"],
+                "probed_at": row["probed_at"],
+                "metric_groups": list(json.loads(row["metric_groups_json"])),
+                "max_lookback_days": row["max_lookback_days"],
+                "warnings": warnings,
+            })
+        return output
+
     def acquire_lock(self, name: str, owner: str, lease_seconds: int = 900) -> None:
         now = datetime.now(UTC); expires = now + timedelta(seconds=lease_seconds)
         with self.connect() as db:

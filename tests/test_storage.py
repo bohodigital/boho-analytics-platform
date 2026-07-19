@@ -9,7 +9,13 @@ from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
 
-from boho_analytics_platform.models import Completeness, MetricPoint, QueryWindow, TimeGrain
+from boho_analytics_platform.models import (
+    CapabilitySnapshot,
+    Completeness,
+    MetricPoint,
+    QueryWindow,
+    TimeGrain,
+)
 from boho_analytics_platform.storage import SCHEMA_VERSION, LockBusy, SQLiteMetricStore
 
 
@@ -72,6 +78,74 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(rows[0]["window_start"], window.start)
         self.assertEqual(rows[0]["window_end"], window.end)
         self.assertEqual(rows[0]["result_kind"], "empty")
+
+    def test_latest_sync_status_is_bounded_to_current_bindings_and_safe_fields(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+            "UTC",
+        )
+        current_key = "site:connection:website:current-resource"
+        stale_key = "site:connection:website:removed-resource"
+        older = self.store.start_run(
+            "connection", "site", binding_key=current_key,
+            source="umami", window=window,
+        )
+        self.store.finish_run(older, "success", points=8, result_kind="data")
+        latest = self.store.start_run(
+            "connection", "site", binding_key=current_key,
+            source="umami", window=window,
+        )
+        self.store.finish_run(
+            latest, "failed", category="provider_http",
+            message="secret-bearing provider response must not escape",
+            result_kind="failed",
+        )
+        removed = self.store.start_run(
+            "connection", "site", binding_key=stale_key,
+            source="umami", window=window,
+        )
+        self.store.finish_run(removed, "success", points=99, result_kind="data")
+        with self.store.connect() as db:
+            db.execute(
+                "UPDATE sync_runs SET started_at=? WHERE id=?",
+                ("2026-07-01T00:00:00+00:00", older),
+            )
+            db.execute(
+                "UPDATE sync_runs SET started_at=? WHERE id=?",
+                ("2026-07-02T00:00:00+00:00", latest),
+            )
+
+        rows = self.store.query_latest_sync_status(binding_keys=[current_key])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["binding_index"], 0)
+        self.assertEqual(rows[0]["status"], "failed")
+        self.assertEqual(rows[0]["error_category"], "provider_http")
+        self.assertEqual(rows[0]["site_id"], "site")
+        self.assertNotIn("binding_key", rows[0])
+        self.assertNotIn("error_message", rows[0])
+        self.assertNotIn("resource", repr(rows[0]))
+
+    def test_capability_summary_omits_resource_identifiers(self):
+        self.store.save_capability(CapabilitySnapshot(
+            "connection", "cloudflare", datetime(2026, 7, 2, tzinfo=UTC),
+            True, ("private-zone-id",), ("traffic",), 8,
+            ("Resource private-zone-id is plan-limited.",),
+        ))
+
+        rows = self.store.query_capability_summaries(connection_ids=["connection"])
+
+        self.assertEqual(rows, [{
+            "connection_id": "connection",
+            "provider": "cloudflare",
+            "probed_at": "2026-07-02T00:00:00+00:00",
+            "metric_groups": ["traffic"],
+            "max_lookback_days": 8,
+            "warnings": ["Resource [resource] is plan-limited."],
+        }])
+        self.assertNotIn("authentication_ok", rows[0])
+        self.assertNotIn("private-zone-id", repr(rows))
 
     def test_upsert_is_idempotent_and_updates_value(self):
         self.store.upsert([point("4")]); self.store.upsert([point("7")])
