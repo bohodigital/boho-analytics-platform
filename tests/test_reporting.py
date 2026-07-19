@@ -5,6 +5,7 @@ import unittest
 import csv
 import io
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -670,6 +671,67 @@ timezone = "UTC"
         self.assertIsNone(report["forms_pipeline"]["delivery_gap"])
         self.assertIsNone(report["forms_pipeline"]["pending"])
         self.assertIsNone(report["forms_pipeline"]["failed"])
+
+    def test_forms_pipeline_requires_complete_identical_coverage_before_asserting_gap(self):
+        start = self.window.start
+        report_config = replace(
+            self.config.reports[0],
+            metric_ids=tuple(dict.fromkeys((
+                *self.config.reports[0].metric_ids, "forms.inbox-deliveries",
+            ))),
+        )
+        config = replace(self.config, reports=(report_config, *self.config.reports[1:]))
+
+        def inbox(value, day):
+            point_start = start + timedelta(days=day)
+            return MetricPoint(
+                "example-client", "example-site", "forms-inbox",
+                "forms.inbox-deliveries", "count", point_start,
+                point_start + timedelta(days=1), TimeGrain.DAY,
+                Decimal(value), (), Completeness.FINAL,
+                point_start + timedelta(hours=12),
+            )
+
+        self.store.upsert([
+            metric("forms.submissions", 1, 1, "count"),
+            metric("forms.submissions", 0, 2, "count"),
+            inbox(1, 0),
+        ])
+        partial = ReportService(config, self.store).render("summary", self.window)
+        self.assertEqual(partial["forms_pipeline"]["submissions"], 1)
+        self.assertEqual(partial["forms_pipeline"]["inbox_deliveries"], 1)
+        self.assertFalse(partial["forms_pipeline"]["delivery_comparable"])
+        self.assertIsNone(partial["forms_pipeline"]["delivery_gap"])
+        self.assertTrue(any("no delivery gap is asserted" in item for item in partial["warnings"]))
+
+        self.store.upsert([inbox(0, 1)])
+        complete = ReportService(config, self.store).render("summary", self.window)
+        self.assertTrue(complete["forms_pipeline"]["delivery_comparable"])
+        self.assertEqual(complete["forms_pipeline"]["delivery_gap"], 0)
+
+    def test_prior_forms_identity_zeroes_cannot_make_current_reports_complete(self):
+        inbox_start = datetime(2026, 7, 1, tzinfo=UTC)
+        self.store.upsert([
+            metric("forms.submissions", 0, 1, "count"),
+            metric("forms.submissions", 0, 2, "count"),
+            MetricPoint(
+                "example-client", "example-site", "forms-inbox",
+                "forms.inbox-deliveries", "count", inbox_start,
+                inbox_start + timedelta(days=1), TimeGrain.DAY, Decimal(0), (),
+                Completeness.FINAL, inbox_start + timedelta(hours=12),
+            ),
+        ])
+        with self.store.connect() as db:
+            db.execute(
+                "UPDATE metric_facts SET identity_version=2 "
+                "WHERE source IN ('cloudflare-forms','forms-inbox')"
+            )
+
+        report = ReportService(self.config, self.store).render("summary", self.window)
+        self.assertIsNone(report["forms_pipeline"]["submissions"])
+        self.assertIsNone(report["forms_pipeline"]["inbox_deliveries"])
+        self.assertIsNone(report["forms_pipeline"]["delivery_gap"])
+        self.assertNotEqual(report["coverage"]["by_metric"]["forms.submissions"], "complete")
 
     def test_report_csv_repeats_window_coverage_and_source_context(self):
         self.store.upsert([

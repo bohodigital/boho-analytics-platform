@@ -7,10 +7,12 @@ V1 treats form acceptance and notification delivery as separate facts:
 3. The mail synchronization service independently observes a matching inbound notification.
 4. The dashboard compares aggregate counts and surfaces a delivery gap.
 
-Each D1 sync emits submissions plus pending/sent/failed for every requested configured form/day,
-including authoritative zeros. This reconciles a submission that changes state instead of leaving a
-stale prior status behind. Inbox delivery and unread metrics are likewise daily sums with explicit
-zero days.
+Each D1 sync emits submissions plus pending/sent/failed, including authoritative zeroes, only for
+complete site-local days wholly inside the explicitly configured source-retention horizon. Requests
+outside that horizon fail closed. This reconciles a submission that changes state without treating
+expired source history, partial days, or future days as zero. Inbox delivery and unread metrics emit
+explicit zeroes only on or after the configured trustworthy mail-index `observation_start`; matching
+messages remain evidence even when that boundary is omitted.
 
 This distinction prevents an email outage from being mistaken for a lost form submission.
 
@@ -38,8 +40,12 @@ connector only issues `SELECT`. Treat that provider-side permission mismatch as 
 dedicated token and account restrictions, and revoke it if the connector ever attempts a write.
 
 For inbox evidence, point `database_path` at the existing mail index and grant the analytics service
-read-only filesystem access. Configure a mailbox key plus stable sender/subject fragments. The
-analytics platform does not own mailbox sync and never writes to that database.
+read-only filesystem access. Configure a mailbox key plus stable sender/subject fragments. If the
+same mailbox also receives synthetic monitoring messages, add their stable subject marker to the
+case-insensitive `subject_excludes` array; do not narrow `subject_contains` to a submitter-specific
+subject. Set `observation_start` to the first site-local date the index is independently known
+complete; never backdate it to make coverage look green. Exclusions apply to both delivery and unread
+counts. The analytics platform does not own mailbox sync and never writes to that database.
 
 For a form-specific report, store `form_id` as a D1 aggregation dimension and add a subreport filter:
 
@@ -58,8 +64,11 @@ subject markers or interpret the inbox result as aggregate delivery evidence.
   delivery failure. The durable D1 record remains authoritative.
 - `failed > 0`: the forms notification workflow recorded a terminal failure and needs attention.
 - `pending > 0`: may be normal briefly; persistent counts require investigation.
-- `inbox_deliveries > submissions`: filters are too broad, the selected windows differ, duplicate
-  notifications exist, or D1 retention removed older source rows.
+- `inbox_deliveries > submissions`: filters are too broad or missing a synthetic-message exclusion,
+  the selected windows differ, duplicate notifications exist, or D1 retention removed older source
+  rows.
+- Long windows that begin before D1 retention or mailbox observation are intentionally partial. Use
+  an aligned retained window for reconciliation; do not interpret unavailable history as zero.
 
 The dashboard reports the discrepancy; it does not resend mail, mutate D1, mark messages read, or
 change form routing.

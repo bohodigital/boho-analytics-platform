@@ -1,6 +1,6 @@
 # Data model
 
-Configuration schema and SQLite schema evolve independently. Database schema version 3 contains:
+Configuration schema and SQLite schema evolve independently. Database schema version 4 contains:
 
 - `metric_facts`: source-labeled aggregate facts with client/site scope, interval, grain, unit,
   canonical dimensions, completeness, observation time, identity version, and a deterministic
@@ -23,10 +23,11 @@ A fact contains no raw provider response. The natural identity is client, site, 
 unit, interval, grain, and canonical dimensions. Re-collecting the same identity updates value,
 completeness, and observation time without creating duplicates.
 
-Forms facts use identity version 2 after the UTC-instant-to-site-day correction. Schema migration
-preserves version-1 rows as audit lineage, while normal queries expose only the active version. A
-source-backed forms sync is therefore required after upgrade; until it runs, coverage is honestly
-missing rather than double-counting adjacent legacy and corrected days.
+Forms facts use identity version 3 after the source-retention, mailbox-observation, and synthetic-mail
+trust corrections. Schema migration preserves version-1 and version-2 rows as audit lineage, while
+normal queries expose only the active version. The version-4 schema marker prevents older code from
+silently reactivating quarantined version-2 zeroes. A source-backed forms sync is therefore required
+after upgrade; until it runs, coverage is honestly missing.
 
 Successful data-bearing and empty sync runs also form an acquisition-coverage ledger. Reporting
 uses only successful runs from bindings that still exist in current configuration. The ledger proves

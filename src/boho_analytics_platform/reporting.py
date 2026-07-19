@@ -1721,30 +1721,43 @@ class ReportService:
 
         forms = None
         if any(metric.startswith("forms.") for metric in metrics):
-            def form_value(metric):
-                item = summary_totals.get(metric)
-                return item["value"] if item else None
+            def form_item(metric):
+                return summary_totals.get(metric, {})
 
-            stored = form_value("forms.submissions")
-            delivered = form_value("forms.inbox-deliveries")
+            def form_value(metric):
+                return form_item(metric).get("value")
+
+            stored_metric = "forms.submissions"
+            delivered_metric = "forms.inbox-deliveries"
+            stored = form_value(stored_metric)
+            delivered = form_value(delivered_metric)
+            comparable = (
+                stored is not None
+                and delivered is not None
+                and form_item(stored_metric).get("coverage_status") == "complete"
+                and form_item(delivered_metric).get("coverage_status") == "complete"
+                and self._metric_scope(coverage, site_ids, stored_metric)
+                == self._metric_scope(coverage, site_ids, delivered_metric)
+            )
             forms = {
                 "submissions": stored,
                 "inbox_deliveries": delivered,
                 "delivery_gap": (
                     stored - delivered
-                    if stored is not None and delivered is not None
+                    if comparable
                     else None
                 ),
+                "delivery_comparable": comparable,
                 "pending": form_value("forms.pending"),
                 "failed": form_value("forms.failed"),
             }
-            if (
-                stored is not None
-                and delivered is not None
-                and stored != delivered
-            ):
+            if comparable and stored != delivered:
                 warnings.append(
                     "Form storage and inbox-delivery counts differ; inspect the notification pipeline."
+                )
+            elif stored is not None and delivered is not None and not comparable:
+                warnings.append(
+                    "Form storage and inbox-delivery evidence does not share complete identical scope; no delivery gap is asserted."
                 )
 
         comparison_status = (

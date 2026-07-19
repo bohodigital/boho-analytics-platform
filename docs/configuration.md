@@ -48,13 +48,35 @@ tokens and refresh-token exchange work without the optional SDK. Inline keys inc
 | `cloudflare` | none | zone tag |
 | `google-analytics` | none | GA4 property ID |
 | `search-console` | none | URL-prefix property or `sc-domain:` property |
-| `cloudflare-forms` | `account_id`, `database_id` | forms `site_id` |
+| `cloudflare-forms` | `account_id`, `database_id`, `source_retention_days` | forms `site_id` |
 | `forms-inbox` | `database_path` | mailbox key |
 | `fixture` | `path` | fixture resource ID |
 
-Forms inbox binding options are `mailbox_key`, `sender_contains`, and `subject_contains`. Use the
-narrowest stable filters available so unrelated inbound mail is not counted. These strings remain
-private deployment configuration even though they are not credentials.
+`cloudflare-forms.source_retention_days` is required and must match the forms Worker's verified D1
+retention policy; the Boho deployment uses `90`. Values above 90 are rejected. Sync windows must use
+complete site-local days, end no later than the current site-local day, and start after the local
+retention cutoff day. The connector fails closed instead of manufacturing zeroes outside that
+trustworthy horizon.
+
+Forms inbox binding options are `mailbox_key`, `sender_contains`, `subject_contains`, the optional
+`subject_excludes` array, and `observation_start`. Matching is case-insensitive substring matching.
+Use the narrowest stable filters available so unrelated inbound mail is not counted, and configure
+stable synthetic-notification markers explicitly, for example:
+
+```toml
+[bindings.options]
+mailbox_key = "forms"
+sender_contains = "forms-sender.example"
+subject_contains = "[Boho form] Project inquiry"
+subject_excludes = ["Project inquiry - Boho Forms Live Canary"]
+observation_start = "2026-07-13"
+```
+
+Exclusions apply before both delivery and unread counts. Up to 16 unique, non-empty markers of 128
+characters each are accepted. `observation_start` is the first site-local date on which the mail
+index is independently known complete. Without it, the connector emits facts only for matching
+messages and does not invent quiet-day zeroes. These values remain private deployment configuration
+even though they are not credentials.
 
 ## Reports and subreports
 

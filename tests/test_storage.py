@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
+from unittest.mock import patch
 
 from boho_analytics_platform.models import (
     CapabilitySnapshot,
@@ -33,6 +34,7 @@ class StorageTests(unittest.TestCase):
     def test_initialize_enables_wal_and_integrity(self):
         with self.store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
             self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
         self.assertEqual(self.store.integrity_check(), "ok")
 
@@ -153,7 +155,7 @@ class StorageTests(unittest.TestCase):
         rows = self.store.query(client_id="client", site_ids=["site"], metric_ids=["test.views"], window=window)
         self.assertEqual(len(rows), 1); self.assertEqual(rows[0].value, Decimal("7"))
 
-    def test_forms_identity_cutover_preserves_but_hides_legacy_utc_day_facts(self):
+    def test_forms_identity_cutover_preserves_but_hides_prior_untrusted_facts(self):
         path = Path(self.temporary.name) / "legacy-forms.db"
         initial = files("boho_analytics_platform.migrations").joinpath("001_initial.sql").read_text(encoding="utf-8")
         graph = files("boho_analytics_platform.migrations").joinpath("002_site_graph.sql").read_text(encoding="utf-8")
@@ -171,6 +173,13 @@ class StorageTests(unittest.TestCase):
             db.commit()
         store = SQLiteMetricStore(path)
         store.initialize()
+        with store.connect() as db:
+            db.execute("""INSERT INTO metric_facts(
+              point_key,client_id,site_id,source,metric,unit,start_at,end_at,grain,value,
+              dimensions_json,completeness,observed_at,updated_at,identity_version
+            ) SELECT ?,client_id,site_id,source,metric,unit,start_at,end_at,grain,?,
+              dimensions_json,completeness,observed_at,updated_at,2
+              FROM metric_facts WHERE point_key=?""", ("untrusted-v2", "999", "legacy"))
         corrected_start = datetime(2026, 7, 1, 5, tzinfo=UTC)
         corrected = MetricPoint(
             "client", "site", "cloudflare-forms", "forms.sent", "count",
@@ -193,10 +202,16 @@ class StorageTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual([(row["identity_version"], row["start_at"]) for row in lineage], [
             (1, "2026-07-02T05:00:00+00:00"),
-            (2, "2026-07-01T05:00:00+00:00"),
+            (2, "2026-07-02T05:00:00+00:00"),
+            (3, "2026-07-01T05:00:00+00:00"),
         ])
         self.assertEqual(len(visible), 1)
         self.assertEqual(visible[0].start, corrected_start)
+
+    def test_forms_v3_schema_marker_blocks_schema_v3_runtime_rollback(self):
+        with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 3):
+            with self.assertRaisesRegex(RuntimeError, "database schema 4 is newer than supported 3"):
+                SQLiteMetricStore(self.store.path).initialize()
 
     def test_active_lock_fails_and_stale_lock_is_recovered(self):
         self.store.acquire_lock("sync", "one", 60)

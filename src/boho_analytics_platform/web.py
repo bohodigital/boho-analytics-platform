@@ -1141,10 +1141,11 @@ def _forms_html(pipeline):
         for key, value in pipeline.items() if key in labels
     )
     gap = pipeline.get("delivery_gap")
+    comparable = bool(pipeline.get("delivery_comparable"))
     note = (
-        "Storage and inbox evidence agree." if gap == 0
-        else "Counts differ; use the forms report to inspect notification state." if gap is not None
-        else "Storage and inbox evidence are not both available, so no delivery gap is asserted."
+        "Storage and inbox evidence agree for the complete selected scope." if comparable and gap == 0
+        else "Counts differ across complete comparable coverage; inspect notification state." if comparable and gap is not None
+        else "Coverage is incomplete or differs between storage and inbox evidence, so no delivery gap is asserted."
     )
     return f'<section class="panel section-panel"><div class="panel-heading"><div><h2>Forms delivery</h2><p>Independent storage and mailbox evidence.</p></div></div><div class="pipeline-grid">{items}</div><p class="pipeline-note">{_e(note)}</p></section>'
 

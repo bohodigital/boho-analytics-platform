@@ -13,8 +13,9 @@ the first stable release.
   never-synced data; successful empty reads now advance binding progress without inventing facts.
 - Compacted missing coverage into ranges, scoped series responses to the selected metric, suppressed
   incomplete comparison series, and fixed partial KPI, weighted fallback, and CSV context labels.
-- Reconciled forms state transitions with explicit daily zero facts and made inbox delivery/unread
-  facts stable daily sums, including zero days.
+- Reconciled forms state transitions with retention-bounded daily zero facts and made inbox
+  delivery/unread facts stable distinct-message sums, including zero days only after a trustworthy
+  observation start.
 - Fixed the native All-sites form value, early-date quick-link underflow, source/site option filtering,
   strict analytical query parsing, export filename collisions, and the same-origin favicon.
 - Prevented stale facts from removed bindings from entering reports, rejected unsupported dashboard
@@ -31,8 +32,9 @@ the first stable release.
 - Corrected forms/mail local-day grouping, made Search Console's Pacific date basis explicit without
   changing historical fact identities, marked adaptive Cloudflare facts provisional, and upgraded
   probes from token checks to configured-resource reads where supported.
-- Added a non-destructive forms identity cutover that preserves legacy facts as lineage, aggregates
-  same-day D1 rows before upsert, and exposes only corrected source-backed facts to reports.
+- Added non-destructive forms identity cutovers that preserve legacy facts as lineage, aggregate
+  same-day D1 rows before upsert, quarantine retention-invalid historical zeroes, and expose only
+  current source-backed facts to reports. Schema version 4 prevents unsafe old-code rollback.
 - Removed invented and template/resource Site Graph pages, retained unresolved targets as evidence,
   and made graph compilation publish all derived state atomically.
 - Restored the test suite to CI, added runtime commit/tree/schema identity, and prevented charts from

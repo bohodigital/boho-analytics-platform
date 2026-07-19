@@ -16,9 +16,14 @@ from pathlib import Path
 from .models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 
 
-SCHEMA_VERSION = 3
-MIGRATIONS = {1: "001_initial.sql", 2: "002_site_graph.sql", 3: "003_sync_coverage.sql"}
-CURRENT_IDENTITY_VERSIONS = {"cloudflare-forms": 2, "forms-inbox": 2}
+SCHEMA_VERSION = 4
+MIGRATIONS = {
+    1: "001_initial.sql",
+    2: "002_site_graph.sql",
+    3: "003_sync_coverage.sql",
+    4: "004_forms_evidence_v3.sql",
+}
+CURRENT_IDENTITY_VERSIONS = {"cloudflare-forms": 3, "forms-inbox": 3}
 
 
 def _apply_migration(db: sqlite3.Connection, migration: str, version: int) -> None:

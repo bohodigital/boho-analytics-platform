@@ -20,6 +20,7 @@ from boho_analytics_platform.web import (
     SEARCH_SUMMARY,
     _chart_html,
     _decision_badge,
+    _forms_html,
     _summary_cards,
     handler_factory,
 )
@@ -28,6 +29,28 @@ from tests.site_graph.test_analysis import seed_site_graph
 
 
 class WebTests(unittest.TestCase):
+    def test_forms_panel_never_claims_agreement_for_incomplete_coverage(self):
+        partial = _forms_html({
+            "submissions": 1,
+            "inbox_deliveries": 1,
+            "delivery_gap": None,
+            "delivery_comparable": False,
+            "pending": 0,
+            "failed": 0,
+        })
+        self.assertIn("Coverage is incomplete or differs", partial)
+        self.assertNotIn("evidence agree", partial)
+
+        complete = _forms_html({
+            "submissions": 1,
+            "inbox_deliveries": 1,
+            "delivery_gap": 0,
+            "delivery_comparable": True,
+            "pending": 0,
+            "failed": 0,
+        })
+        self.assertIn("evidence agree for the complete selected scope", complete)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup); root = Path(self.temporary.name)
         fixture = root / "fixture.json"; write_fixture(fixture); path = root / "platform.toml"; path.write_text(config_text(root / "state.db", fixture), encoding="utf-8")

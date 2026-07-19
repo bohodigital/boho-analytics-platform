@@ -46,10 +46,14 @@ remain committed and independently visible. A connector exception returns nonzer
 empty provider read records `result_kind=empty`, advances binding progress, and provides query
 coverage without inserting invented metric facts.
 
-Upgrading an existing schema-v2 database preserves legacy forms facts but cuts reporting over to the
-corrected site-day identity. Immediately run a bounded, source-backed sync for the configured D1 and
-forms-inbox connections across the retained reporting horizon. Verify coverage and raw lineage counts
-before re-enabling their timer; do not manufacture replacement values from the old date labels.
+The forms-evidence-v3 release upgrades the database marker to schema version 4 and preserves prior
+forms facts as inactive lineage. Before upgrade, back up the schema-v3 database. Configure the D1
+connection's verified `source_retention_days` and the inbox binding's independently established
+`observation_start` plus any reserved synthetic subject exclusions. Validate and probe the config,
+then run source-backed D1 syncs only for completed site-local days inside retention and inbox syncs
+only across the established observation horizon. Verify current identity counts, partial historical
+coverage, and raw lineage before re-enabling the timer. Never derive identity-v3 replacement rows
+from identity-v2 zeroes.
 
 Inject the exact reviewed Git identities into every web, sync, and backup unit so `--version` and
 `/healthz` expose the running build rather than only a package label:
@@ -97,9 +101,12 @@ origin-side identity validation, audit events, rate limits, export controls, and
 ## Rollback
 
 1. Stop the web service and sync timer.
-2. Reinstall the prior package or switch to the prior verified commit.
-3. Restore the matching database backup if the schema changed.
+2. Restore the matching pre-schema-v4 database backup before starting prior code. Schema-v3 code
+   intentionally refuses a post-cutover schema-v4 database so it cannot reactivate quarantined
+   identity-v2 forms zeroes.
+3. Reinstall the prior package or switch to the prior verified commit.
 4. Validate `db check`, start the web service, check `/healthz`, and run a known report.
 5. Re-enable the timer only after a bounded fixture or provider sync succeeds.
 
-Rollback never requires modifying trackers, provider data, form routing, or mailbox state.
+Rollback never requires modifying trackers, provider data, form routing, or mailbox state. Treat the
+prior package's long-range forms coverage as a known data-trust limitation.
