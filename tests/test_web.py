@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from boho_analytics_platform.config import load_config
+from boho_analytics_platform.connectors.common import total_point
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 from boho_analytics_platform.storage import SQLiteMetricStore
@@ -77,6 +78,35 @@ class WebTests(unittest.TestCase):
         self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertIn('id="geography-map"', body)
+        self.assertIn("World visitor geography", body)
+        self.assertIn("County boundaries are orientation only", body)
+
+    def test_geography_api_and_local_map_assets_are_privacy_bounded(self):
+        self.store.upsert([total_point(
+            client_id="example-client", site_id="example-site", source="umami",
+            metric="umami.country-visits", unit="count",
+            start=datetime(2026, 7, 1, tzinfo=UTC), end=datetime(2026, 7, 2, tzinfo=UTC),
+            value=7, dimensions={"country_code": "US", "country_code_system": "iso-alpha2"},
+        )])
+        status, _headers, body = self.request(
+            "/api/v1/geography?report=summary&source=umami&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["countries"][0]["code"], "US")
+        self.assertEqual(payload["counties"]["status"], "unavailable")
+        encoded = json.dumps(payload).casefold()
+        self.assertNotIn('"ip":', encoded)
+        self.assertNotIn('"visitor_id":', encoded)
+
+        world_status, world_headers, world = self.request("/assets/maps/world-countries.geojson")
+        us_status, us_headers, us = self.request("/assets/maps/us-counties.json")
+        self.assertEqual((world_status, us_status), (200, 200))
+        self.assertIn("application/geo+json", world_headers["Content-Type"])
+        self.assertIn("application/json", us_headers["Content-Type"])
+        self.assertIn('"FeatureCollection"', world)
+        self.assertIn('"counties"', us)
 
     def test_dashboard_renders_decision_support_and_measurement_roadmap(self):
         status, _headers, body = self.request(

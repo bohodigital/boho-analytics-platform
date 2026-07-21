@@ -33,6 +33,10 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
 - A responsive, server-rendered command center with a confidence meter, visual KPI cards, a dominant
   interactive trend, compact evidence-based action queue, accessible daily-value fallbacks, and
   expandable data-health detail. No chart library or third-party browser asset is required.
+- A provider-selectable country choropleth with US state drilldown, locally served Natural Earth and
+  US Atlas boundaries, accessible ranked-value fallback, and low-volume suppression. County
+  boundaries are orientation only because the configured providers do not supply trustworthy county
+  aggregates; no county values are inferred from cities or IP data.
 - A Site Graph dashboard for compiled repository snapshots: bounded structural SVGs, accessible
   node and edge tables, selectable link layers, two-hop page neighborhoods, goal-distance buckets,
   strongly connected components, and evidence-linked findings. It is structural evidence only and

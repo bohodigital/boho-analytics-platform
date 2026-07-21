@@ -10,11 +10,13 @@ import json
 import math
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .build_info import build_identity
 from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
+from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
 from .site_graph.reporting import SiteGraphDisplayReportService
@@ -44,18 +46,24 @@ METRIC_LABELS = {
     "umami.visits": "Visits",
     "umami.bounces": "Bounces",
     "umami.total-time": "Visit time",
+    "umami.country-visits": "Country visits",
+    "umami.region-visits": "Region visits",
     "cloudflare.requests": "Edge requests",
     "cloudflare.visits": "Edge visits",
     "cloudflare.bytes": "Response bytes",
+    "cloudflare.country-visits": "Country edge visits",
     "google.active-users": "Active users",
     "google.sessions": "GA sessions",
     "google.pageviews": "GA page views",
     "google.events": "GA events",
     "google.key-events": "Key events",
+    "google.country-sessions": "Country GA sessions",
+    "google.region-sessions": "Region GA sessions",
     "search.clicks": "Search clicks",
     "search.impressions": "Search impressions",
     "search.ctr": "Search CTR",
     "search.position": "Average position",
+    "search.country-clicks": "Country search clicks",
     "forms.submissions": "Form submissions",
     "forms.pending": "Pending notifications",
     "forms.sent": "Sent notifications",
@@ -162,7 +170,12 @@ body{background:radial-gradient(circle at 8% 0%,#fff 0,transparent 28%),linear-g
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
 WIDTH_CLASSES = "".join(f".p-{level}{{width:{level}%}}" for level in range(101))
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
+GEOGRAPHY_CSS = """
+.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
+@media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
+@media(max-width:560px){.geography-panel{padding:16px}.geography-controls{display:grid;grid-template-columns:1fr}.geography-controls .field{min-width:0}.geo-svg{min-height:210px}.map-card{padding:10px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
 
 JS = r"""
 (() => {
@@ -360,6 +373,178 @@ JS = r"""
     } catch (error) {
       status.textContent = error.message;
       canvas.dataset.rendered = "error";
+    }
+  }
+
+  const svgNamespace = "http://www.w3.org/2000/svg";
+
+  function heatColor(value, maximum) {
+    if (value === undefined || value === null) return "#dfe7e2";
+    const intensity = Math.sqrt(Math.max(0, Number(value)) / Math.max(1, maximum));
+    const lightness = 92 - intensity * 48;
+    return `hsl(16 72% ${lightness}%)`;
+  }
+
+  function worldPath(geometry) {
+    const polygons = geometry?.type === "Polygon" ? [geometry.coordinates] :
+      geometry?.type === "MultiPolygon" ? geometry.coordinates : [];
+    return polygons.map(polygon => polygon.map(ring => ring.map((point, index) => {
+      const x = (Number(point[0]) + 180) / 360 * 960;
+      const y = (90 - Number(point[1])) / 180 * 480;
+      return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join("") + "Z").join("")).join("");
+  }
+
+  function decodeArc(topology, arcIndex) {
+    const reversed = arcIndex < 0;
+    const encoded = topology.arcs[reversed ? ~arcIndex : arcIndex] || [];
+    const scale = topology.transform?.scale || [1, 1];
+    const translate = topology.transform?.translate || [0, 0];
+    let x = 0, y = 0;
+    const points = encoded.map(point => {
+      x += point[0]; y += point[1];
+      return [x * scale[0] + translate[0], y * scale[1] + translate[1]];
+    });
+    return reversed ? points.reverse() : points;
+  }
+
+  function topoRing(topology, indexes) {
+    const points = [];
+    for (const index of indexes) {
+      const arc = decodeArc(topology, index);
+      points.push(...(points.length ? arc.slice(1) : arc));
+    }
+    return points.map((point, index) => `${index ? "L" : "M"}${point[0].toFixed(2)},${point[1].toFixed(2)}`).join("") + "Z";
+  }
+
+  function topoPath(topology, geometry) {
+    const polygons = geometry.type === "Polygon" ? [geometry.arcs] : geometry.arcs;
+    return polygons.map(polygon => polygon.map(ring => topoRing(topology, ring)).join("")).join("");
+  }
+
+  function updateGeographyTable(payload) {
+    const body = document.getElementById("geography-table-body");
+    if (!body) return;
+    body.replaceChildren();
+    if (!payload.countries.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td"); cell.colSpan = 3; cell.className = "geo-empty";
+      cell.textContent = "No unsuppressed country rows are stored for this source and exact window.";
+      row.append(cell); body.append(row); return;
+    }
+    for (const item of payload.countries) {
+      const row = document.createElement("tr");
+      for (const value of [item.code, format.format(Number(item.value)), payload.label]) {
+        const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+      }
+      row.firstElementChild.className = "metric-name"; body.append(row);
+    }
+  }
+
+  function renderWorldMap(svg, world, payload, status) {
+    svg.replaceChildren();
+    const byCode = new Map(payload.countries.map(item => [item.code, Number(item.value)]));
+    const maximum = Math.max(1, ...byCode.values());
+    for (const feature of world.features || []) {
+      const properties = feature.properties || {};
+      const alpha2 = properties.ISO_A2_EH || properties.ISO_A2;
+      const alpha3 = properties.ISO_A3_EH || properties.ADM0_A3;
+      const matching = payload.countries.find(item => item.code === (item.code_system === "iso-alpha3" ? alpha3 : alpha2));
+      const value = matching ? Number(matching.value) : undefined;
+      const path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", worldPath(feature.geometry));
+      path.setAttribute("fill", heatColor(value, maximum));
+      path.setAttribute("class", "geo-shape");
+      const name = properties.NAME_EN || properties.NAME || properties.ADMIN || alpha3;
+      const label = `${name}: ${value === undefined ? "no unsuppressed stored value" : format.format(value) + " " + payload.label}`;
+      const interactive = value !== undefined || alpha2 === "US";
+      path.dataset.interactive = String(interactive);
+      if (!interactive) {
+        path.setAttribute("aria-hidden", "true"); svg.append(path); continue;
+      }
+      path.setAttribute("tabindex", "0"); path.setAttribute("aria-label", label);
+      const inspect = () => { status.textContent = label; };
+      path.addEventListener("pointerenter", inspect); path.addEventListener("focus", inspect);
+      const activate = () => {
+        inspect();
+        if (alpha2 === "US") document.getElementById("us-geography")?.scrollIntoView({behavior: "smooth", block: "center"});
+      };
+      path.addEventListener("click", activate);
+      path.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } });
+      svg.append(path);
+    }
+  }
+
+  function renderUsMap(svg, topology, payload, status) {
+    svg.replaceChildren();
+    const stateRows = new Map(payload.us_states.map(item => [item.name, Number(item.value)]));
+    const maximum = Math.max(1, ...stateRows.values());
+    const countiesLayer = document.createElementNS(svgNamespace, "g");
+    const statesLayer = document.createElementNS(svgNamespace, "g");
+    svg.append(statesLayer, countiesLayer);
+    let selected = null;
+
+    const showCounties = geometry => {
+      selected = geometry.id;
+      countiesLayer.replaceChildren();
+      for (const county of topology.objects.counties?.geometries || []) {
+        if (!String(county.id).startsWith(String(geometry.id))) continue;
+        const path = document.createElementNS(svgNamespace, "path");
+        path.setAttribute("d", topoPath(topology, county)); path.setAttribute("class", "county-shape");
+        countiesLayer.append(path);
+      }
+      for (const path of statesLayer.children) path.classList.toggle("is-selected", path.dataset.stateId === selected);
+      const name = geometry.properties?.name || geometry.id;
+      const value = stateRows.get(name);
+      status.textContent = `${name}: ${value === undefined ? "no unsuppressed state value" : format.format(value) + " " + payload.label}. County boundaries are orientation only; county values are unavailable.`;
+    };
+
+    for (const geometry of topology.objects.states?.geometries || []) {
+      const name = geometry.properties?.name || geometry.id;
+      const value = stateRows.get(name);
+      const path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", topoPath(topology, geometry)); path.setAttribute("fill", heatColor(value, maximum));
+      path.setAttribute("class", "geo-shape"); path.setAttribute("tabindex", "0"); path.dataset.stateId = geometry.id;
+      const label = `${name}: ${value === undefined ? "no unsuppressed state value" : format.format(value) + " " + payload.label}`;
+      path.setAttribute("aria-label", `${label}. Activate for county boundaries.`);
+      path.addEventListener("pointerenter", () => { if (!selected) status.textContent = label; });
+      path.addEventListener("focus", () => { if (!selected) status.textContent = label; });
+      path.addEventListener("click", () => showCounties(geometry));
+      path.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showCounties(geometry); } });
+      statesLayer.append(path);
+    }
+  }
+
+  async function loadGeography() {
+    const stage = document.getElementById("geography-map");
+    if (!stage) return;
+    const worldSvg = document.getElementById("world-geo-map");
+    const usSvg = document.getElementById("us-geo-map");
+    const status = document.getElementById("geography-status");
+    const source = document.getElementById("geography-source");
+    try {
+      const [worldResponse, usResponse] = await Promise.all([
+        fetch(stage.dataset.worldMap, {credentials: "same-origin"}),
+        fetch(stage.dataset.usMap, {credentials: "same-origin"}),
+      ]);
+      if (!worldResponse.ok || !usResponse.ok) throw new Error("Local map boundary request failed.");
+      const world = await worldResponse.json(); const us = await usResponse.json();
+      const render = async () => {
+        const url = new URL(stage.dataset.geographyApi, window.location.href);
+        url.searchParams.set("source", source.value);
+        status.textContent = `Loading ${source.selectedOptions[0].textContent} geography...`;
+        const response = await fetch(url, {headers: {Accept: "application/json"}, credentials: "same-origin"});
+        if (!response.ok) throw new Error(`Geography request failed (${response.status})`);
+        const payload = await response.json();
+        renderWorldMap(worldSvg, world, payload, status); renderUsMap(usSvg, us, payload, status); updateGeographyTable(payload);
+        const withheld = payload.suppression.withheld_country_rows + payload.suppression.withheld_us_state_rows;
+        status.textContent = `${payload.label}: ${payload.countries.length} countries and ${payload.us_states.length} US states displayed; ${withheld} low-volume rows withheld. ${payload.coverage.note}`;
+        stage.dataset.rendered = "true";
+      };
+      source.addEventListener("change", () => render().catch(error => { status.textContent = error.message; stage.dataset.rendered = "error"; }));
+      await render();
+    } catch (error) {
+      status.textContent = error.message; stage.dataset.rendered = "error";
     }
   }
 
@@ -644,6 +829,7 @@ JS = r"""
     metric.addEventListener("change", updateSiteOptions);
   }
   loadChart();
+  loadGeography();
   initSiteGraph();
 })();
 """
@@ -2158,8 +2344,45 @@ def _site_graph_analysis_panels(payload):
     )
 
 
+def _geography_panel(payload, api_url):
+    source_options = "".join(
+        f'<option value="{_e(source)}"{" selected" if source == payload["source"] else ""}>{_e(spec["label"])}</option>'
+        for source, spec in SOURCE_CONFIG.items()
+    )
+    rows = "".join(
+        f'<tr><td class="metric-name">{_e(row["code"])}</td><td>{_format_value(row["value"])}</td><td>{_e(payload["label"])}</td></tr>'
+        for row in payload["countries"]
+    ) or '<tr><td colspan="3" class="geo-empty">No unsuppressed country rows are stored for this source and exact window.</td></tr>'
+    suppression = payload["suppression"]
+    return (
+        '<section class="panel geography-panel" id="geography-map" '
+        f'data-geography-api="{_e(api_url)}" data-world-map="/assets/maps/world-countries.geojson" '
+        'data-us-map="/assets/maps/us-counties.json" aria-labelledby="geography-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Geographic demand</p>'
+        '<h2 id="geography-title">World visitor geography</h2>'
+        '<p>Provider-labeled choropleths from stored aggregate dimensions. Darker areas indicate more activity within the selected source; sources are never blended.</p></div>'
+        '<div class="geography-controls"><label class="field"><span>Map source</span>'
+        f'<select id="geography-source">{source_options}</select></label></div></div>'
+        '<div class="geography-grid"><article class="map-card"><h3>Countries</h3>'
+        '<p>Select the United States to move into state and county-boundary detail.</p>'
+        '<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="World country choropleth"></svg></article>'
+        '<article class="map-card" id="us-geography"><h3>United States</h3>'
+        '<p>State values where the provider supports region data; select a state to reveal county boundaries.</p>'
+        '<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="United States state choropleth and county boundary drilldown"></svg></article></div>'
+        '<div class="geo-status" id="geography-status" role="status">Loading local geography boundaries and stored aggregates...</div>'
+        '<div class="geo-disclosure"><p><strong>Privacy floor</strong>'
+        f'Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are currently hidden.</p>'
+        '<p><strong>County boundaries are orientation only</strong>Current providers do not expose trustworthy county aggregates. No county values are inferred from city names or IP data.</p>'
+        f'<p><strong>Method</strong>{_e(payload["methodology"])}</p></div>'
+        '<details class="geography-fallback"><summary>Accessible ranked country values and no-JavaScript fallback</summary>'
+        '<div class="table-scroll"><table><caption class="sr-only">Geographic activity by country</caption>'
+        f'<thead><tr><th scope="col">Country code</th><th scope="col">Value</th><th scope="col">Provider metric</th></tr></thead><tbody id="geography-table-body">{rows}</tbody></table></div></details></section>'
+    )
+
+
 def handler_factory(config, store, credentials=None):
     reports = ReportService(config, store)
+    geography = GeographyService(config, store)
     graph_reports = SiteGraphDisplayReportService(SiteGraphStore(store.path))
     credential_provider = credentials or ReferenceCredentialProvider()
     password = None
@@ -2229,6 +2452,14 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "text/css; charset=utf-8", CSS)
             if parsed.path == "/assets/app.js":
                 return self._send(200, "text/javascript; charset=utf-8", JS)
+            if parsed.path == "/assets/maps/world-countries.geojson":
+                body = files("boho_analytics_platform").joinpath(
+                    "static/natural-earth-countries-110m.geojson").read_text(encoding="utf-8")
+                return self._send(200, "application/geo+json; charset=utf-8", body)
+            if parsed.path == "/assets/maps/us-counties.json":
+                body = files("boho_analytics_platform").joinpath(
+                    "static/us-counties-albers-10m.json").read_text(encoding="utf-8")
+                return self._send(200, "application/json; charset=utf-8", body)
             if parsed.path == "/favicon.svg":
                 return self._send(200, "image/svg+xml", FAVICON_SVG)
             try:
@@ -2238,6 +2469,7 @@ def handler_factory(config, store, credentials=None):
                     "source", "style", "compare", "view",
                 }
                 report_fields = {"report", "subreport", "start", "end", "site"}
+                geography_fields = {"report", "start", "end", "site", "source"}
                 graph_fields = {
                     "site", "page", "graph", "layer", "edge_query", "edge_sort",
                     "edge_order", "edge_page",
@@ -2250,6 +2482,9 @@ def handler_factory(config, store, credentials=None):
                     repeatable = set()
                 elif parsed.path in {"/api/v1/series", "/api/v1/series.csv"}:
                     allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path == "/api/v1/geography":
+                    allowed = geography_fields
                     repeatable = set()
                 elif parsed.path in {
                     "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
@@ -2277,6 +2512,8 @@ def handler_factory(config, store, credentials=None):
                     return self._site_graph_api(query)
                 if parsed.path == "/api/v1/site-graph.csv":
                     return self._site_graph_csv(query)
+                if parsed.path == "/api/v1/geography":
+                    return self._geography_api(query)
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
@@ -2451,6 +2688,27 @@ def handler_factory(config, store, credentials=None):
                 report_id, window, subreport_id, site_id,
                 include_decision_support=include_decision_support,
             ), report
+
+        def _geography_payload(self, query):
+            report_id = query.get("report", [config.reports[0].id])[0]
+            report = next((item for item in config.reports if item.id == report_id), None)
+            if report is None:
+                raise ValueError("unknown report")
+            source = query.get("source", ["umami"])[0]
+            site_id = query.get("site", [None])[0]
+            if site_id == "all":
+                site_id = None
+            window = _window(
+                query, config.platform.default_timezone,
+                report.default_window_days, report.default_end_lag_days,
+            )
+            return geography.render(report_id, window, source, site_id=site_id)
+
+        def _geography_api(self, query):
+            return self._send(
+                200, "application/json",
+                json.dumps(self._geography_payload(query), sort_keys=True, separators=(",", ":")),
+            )
 
         def _series_payload(self, query, *, rendered=None):
             view = query.get("view", [""])[0]
@@ -2889,6 +3147,18 @@ def handler_factory(config, store, credentials=None):
                 chart_panel if is_plot
                 else f'<div class="dashboard-primary">{chart_panel}{attention_html}</div>'
             )
+            geography_html = ""
+            if not is_plot:
+                geography_params = {
+                    "report": report.id, "start": start, "end": end, "source": "umami",
+                }
+                if result["site_id"]:
+                    geography_params["site"] = result["site_id"]
+                geography_query = {key: [value] for key, value in geography_params.items()}
+                geography_html = _geography_panel(
+                    self._geography_payload(geography_query),
+                    "/api/v1/geography?" + urlencode(geography_params),
+                )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2905,7 +3175,7 @@ def handler_factory(config, store, credentials=None):
 {source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{decision_html}{supporting_html}
+{_warnings_html(result['warnings'])}{summary_html}{primary_content}{geography_html}{decision_html}{supporting_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

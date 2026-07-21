@@ -51,18 +51,32 @@ class ProviderConnectorTests(unittest.TestCase):
 
     def test_umami_parses_daily_series_and_summary(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
-        http = QueueHttp([{"pageviews": [{"x": "2026-07-01T00:00:00Z", "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]}, {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120}])
+        http = QueueHttp([
+            {"pageviews": [{"x": "2026-07-01T00:00:00Z", "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]},
+            {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120},
+            [{"name": "us", "visits": 6}, {"name": "gb", "visits": 1}],
+            [{"country": "us", "name": "CA", "visits": 4}, {"country": "us", "name": "TX", "visits": 2}],
+        ])
         points = list(UmamiConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
-        self.assertEqual(len(points), 6); self.assertEqual({point.start.date().isoformat() for point in points[:2]}, {"2026-07-01"})
+        self.assertEqual(len(points), 10); self.assertEqual({point.start.date().isoformat() for point in points[:2]}, {"2026-07-01"})
+        country = next(point for point in points if point.metric == "umami.country-visits" and dict(point.dimensions)["country_code"] == "US")
+        region = next(point for point in points if point.metric == "umami.region-visits" and dict(point.dimensions)["region_code"] == "CA")
+        self.assertEqual(country.value, 6); self.assertEqual(dict(country.dimensions)["country_code_system"], "iso-alpha2")
+        self.assertEqual(dict(region.dimensions)["country_code"], "US")
+        self.assertIn("type=country", http.calls[2][1]); self.assertIn("type=region", http.calls[3][1])
         self.assertIn("startAt=", http.calls[0][1]); self.assertTrue(all("test" not in call[1] for call in http.calls))
 
     def test_cloudflare_parses_adaptive_groups_without_rescaling(self):
         config = self.config("cloudflare")
         response = {"data": {"viewer": {"zones": [{"httpRequestsAdaptiveGroups": [{"dimensions": {"date": "2026-07-01"}, "count": 100, "sum": {"visits": 8, "edgeResponseBytes": 2048}}]}]}}}
-        points = list(CloudflareAnalyticsConnector(config, QueueHttp([response])).collect(config.connections[0], MemoryCredentialLease({"api_token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
-        self.assertEqual({point.metric for point in points}, {"cloudflare.requests", "cloudflare.visits", "cloudflare.bytes"}); self.assertEqual(points[0].value, 100)
+        geography = {"data": {"viewer": {"zones": [{"httpRequestsAdaptiveGroups": [{"dimensions": {"date": "2026-07-01", "clientCountryName": "US"}, "sum": {"visits": 8}}]}]}}}
+        http = QueueHttp([response, geography])
+        points = list(CloudflareAnalyticsConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"api_token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
+        self.assertEqual({point.metric for point in points}, {"cloudflare.requests", "cloudflare.visits", "cloudflare.bytes", "cloudflare.country-visits"}); self.assertEqual(points[0].value, 100)
         self.assertTrue(all(point.completeness is Completeness.PROVISIONAL for point in points))
-        self.assertTrue(all(point.dimensions == () for point in points))
+        geo_point = next(point for point in points if point.metric == "cloudflare.country-visits")
+        self.assertEqual(dict(geo_point.dimensions), {"country_code": "US", "country_code_system": "iso-alpha2"})
+        self.assertIn("clientCountryName", http.calls[1][3]["query"])
 
         store = SQLiteMetricStore(self.root / "cloudflare-identity.db"); store.initialize()
         historical = replace(points[0], completeness=Completeness.FINAL)
@@ -141,8 +155,12 @@ class ProviderConnectorTests(unittest.TestCase):
     def test_ga4_uses_exclusive_window_as_inclusive_api_end(self):
         config = self.config("google-analytics")
         response = {"metricHeaders": [{"name": "sessions"}], "rows": [{"dimensionValues": [{"value": "20260701"}], "metricValues": [{"value": "9"}]}]}
-        http = QueueHttp([response]); points = list(GoogleAnalyticsConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
+        geography = {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "sessions"}], "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "US"}, {"value": "California"}], "metricValues": [{"value": "7"}]}]}
+        http = QueueHttp([response, geography]); points = list(GoogleAnalyticsConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
         self.assertEqual(points[0].metric, "google.sessions"); self.assertEqual(http.calls[0][3]["dateRanges"][0]["endDate"], "2026-07-02")
+        geo_point = next(point for point in points if point.metric == "google.region-sessions")
+        self.assertEqual(dict(geo_point.dimensions)["region_name"], "California")
+        self.assertEqual([item["name"] for item in http.calls[1][3]["dimensions"]], ["date", "countryId", "region"])
 
     def test_ga4_probe_runs_a_property_query_and_validates_timezone(self):
         config = self.config("google-analytics")
@@ -171,15 +189,19 @@ class ProviderConnectorTests(unittest.TestCase):
         config = self.config("search-console"); binding = config.bindings[0]
         object.__setattr__(binding, "resource_id", "sc-domain:example.com")
         response = {"rows": [{"keys": ["2026-07-01"], "clicks": 4, "impressions": 20, "ctr": 0.2, "position": 3.1}]}
-        http = QueueHttp([response]); points = list(SearchConsoleConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(binding, self.window, ())))
-        self.assertEqual(len(points), 4); self.assertIn("sc-domain%3Aexample.com", http.calls[0][1])
+        geography = {"rows": [{"keys": ["2026-07-01", "usa"], "clicks": 4}]}
+        http = QueueHttp([response, geography]); points = list(SearchConsoleConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(binding, self.window, ())))
+        self.assertEqual(len(points), 5); self.assertIn("sc-domain%3Aexample.com", http.calls[0][1])
+        geo_point = next(point for point in points if point.metric == "search.country-clicks")
+        self.assertEqual(dict(geo_point.dimensions), {"country_code": "USA", "country_code_system": "iso-alpha3"})
+        self.assertEqual(http.calls[1][3]["dimensions"], ["date", "country"])
 
     def test_search_console_queries_pacific_dates_without_changing_fact_identity(self):
         config = self.config("search-console", timezone="America/Chicago")
         zone = ZoneInfo("America/Chicago")
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=zone), datetime(2026, 7, 2, tzinfo=zone), "America/Chicago")
         response = {"rows": [{"keys": ["2026-07-01"], "clicks": 1}]}
-        http = QueueHttp([response])
+        http = QueueHttp([response, {"rows": []}])
         points = list(SearchConsoleConnector(config, http).collect(
             config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
             SyncRequest(config.bindings[0], window, ())))
@@ -194,7 +216,7 @@ class ProviderConnectorTests(unittest.TestCase):
         zone = ZoneInfo("America/Chicago")
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=zone), datetime(2026, 7, 2, tzinfo=zone), "America/Chicago")
         points = list(SearchConsoleConnector(config, QueueHttp([
-            {"rows": [{"keys": ["2026-07-01"], "clicks": 1}]}])).collect(
+            {"rows": [{"keys": ["2026-07-01"], "clicks": 1}]}, {"rows": []}])).collect(
                 config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
                 SyncRequest(config.bindings[0], window, ())))
         store = SQLiteMetricStore(self.root / "search-console-report.db"); store.initialize(); store.upsert(points)

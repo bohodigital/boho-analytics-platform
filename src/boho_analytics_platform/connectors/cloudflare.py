@@ -16,6 +16,13 @@ GRAPHQL_QUERY = """query Traffic($zone: String!, $start: Date!, $end: Date!) {
       dimensions { date } count sum { visits edgeResponseBytes }
   } } } }"""
 
+GEOGRAPHY_QUERY = """query Geography($zone: String!, $start: Date!, $end: Date!) {
+  viewer { zones(filter: {zoneTag: $zone}) { httpRequestsAdaptiveGroups(
+    limit: 10000, filter: {date_geq: $start, date_lt: $end, requestSource: \"eyeball\"},
+    orderBy: [date_ASC]) {
+      dimensions { date clientCountryName } sum { visits }
+  } } } }"""
+
 PROBE_QUERY = """query Probe($zone: String!, $start: Date!, $end: Date!) {
   viewer { zones(filter: {zoneTag: $zone}) {
     settings {
@@ -112,7 +119,7 @@ class CloudflareAnalyticsConnector:
         max_duration = min(max_durations)
         max_lookback_days = min(lookbacks) // _SECONDS_PER_DAY
         return CapabilitySnapshot(connection.id, self.provider, probed_at, True, resources,
-            ("cloudflare.bytes", "cloudflare.requests", "cloudflare.visits"),
+            ("cloudflare.bytes", "cloudflare.country-visits", "cloudflare.requests", "cloudflare.visits"),
             max_lookback_days=max_lookback_days,
             warnings=(
                 "Cloudflare httpRequestsAdaptiveGroups facts use adaptive sampling and are provisional; values are not rescaled.",
@@ -121,8 +128,9 @@ class CloudflareAnalyticsConnector:
             ))
 
     def collect(self, connection, credential, request):
-        result = self._call(credential, {"query": GRAPHQL_QUERY, "variables": {
-            "zone": request.binding.resource_id, "start": request.window.start.date().isoformat(), "end": request.window.end.date().isoformat()}})
+        variables = {"zone": request.binding.resource_id, "start": request.window.start.date().isoformat(),
+            "end": request.window.end.date().isoformat()}
+        result = self._call(credential, {"query": GRAPHQL_QUERY, "variables": variables})
         groups = self._groups(result, request.binding.resource_id)
         site = binding_site(self.config, request.binding.site_id)
         for row in groups:
@@ -132,6 +140,21 @@ class CloudflareAnalyticsConnector:
                 if value is not None: yield daily_point(client_id=site.client_id, site_id=site.id,
                     source=self.provider, metric=metric, unit=unit, day=row["dimensions"]["date"],
                     value=value, timezone=site.timezone, completeness=Completeness.PROVISIONAL)
+        geography = self._groups(
+            self._call(credential, {"query": GEOGRAPHY_QUERY, "variables": variables}),
+            request.binding.resource_id,
+        )
+        for row in geography:
+            dimensions = row.get("dimensions", {})
+            country = str(dimensions.get("clientCountryName", "")).strip().upper()
+            visits = row.get("sum", {}).get("visits")
+            if len(country) == 2 and country.isalpha() and visits is not None:
+                yield daily_point(client_id=site.client_id, site_id=site.id,
+                    source=self.provider, metric="cloudflare.country-visits", unit="count",
+                    day=dimensions["date"], value=visits, timezone=site.timezone,
+                    completeness=Completeness.PROVISIONAL, dimensions={
+                        "country_code": country, "country_code_system": "iso-alpha2",
+                    })
 
 
 class CloudflareFormsConnector:

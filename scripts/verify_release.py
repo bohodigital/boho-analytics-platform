@@ -34,10 +34,11 @@ ALLOWED_DIRECTORIES = {
     ("src", "boho_analytics_platform", "connectors"),
     ("src", "boho_analytics_platform", "migrations"),
     ("src", "boho_analytics_platform", "site_graph"),
+    ("src", "boho_analytics_platform", "static"),
     ("tests",),
     ("tests", "site_graph"),
 }
-ALLOWED_SUFFIXES = {".css", ".json", ".md", ".py", ".sh", ".sql", ".toml", ".txt", ".yaml", ".yml"}
+ALLOWED_SUFFIXES = {".css", ".geojson", ".json", ".md", ".py", ".sh", ".sql", ".toml", ".txt", ".yaml", ".yml"}
 ALLOWED_BINARY_SUFFIXES = {".png"}
 ALLOWED_NAMES = {"CODEOWNERS", "LICENSE"}
 GENERATED_NAMES = {

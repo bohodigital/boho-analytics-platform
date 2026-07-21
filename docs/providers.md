@@ -9,6 +9,9 @@ V1 targets the current self-hosted API routes under `/api`. It supports API-key,
 username/password login credentials. Daily pageviews/sessions come from `pageviews`; exact-window
 visitors, visits, bounces, and total time come from `stats`. Exact-window metrics are never summed
 across overlapping sync intervals.
+Country and region visit aggregates come from `metrics/expanded`. They keep the exact requested
+window identity, store only ISO codes and aggregate values, and never store IP addresses, visitor
+IDs, session IDs, coordinates, cities, or raw provider responses.
 
 Set each Umami binding's `observation_start` to the first site-local date on which the tracker and
 website record are independently verified. This prevents successful queries and legacy facts from
@@ -26,6 +29,8 @@ without multiplying sampling intervals. Those facts are provisional and reports 
 sampling. Probe runs the configured zone query rather than validating the token alone. A dedicated
 read-only Analytics token is preferred. Probe also discovers each zone's plan-bound `maxDuration`
 and `notOlderThan` limits and reports the conservative minimum across configured zones.
+The geography query groups the same provisional visit measure by date and country. It is a separate
+provider-labeled layer and is never blended with browser-analytics visits.
 
 ## Google Analytics
 
@@ -38,6 +43,8 @@ The GA4 property must grant the chosen identity sufficient viewer access.
 Probe executes a minimal report against every configured property. A reported property timezone
 must match the bound site timezone; a mismatch fails closed, while omitted timezone metadata remains
 an explicit warning rather than an assumption.
+The geography query groups sessions by date, ISO country ID, and provider-reported region. Country
+and region values remain GA4 sessions and are not deduplicated against Umami or Cloudflare.
 
 ## Google Search Console
 
@@ -49,6 +56,21 @@ property.
 Request dates use Search Console's `America/Los_Angeles` provider basis. Returned provider date
 labels map into the configured site-day storage bucket to preserve the existing fact identity and
 reporting contract; the provider basis remains explicit in health and probe metadata.
+Geographic search demand is a second query grouped by provider date and ISO alpha-3 country. Search
+Console does not expose a state or county dimension, and high-dimensional results are top rows rather
+than guaranteed exhaustive data.
+
+## Geographic display boundary
+
+Geographic facts use dedicated metric IDs so dimension rows cannot inflate the existing headline
+totals. The read-only `/api/v1/geography` endpoint suppresses buckets below three observations and
+never reports an omitted bucket as zero or complete. Umami is the primary country/state view; GA4
+corroborates configured sites, Search Console represents search clicks, and Cloudflare represents
+adaptive edge visits. None is treated as person-level or household-level location.
+
+Natural Earth v5.1.2 country boundaries and US Atlas v3.0.1 Census-derived state/county boundaries
+are packaged and served locally. County geometry supports visual drilldown only. The system does not
+infer county values from city names, postal codes, coordinates, or IP addresses.
 
 ## Cloudflare forms D1
 

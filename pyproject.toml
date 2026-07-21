@@ -49,4 +49,4 @@ boho-analytics = "boho_analytics_platform.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-boho_analytics_platform = ["migrations/*.sql"]
+boho_analytics_platform = ["migrations/*.sql", "static/*.geojson", "static/*.json", "static/*.md", "static/*.txt"]
