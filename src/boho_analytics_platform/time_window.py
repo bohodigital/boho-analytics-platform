@@ -26,6 +26,7 @@ def report_window(
     *,
     timezone: str,
     default_days: int,
+    default_end_lag_days: int = 0,
     start: str | None = None,
     end: str | None = None,
     now: datetime | None = None,
@@ -34,11 +35,16 @@ def report_window(
 
     if (start is None) != (end is None):
         raise ValueError("start and end must be provided together")
+    if default_end_lag_days < 0 or default_end_lag_days > MAX_WINDOW_DAYS:
+        raise ValueError(f"default end lag must be from 0 to {MAX_WINDOW_DAYS} days")
     zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
     if start is None:
         if default_days < 1 or default_days > MAX_WINDOW_DAYS:
             raise ValueError(f"days must be from 1 to {MAX_WINDOW_DAYS}")
-        end_date = (now or datetime.now(zone)).astimezone(zone).date()
+        end_date = (
+            (now or datetime.now(zone)).astimezone(zone).date()
+            - timedelta(days=default_end_lag_days)
+        )
         start_date = end_date - timedelta(days=default_days)
     else:
         start_date = _date(start, "start")

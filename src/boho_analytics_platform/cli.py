@@ -71,12 +71,15 @@ def _window_args(parser):
     parser.add_argument("--days", type=int, help="completed days ending today; cannot be combined with start/end")
 
 
-def _window(args, timezone: str, default_days: int) -> QueryWindow:
+def _window(
+    args, timezone: str, default_days: int, default_end_lag_days: int = 0
+) -> QueryWindow:
     if args.days is not None and (args.start or args.end): raise ValueError("--days cannot be combined with --start or --end")
     days = args.days if args.days is not None else default_days
     return report_window(
         timezone=timezone,
         default_days=days,
+        default_end_lag_days=(0 if args.days is not None else default_end_lag_days),
         start=args.start,
         end=args.end,
     )
@@ -145,7 +148,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if all(item.status == "success" for item in results) else 1
         if args.command == "report":
             definition, _, _, _ = ReportService(config, store).definition(args.report_id, args.subreport)
-            report = ReportService(config, store).render(args.report_id, _window(args, config.platform.default_timezone, definition.default_window_days), args.subreport)
+            active_definition = definition
+            if args.subreport:
+                active_definition = next(
+                    item for item in definition.subreports if item.id == args.subreport
+                )
+            report = ReportService(config, store).render(
+                args.report_id,
+                _window(
+                    args,
+                    config.platform.default_timezone,
+                    active_definition.default_window_days,
+                    active_definition.default_end_lag_days,
+                ),
+                args.subreport,
+            )
             content = json.dumps(report, indent=2, sort_keys=True) + "\n" if args.format == "json" else to_csv(report)
             if args.output: Path(args.output).write_text(content, encoding="utf-8", newline="")
             else: print(content, end="")

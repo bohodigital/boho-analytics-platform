@@ -5,8 +5,20 @@ the first stable release.
 
 ## Unreleased
 
+### Changed
+
+- Rebuilt the analytics landing experience around a high-confidence summary, four visual KPI cards,
+  one dominant area trend, and a compact action rail. Filters, raw data notes, operations evidence,
+  and measurement gaps remain available without competing with the decisions the dashboard supports.
+- Refined the responsive visual system with a clearer hierarchy, higher-contrast chart surface,
+  coverage meter, calmer status colors, and single-column mobile layouts without adding browser
+  dependencies or weakening the existing CSP.
+
 ### Fixed
 
+- Added configurable maturity lag for default report windows so provider-finalization delay does
+  not make the dashboard's normal landing view look broken; explicit historical windows remain
+  unchanged and retain truthful partial-coverage warnings.
 - Excluded intentionally unconfigured site/provider combinations from coverage denominators and UI
   choices while retaining explicit `not_configured` diagnostics.
 - Reused successful binding-window acquisition records to distinguish query-proven quiet dates from

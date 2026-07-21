@@ -30,9 +30,9 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
   windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
 - A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
   and previous-period controls. Every selected series is also available as versioned JSON or flat CSV.
-- A responsive, server-rendered dashboard with portfolio KPI cards, interactive same-origin canvas
-  charts, accessible daily-value fallbacks, data-through and ingestion health, and quick date presets. No chart library
-  or third-party browser asset is required.
+- A responsive, server-rendered command center with a confidence meter, visual KPI cards, a dominant
+  interactive trend, compact evidence-based action queue, accessible daily-value fallbacks, and
+  expandable data-health detail. No chart library or third-party browser asset is required.
 - A Site Graph dashboard for compiled repository snapshots: bounded structural SVGs, accessible
   node and edge tables, selectable link layers, two-hop page neighborhoods, goal-distance buckets,
   strongly connected components, and evidence-linked findings. It is structural evidence only and

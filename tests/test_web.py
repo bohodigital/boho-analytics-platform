@@ -10,6 +10,7 @@ from datetime import timedelta
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from boho_analytics_platform.config import load_config
 from boho_analytics_platform.engine import SyncEngine
@@ -98,6 +99,14 @@ class WebTests(unittest.TestCase):
         self.assertIn('<th scope="col">Umami visits</th>', body)
         self.assertIn('class="attention-severity">Review</p>', body)
         self.assertIn("no capability snapshot", body)
+        self.assertIn('class="dashboard-primary"', body)
+        self.assertIn('class="trust-card" data-state="complete"', body)
+        self.assertIn('class="panel attention-panel"', body)
+        self.assertIn('class="panel control-panel"', body)
+        self.assertNotIn('class="panel control-panel" open', body)
+        self.assertIn('class="panel decision-panel evidence-panel"', body)
+        self.assertIn('style=area', body)
+        self.assertIn('<details class="data-notices">', body)
         payload = json.loads(self.request(
             "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
         )[2])
@@ -194,6 +203,19 @@ class WebTests(unittest.TestCase):
         self.assertIn(".attention-list", css)
         self.assertIn(".roadmap-grid", css)
         self.assertIn(".decision-grid,.engagement-grid", css)
+        self.assertIn(".dashboard-primary", css)
+        self.assertIn(".trust-card", css)
+        self.assertIn("@media(max-width:760px)", css)
+
+    def test_plot_builder_keeps_visual_controls_open(self):
+        status, _headers, body = self.request(
+            "/?report=summary&view=plot&source=umami&metric=umami.pageviews&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn('class="panel control-panel" open', body)
+        self.assertNotIn('class="dashboard-primary"', body)
+        self.assertIn('style=line', body)
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 
@@ -218,6 +240,46 @@ class WebTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.request(path)[0], 400)
         self.assertEqual(self.request("/healthz")[0], 200)
+
+    def test_default_dashboard_uses_configured_maturity_lag(self):
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                current = cls(2026, 7, 21, 14, 0, tzinfo=UTC)
+                return current.astimezone(tz) if tz is not None else current.replace(tzinfo=None)
+
+        root = Path(self.temporary.name)
+        fixture = root / "lag-fixture.json"
+        write_fixture(fixture)
+        text = config_text(root / "lag-state.db", fixture).replace(
+            "default_window_days = 30\n[[reports.subreports]]",
+            "default_window_days = 7\ndefault_end_lag_days = 1\n[[reports.subreports]]",
+            1,
+        )
+        path = root / "lag-platform.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        store = SQLiteMetricStore(root / "lag-state.db")
+        store.initialize()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(config, store))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch("boho_analytics_platform.time_window.datetime", FrozenDateTime):
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_port, timeout=3
+                )
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                body = response.read().decode()
+                connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn('name="start" value="2026-07-13"', body)
+            self.assertIn('name="end" value="2026-07-20"', body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
 
     def test_blank_analytical_query_values_are_rejected(self):
         for path in (
