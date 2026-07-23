@@ -23,6 +23,8 @@ class ScreenshotCaptureTests(unittest.TestCase):
         self.assertIn("click suppression persisted after a completed drag", verifier)
         self.assertIn("browser console failures", verifier)
         self.assertIn("No graph controls.", verifier)
+        self.assertIn("nodes_with_zero_edges", verifier)
+        self.assertIn("edges_with_zero_nodes", verifier)
         self.assertIn("unsafe-inline", verifier)
 
     class _Response:

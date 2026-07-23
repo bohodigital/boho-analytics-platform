@@ -404,13 +404,37 @@ def _exercise(devtools: DevTools, url: str, app_script: str) -> dict[str, object
     _assert(responsive["innerWidth"] == 390 and responsive["overflow"] == 0 and responsive["svgWidth"] > 0,
             "responsive Site Graph viewport is unusable or overflows horizontally")
 
-    empty_documents = (
-        "<!doctype html><html><body><p>No graph controls.</p>",
-        """<!doctype html><html><body><div data-site-graph-stage>
-        <div data-graph-map><svg class="site-graph-svg"><g data-graph-viewport></g></svg></div>
-        <aside data-graph-inspector></aside></div>""",
+    boundary_documents = (
+        ("controls_absent", "<!doctype html><html><body><p>No graph controls.</p>", False),
+        (
+            "zero_nodes_and_edges",
+            """<!doctype html><html><body><div data-site-graph-stage>
+            <div data-graph-map><svg class="site-graph-svg" viewBox="0 0 100 100">
+            <g data-graph-viewport></g></svg></div>
+            <aside data-graph-inspector></aside></div>""",
+            False,
+        ),
+        (
+            "nodes_with_zero_edges",
+            """<!doctype html><html><body><div data-site-graph-stage>
+            <div data-graph-map><svg class="site-graph-svg" viewBox="0 0 100 100">
+            <g data-graph-viewport><g data-graph-node data-graph-node-route="/only/"
+            data-graph-node-name="Only"><rect width="20" height="20"></rect></g></g></svg></div>
+            <aside data-graph-inspector></aside></div>""",
+            True,
+        ),
+        (
+            "edges_with_zero_nodes",
+            """<!doctype html><html><body><div data-site-graph-stage>
+            <div data-graph-map><svg class="site-graph-svg" viewBox="0 0 100 100">
+            <g data-graph-viewport><path data-graph-edge data-source="/a/" data-destination="/b/"
+            d="M 10 10 L 90 90"></path></g></svg></div>
+            <aside data-graph-inspector></aside></div>""",
+            True,
+        ),
     )
-    for document in empty_documents:
+    boundary_results = {}
+    for name, document, expect_initialized in boundary_documents:
         encoded = base64.b64encode(
             f"{document}<script>{app_script}</script></body></html>".encode()
         ).decode()
@@ -420,6 +444,15 @@ def _exercise(devtools: DevTools, url: str, app_script: str) -> dict[str, object
                 break
             time.sleep(0.01)
         devtools.call("Runtime.evaluate", expression="0", returnByValue=True)
+        initialized = devtools.evaluate(
+            """(() => {const viewport=document.querySelector('[data-graph-viewport]');
+            return Boolean(viewport?.getAttribute('transform'));})()"""
+        )
+        _assert(
+            initialized is expect_initialized,
+            f"{name} initialization state was {initialized}, expected {expect_initialized}",
+        )
+        boundary_results[name] = "passed"
     _assert(not devtools.exceptions, f"browser JavaScript exceptions: {devtools.exceptions}")
     _assert(not devtools.console_failures, f"browser console failures: {devtools.console_failures}")
     _assert(not devtools.log_failures, f"browser resource/log failures: {devtools.log_failures}")
@@ -432,8 +465,7 @@ def _exercise(devtools: DevTools, url: str, app_script: str) -> dict[str, object
         "wheel_zoom_and_bounds": "passed",
         "drag_pan_and_click_suppression": "passed",
         "responsive_390x844": "passed",
-        "controls_absent": "passed",
-        "zero_nodes_edges": "passed",
+        **boundary_results,
         "javascript_exceptions": 0,
         "console_resource_failures": 0,
     }
