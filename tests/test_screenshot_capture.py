@@ -6,6 +6,20 @@ from scripts import capture_dashboard_headless
 
 
 class ScreenshotCaptureTests(unittest.TestCase):
+    def test_site_graph_browser_verifier_is_fixture_only_and_behavioral(self):
+        verifier = (
+            capture_dashboard_headless.ROOT / "scripts" / "verify_site_graph_browser.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("DEMO_FIXTURE", verifier)
+        self.assertIn("Input.dispatchMouseEvent", verifier)
+        self.assertIn("ordinary pointer click did not pin a node", verifier)
+        self.assertIn("ordinary pointer click did not pin an edge", verifier)
+        self.assertIn("drag completion leaked state or triggered selection", verifier)
+        self.assertIn("Emulation.setDeviceMetricsOverride", verifier)
+        self.assertIn("browser JavaScript exceptions", verifier)
+        self.assertIn("unsafe-inline", verifier)
+
     class _Response:
         status = 200
 
