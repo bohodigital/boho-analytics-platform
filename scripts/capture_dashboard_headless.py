@@ -184,6 +184,14 @@ def _browser_candidates() -> list[Path]:
         resolved = shutil.which(command)
         if resolved:
             candidates.append(Path(resolved))
+    if sys.platform == "darwin":
+        candidates.extend(
+            (
+                Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+                Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            )
+        )
     if os.name == "nt":
         roots = [
             os.environ.get("PROGRAMFILES(X86)"),

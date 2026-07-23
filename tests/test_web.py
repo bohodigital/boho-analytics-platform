@@ -10,8 +10,10 @@ from datetime import timedelta
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from boho_analytics_platform.config import load_config
+from boho_analytics_platform.connectors.common import total_point
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
 from boho_analytics_platform.storage import SQLiteMetricStore
@@ -76,6 +78,35 @@ class WebTests(unittest.TestCase):
         self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertIn('id="geography-map"', body)
+        self.assertIn("World visitor geography", body)
+        self.assertIn("County boundaries are orientation only", body)
+
+    def test_geography_api_and_local_map_assets_are_privacy_bounded(self):
+        self.store.upsert([total_point(
+            client_id="example-client", site_id="example-site", source="umami",
+            metric="umami.country-visits", unit="count",
+            start=datetime(2026, 7, 1, tzinfo=UTC), end=datetime(2026, 7, 2, tzinfo=UTC),
+            value=7, dimensions={"country_code": "US", "country_code_system": "iso-alpha2"},
+        )])
+        status, _headers, body = self.request(
+            "/api/v1/geography?report=summary&source=umami&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["countries"][0]["code"], "US")
+        self.assertEqual(payload["counties"]["status"], "unavailable")
+        encoded = json.dumps(payload).casefold()
+        self.assertNotIn('"ip":', encoded)
+        self.assertNotIn('"visitor_id":', encoded)
+
+        world_status, world_headers, world = self.request("/assets/maps/world-countries.geojson")
+        us_status, us_headers, us = self.request("/assets/maps/us-counties.json")
+        self.assertEqual((world_status, us_status), (200, 200))
+        self.assertIn("application/geo+json", world_headers["Content-Type"])
+        self.assertIn("application/json", us_headers["Content-Type"])
+        self.assertIn('"FeatureCollection"', world)
+        self.assertIn('"counties"', us)
 
     def test_dashboard_renders_decision_support_and_measurement_roadmap(self):
         status, _headers, body = self.request(
@@ -98,6 +129,14 @@ class WebTests(unittest.TestCase):
         self.assertIn('<th scope="col">Umami visits</th>', body)
         self.assertIn('class="attention-severity">Review</p>', body)
         self.assertIn("no capability snapshot", body)
+        self.assertIn('class="dashboard-primary"', body)
+        self.assertIn('class="trust-card" data-state="complete"', body)
+        self.assertIn('class="panel attention-panel"', body)
+        self.assertIn('class="panel control-panel"', body)
+        self.assertNotIn('class="panel control-panel" open', body)
+        self.assertIn('class="panel decision-panel evidence-panel"', body)
+        self.assertIn('style=area', body)
+        self.assertIn('<details class="data-notices">', body)
         payload = json.loads(self.request(
             "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
         )[2])
@@ -194,6 +233,19 @@ class WebTests(unittest.TestCase):
         self.assertIn(".attention-list", css)
         self.assertIn(".roadmap-grid", css)
         self.assertIn(".decision-grid,.engagement-grid", css)
+        self.assertIn(".dashboard-primary", css)
+        self.assertIn(".trust-card", css)
+        self.assertIn("@media(max-width:760px)", css)
+
+    def test_plot_builder_keeps_visual_controls_open(self):
+        status, _headers, body = self.request(
+            "/?report=summary&view=plot&source=umami&metric=umami.pageviews&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn('class="panel control-panel" open', body)
+        self.assertNotIn('class="dashboard-primary"', body)
+        self.assertIn('style=line', body)
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 
@@ -218,6 +270,46 @@ class WebTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.request(path)[0], 400)
         self.assertEqual(self.request("/healthz")[0], 200)
+
+    def test_default_dashboard_uses_configured_maturity_lag(self):
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                current = cls(2026, 7, 21, 14, 0, tzinfo=UTC)
+                return current.astimezone(tz) if tz is not None else current.replace(tzinfo=None)
+
+        root = Path(self.temporary.name)
+        fixture = root / "lag-fixture.json"
+        write_fixture(fixture)
+        text = config_text(root / "lag-state.db", fixture).replace(
+            "default_window_days = 30\n[[reports.subreports]]",
+            "default_window_days = 7\ndefault_end_lag_days = 1\n[[reports.subreports]]",
+            1,
+        )
+        path = root / "lag-platform.toml"
+        path.write_text(text, encoding="utf-8")
+        config = load_config(path)
+        store = SQLiteMetricStore(root / "lag-state.db")
+        store.initialize()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_factory(config, store))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch("boho_analytics_platform.time_window.datetime", FrozenDateTime):
+                connection = http.client.HTTPConnection(
+                    "127.0.0.1", server.server_port, timeout=3
+                )
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                body = response.read().decode()
+                connection.close()
+            self.assertEqual(response.status, 200)
+            self.assertIn('name="start" value="2026-07-13"', body)
+            self.assertIn('name="end" value="2026-07-20"', body)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
 
     def test_blank_analytical_query_values_are_rejected(self):
         for path in (
@@ -549,6 +641,10 @@ metric_groups = ["traffic"]
         self.assertIn("<svg", body)
         self.assertIn("<title>", body)
         self.assertIn("Graph nodes and edges", body)
+        self.assertIn('data-graph-zoom-out aria-label="Zoom out"', body)
+        self.assertIn('data-graph-zoom-in aria-label="Zoom in"', body)
+        self.assertIn("data-graph-zoom-reset", body)
+        self.assertIn("data-graph-viewport", body)
         self.assertIn('name="page" value="/services/"', body)
         self.assertNotIn("github.com/example", body)
         self.assertEqual(headers["Cache-Control"], "no-store")
@@ -560,6 +656,28 @@ metric_groups = ["traffic"]
         self.assertIn('"analysis_basis": "compiled-contextual"', api_body)
         self.assertIn('"edge_basis": "selected-layers"', api_body)
         self.assertIn('"selected_page": "/services/"', api_body)
+
+    def test_site_graph_script_preserves_bounded_pointer_and_keyboard_interactions(self):
+        status, _headers, script = self.request("/assets/app.js")
+
+        self.assertEqual(status, 200)
+        self.assertIn("svg.getScreenCTM?.()", script)
+        self.assertIn("svg.createSVGPoint()", script)
+        self.assertIn('zoomInButton?.addEventListener("click"', script)
+        self.assertIn('zoomOutButton?.addEventListener("click"', script)
+        self.assertIn('zoomResetButton?.addEventListener("click", fitView)', script)
+        self.assertIn('addEventListener("wheel"', script)
+        self.assertIn("Math.min(Math.max(scale", script)
+        self.assertIn("svg.setPointerCapture?.(event.pointerId)", script)
+        self.assertIn("if (!dragState.moved)", script)
+        self.assertIn('addEventListener("lostpointercapture", finishDrag)', script)
+        self.assertIn('addEventListener("pointerleave", event =>', script)
+        self.assertIn("svg.releasePointerCapture(pointerId)", script)
+        self.assertIn('stage.dataset.graphSuppressClick = "true"', script)
+        self.assertIn('event.key === "Enter" || event.key === " "', script)
+        self.assertIn('event.key === "Escape" && (isPinned()', script)
+        self.assertIn("if (!stage) return", script)
+        self.assertIn("if (!inspector || !svg || (!nodes.length && !edges.length)) return", script)
 
     def test_site_graph_rejects_unknown_layer_without_mutating_database(self):
         before = self.store.path.stat().st_size

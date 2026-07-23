@@ -124,7 +124,9 @@ title = "Website summary"
 client_id = "example-client"
 site_ids = ["example-site"]
 metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "google.active-users", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
-default_window_days = 30
+default_window_days = 7
+# Default views stop before provider-finalization lag. Explicit start/end queries are unchanged.
+default_end_lag_days = 1
 
 [[reports.subreports]]
 id = "forms"

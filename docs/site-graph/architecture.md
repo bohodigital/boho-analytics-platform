@@ -99,6 +99,11 @@ hash-based jitter, collision relaxation, curved directed edges, quiet navigation
 page labels, and a plain-language map hint so non-graph users can read it as pages and pathways
 rather than a mathematical graph.
 
+The graph viewport supports bounded wheel and toolbar zoom plus pointer panning. Client coordinates
+are transformed through the SVG screen matrix so interaction remains aligned when responsive layout
+introduces letterboxing. Pointer capture is released on every drag exit path, and Escape clears a
+pinned selection whether it was established by keyboard or pointer.
+
 Every SVG has a title and description. A server-rendered node/edge fallback and the complete edge
 table expose equivalent values without JavaScript for keyboard and screen-reader use. Graph mode,
 table filtering, sorting, pagination, and CSV export are ordinary same-origin links and forms.

@@ -10,11 +10,13 @@ import json
 import math
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .build_info import build_identity
 from .catalog import METRICS
 from .credentials import ReferenceCredentialProvider, require_text
+from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
 from .reporting import ReportService, to_csv, to_series_csv
 from .site_graph.reporting import SiteGraphDisplayReportService
@@ -44,18 +46,24 @@ METRIC_LABELS = {
     "umami.visits": "Visits",
     "umami.bounces": "Bounces",
     "umami.total-time": "Visit time",
+    "umami.country-visits": "Country visits",
+    "umami.region-visits": "Region visits",
     "cloudflare.requests": "Edge requests",
     "cloudflare.visits": "Edge visits",
     "cloudflare.bytes": "Response bytes",
+    "cloudflare.country-visits": "Country edge visits",
     "google.active-users": "Active users",
     "google.sessions": "GA sessions",
     "google.pageviews": "GA page views",
     "google.events": "GA events",
     "google.key-events": "Key events",
+    "google.country-sessions": "Country GA sessions",
+    "google.region-sessions": "Region GA sessions",
     "search.clicks": "Search clicks",
     "search.impressions": "Search impressions",
     "search.ctr": "Search CTR",
     "search.position": "Average position",
+    "search.country-clicks": "Country search clicks",
     "forms.submissions": "Form submissions",
     "forms.pending": "Pending notifications",
     "forms.sent": "Sent notifications",
@@ -143,8 +151,31 @@ BASE_CSS = """
 @media(max-width:420px){.kpi-grid{grid-template-columns:1fr}.health-grid,.pipeline-grid{grid-template-columns:1fr}.topbar-inner{display:block}.brand{margin-bottom:10px}.live-state{max-width:100%;overflow-wrap:anywhere}}
 """
 
+VISUAL_REFRESH_CSS = """
+:root{--ink:#12201b;--ink-2:#263a32;--paper:#f1f4f2;--surface:#fff;--line:#dce4df;--muted:#5c6b64;--accent:#e96d3c;--accent-soft:#fff0e9;--green:#13795b;--green-soft:#e5f5ef;--amber:#9a5a10;--amber-soft:#fff5df;--red:#a64138;--red-soft:#fdecea;--shadow:0 18px 48px rgba(20,39,31,.07);--shadow-soft:0 8px 24px rgba(20,39,31,.055)}
+body{background:radial-gradient(circle at 8% 0%,#fff 0,transparent 28%),linear-gradient(180deg,#f6f8f7 0,#eef2ef 100%);font-size:14px}.topbar{position:sticky;top:0;z-index:10;background:rgba(18,32,27,.96);border-bottom:1px solid rgba(255,255,255,.09);backdrop-filter:blur(16px)}.topbar-inner{max-width:1360px;padding-top:14px;padding-bottom:14px}.brand-mark{border:0;background:linear-gradient(135deg,#ff9b72,#e96d3c);color:#1b211e;box-shadow:inset 0 1px rgba(255,255,255,.5)}.live-state{padding:7px 10px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.055)}
+.shell{max-width:1360px;padding-top:26px}.report-nav{margin-bottom:14px}.report-nav a,.subnav a,.quick-links a{border-color:#d8e0db;background:rgba(255,255,255,.72);box-shadow:0 1px 2px rgba(20,39,31,.03);transition:transform .15s ease,border-color .15s ease,background .15s ease}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{transform:translateY(-1px);border-color:#aebcb4}.report-nav a.active,.subnav a.active{background:#183129;border-color:#183129}.subnav{margin:14px 0 18px}
+.hero{align-items:center;margin-bottom:18px;padding:30px 32px;border:1px solid rgba(255,255,255,.11);border-radius:26px;background:radial-gradient(circle at 82% 18%,rgba(233,109,60,.27),transparent 30%),linear-gradient(135deg,#142a22 0%,#1c3b31 58%,#244a3d 100%);box-shadow:0 24px 60px rgba(17,39,31,.18);color:#fff}.hero .eyebrow{color:#ffae8e}.hero h1{max-width:760px;font-size:clamp(32px,4.5vw,52px)}.hero-copy{color:#c7d5cf}.trust-card{min-width:205px;padding:16px 17px;border:1px solid rgba(255,255,255,.17);border-radius:18px;background:rgba(255,255,255,.09);box-shadow:inset 0 1px rgba(255,255,255,.08);backdrop-filter:blur(10px)}.trust-card[data-state="partial"]{background:rgba(255,191,105,.11)}.trust-label{display:block;color:#bfcec8;font-size:10px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}.trust-value{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin:6px 0;color:#fff}.trust-value strong{font-size:25px;letter-spacing:-.04em}.trust-value span{color:#d8e3df;font-size:12px;font-weight:750}.coverage-track{height:6px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.15)}.coverage-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#5ad0a0,#8ce6bd)}.trust-card[data-state="partial"] .coverage-fill{background:linear-gradient(90deg,#eaa04f,#ffd08b)}
+.panel{border-color:rgba(205,217,210,.92);border-radius:20px;box-shadow:var(--shadow-soft)}.kpi-grid{gap:12px}.kpi-card{min-height:142px;padding:17px 17px 16px;border-radius:18px;box-shadow:var(--shadow-soft)}.kpi-card:before{content:"";position:absolute;left:0;top:0;width:100%;height:4px;background:linear-gradient(90deg,#e96d3c,#f2a37f)}.kpi-card:nth-child(2):before{background:linear-gradient(90deg,#168264,#62c4a2)}.kpi-card:nth-child(3):before{background:linear-gradient(90deg,#586aa8,#8998ce)}.kpi-card:nth-child(4):before{background:linear-gradient(90deg,#a97924,#d4aa59)}.kpi-card:after{right:-38px;bottom:-50px;width:125px;height:125px;opacity:.72}.kpi-value{margin-top:18px;font-size:38px}.kpi-note{max-width:92%;line-height:1.42}
+.dashboard-primary{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,.72fr);gap:18px;align-items:stretch;margin-bottom:18px}.dashboard-primary>.chart-panel,.dashboard-primary>.attention-panel{margin-bottom:0}.chart-panel{padding:23px}.chart-stage{min-height:430px;border-color:#dfe7e2;border-radius:16px;background:linear-gradient(180deg,#fbfdfc 0%,#f6faf7 100%)}.time-series-chart{height:430px}.chart-status{left:20px;top:16px;border-color:#dfe7e2;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 4px 14px rgba(20,39,31,.06)}.source-chip{background:#edf3ef;color:#385248}
+.attention-panel{padding:21px;background:linear-gradient(180deg,#fff,#fbfdfc)}.attention-panel .panel-heading{margin-bottom:16px}.attention-list{gap:10px}.attention-item{grid-template-columns:auto minmax(0,1fr);padding:14px;border-color:#e4ebe7;border-radius:15px;background:#f7faf8}.attention-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.attention-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.attention-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.attention-rank{width:30px;height:30px;border-radius:50%;background:#23443a}.attention-copy h3{font-size:15px;line-height:1.3}.attention-copy p{line-height:1.45}.attention-severity{color:#6b7b73!important}
+.decision-panel{padding:22px}.decision-card,.engagement-card,.roadmap-card{border-color:#e2e9e5;border-radius:15px;background:#f8faf9}.decision-value{font-size:32px}.decision-grid{gap:10px}.engagement-grid{gap:10px}.split-grid{gap:14px}.section-panel{padding:21px}.health-item,.pipeline-item,.operation-card{border-color:#e2e9e5;border-radius:13px;background:#f8faf9}
+.control-panel{padding:0;overflow:hidden}.control-summary{margin:0;padding:17px 20px;cursor:pointer;list-style:none;align-items:center}.control-summary::-webkit-details-marker{display:none}.control-summary:after{content:"+";display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:50%;background:#edf3ef;color:#27453a;font-size:20px;font-weight:500}.control-panel[open] .control-summary:after{content:"−"}.control-content{padding:0 20px 19px;border-top:1px solid #e9eeeb}.control-content .filter-form{padding-top:18px}.control-content .tools-row{margin-bottom:0}.data-notices{margin:0 0 18px;border:1px solid #edd7af;border-radius:15px;background:#fffaf0}.data-notices>summary{cursor:pointer;padding:13px 16px;color:#744711;font-weight:800}.data-notices .alerts{margin:0;padding:0 12px 12px}.data-notices .alert{border:0;background:rgba(255,255,255,.62)}
+.control-summary:focus,.data-notices>summary:focus,.evidence-panel>summary:focus{outline:3px solid rgba(233,109,60,.3);outline-offset:-3px}
+.evidence-panel{padding:0;overflow:hidden}.evidence-panel>summary{cursor:pointer;list-style:none;padding:19px 21px}.evidence-panel>summary::-webkit-details-marker{display:none}.evidence-panel>summary:after{content:"View";padding:5px 9px;border-radius:999px;background:#edf3ef;color:#385248;font-size:11px;font-weight:800}.evidence-panel[open]>summary:after{content:"Hide"}.evidence-body{padding:0 21px 21px}.evidence-panel .operations-grid,.evidence-panel .roadmap-grid{margin-top:0}.table-panel{border-radius:20px}.table-scroll{scrollbar-color:#bdc9c2 transparent}.footer{padding:8px 2px 0}
+@media(max-width:1080px){.dashboard-primary{grid-template-columns:1fr}.attention-panel .attention-list{grid-template-columns:repeat(2,minmax(0,1fr))}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:1/-1}}
+@media(max-width:760px){.hero{padding:24px}.trust-card{width:100%}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:14px}.attention-panel .attention-list{grid-template-columns:1fr}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:auto}.chart-stage{min-height:340px}.time-series-chart{height:340px}.control-summary{display:flex}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.shell{padding-top:18px}.hero{padding:22px 19px;border-radius:21px}.hero h1{font-size:34px}.kpi-grid{grid-template-columns:1fr}.kpi-card{min-height:130px}.chart-panel,.attention-panel,.decision-panel,.section-panel{padding:17px}.chart-stage{min-height:300px}.time-series-chart{height:300px}.live-state{border-radius:12px}}
+"""
+
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
-CSS = BASE_CSS + HEIGHT_CLASSES
+WIDTH_CLASSES = "".join(f".p-{level}{{width:{level}%}}" for level in range(101))
+GEOGRAPHY_CSS = """
+.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
+@media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
+@media(max-width:560px){.geography-panel{padding:16px}.geography-controls{display:grid;grid-template-columns:1fr}.geography-controls .field{min-width:0}.geo-svg{min-height:210px}.map-card{padding:10px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
 
 JS = r"""
 (() => {
@@ -345,6 +376,178 @@ JS = r"""
     }
   }
 
+  const svgNamespace = "http://www.w3.org/2000/svg";
+
+  function heatColor(value, maximum) {
+    if (value === undefined || value === null) return "#dfe7e2";
+    const intensity = Math.sqrt(Math.max(0, Number(value)) / Math.max(1, maximum));
+    const lightness = 92 - intensity * 48;
+    return `hsl(16 72% ${lightness}%)`;
+  }
+
+  function worldPath(geometry) {
+    const polygons = geometry?.type === "Polygon" ? [geometry.coordinates] :
+      geometry?.type === "MultiPolygon" ? geometry.coordinates : [];
+    return polygons.map(polygon => polygon.map(ring => ring.map((point, index) => {
+      const x = (Number(point[0]) + 180) / 360 * 960;
+      const y = (90 - Number(point[1])) / 180 * 480;
+      return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join("") + "Z").join("")).join("");
+  }
+
+  function decodeArc(topology, arcIndex) {
+    const reversed = arcIndex < 0;
+    const encoded = topology.arcs[reversed ? ~arcIndex : arcIndex] || [];
+    const scale = topology.transform?.scale || [1, 1];
+    const translate = topology.transform?.translate || [0, 0];
+    let x = 0, y = 0;
+    const points = encoded.map(point => {
+      x += point[0]; y += point[1];
+      return [x * scale[0] + translate[0], y * scale[1] + translate[1]];
+    });
+    return reversed ? points.reverse() : points;
+  }
+
+  function topoRing(topology, indexes) {
+    const points = [];
+    for (const index of indexes) {
+      const arc = decodeArc(topology, index);
+      points.push(...(points.length ? arc.slice(1) : arc));
+    }
+    return points.map((point, index) => `${index ? "L" : "M"}${point[0].toFixed(2)},${point[1].toFixed(2)}`).join("") + "Z";
+  }
+
+  function topoPath(topology, geometry) {
+    const polygons = geometry.type === "Polygon" ? [geometry.arcs] : geometry.arcs;
+    return polygons.map(polygon => polygon.map(ring => topoRing(topology, ring)).join("")).join("");
+  }
+
+  function updateGeographyTable(payload) {
+    const body = document.getElementById("geography-table-body");
+    if (!body) return;
+    body.replaceChildren();
+    if (!payload.countries.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td"); cell.colSpan = 3; cell.className = "geo-empty";
+      cell.textContent = "No unsuppressed country rows are stored for this source and exact window.";
+      row.append(cell); body.append(row); return;
+    }
+    for (const item of payload.countries) {
+      const row = document.createElement("tr");
+      for (const value of [item.code, format.format(Number(item.value)), payload.label]) {
+        const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+      }
+      row.firstElementChild.className = "metric-name"; body.append(row);
+    }
+  }
+
+  function renderWorldMap(svg, world, payload, status) {
+    svg.replaceChildren();
+    const byCode = new Map(payload.countries.map(item => [item.code, Number(item.value)]));
+    const maximum = Math.max(1, ...byCode.values());
+    for (const feature of world.features || []) {
+      const properties = feature.properties || {};
+      const alpha2 = properties.ISO_A2_EH || properties.ISO_A2;
+      const alpha3 = properties.ISO_A3_EH || properties.ADM0_A3;
+      const matching = payload.countries.find(item => item.code === (item.code_system === "iso-alpha3" ? alpha3 : alpha2));
+      const value = matching ? Number(matching.value) : undefined;
+      const path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", worldPath(feature.geometry));
+      path.setAttribute("fill", heatColor(value, maximum));
+      path.setAttribute("class", "geo-shape");
+      const name = properties.NAME_EN || properties.NAME || properties.ADMIN || alpha3;
+      const label = `${name}: ${value === undefined ? "no unsuppressed stored value" : format.format(value) + " " + payload.label}`;
+      const interactive = value !== undefined || alpha2 === "US";
+      path.dataset.interactive = String(interactive);
+      if (!interactive) {
+        path.setAttribute("aria-hidden", "true"); svg.append(path); continue;
+      }
+      path.setAttribute("tabindex", "0"); path.setAttribute("aria-label", label);
+      const inspect = () => { status.textContent = label; };
+      path.addEventListener("pointerenter", inspect); path.addEventListener("focus", inspect);
+      const activate = () => {
+        inspect();
+        if (alpha2 === "US") document.getElementById("us-geography")?.scrollIntoView({behavior: "smooth", block: "center"});
+      };
+      path.addEventListener("click", activate);
+      path.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } });
+      svg.append(path);
+    }
+  }
+
+  function renderUsMap(svg, topology, payload, status) {
+    svg.replaceChildren();
+    const stateRows = new Map(payload.us_states.map(item => [item.name, Number(item.value)]));
+    const maximum = Math.max(1, ...stateRows.values());
+    const countiesLayer = document.createElementNS(svgNamespace, "g");
+    const statesLayer = document.createElementNS(svgNamespace, "g");
+    svg.append(statesLayer, countiesLayer);
+    let selected = null;
+
+    const showCounties = geometry => {
+      selected = geometry.id;
+      countiesLayer.replaceChildren();
+      for (const county of topology.objects.counties?.geometries || []) {
+        if (!String(county.id).startsWith(String(geometry.id))) continue;
+        const path = document.createElementNS(svgNamespace, "path");
+        path.setAttribute("d", topoPath(topology, county)); path.setAttribute("class", "county-shape");
+        countiesLayer.append(path);
+      }
+      for (const path of statesLayer.children) path.classList.toggle("is-selected", path.dataset.stateId === selected);
+      const name = geometry.properties?.name || geometry.id;
+      const value = stateRows.get(name);
+      status.textContent = `${name}: ${value === undefined ? "no unsuppressed state value" : format.format(value) + " " + payload.label}. County boundaries are orientation only; county values are unavailable.`;
+    };
+
+    for (const geometry of topology.objects.states?.geometries || []) {
+      const name = geometry.properties?.name || geometry.id;
+      const value = stateRows.get(name);
+      const path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", topoPath(topology, geometry)); path.setAttribute("fill", heatColor(value, maximum));
+      path.setAttribute("class", "geo-shape"); path.setAttribute("tabindex", "0"); path.dataset.stateId = geometry.id;
+      const label = `${name}: ${value === undefined ? "no unsuppressed state value" : format.format(value) + " " + payload.label}`;
+      path.setAttribute("aria-label", `${label}. Activate for county boundaries.`);
+      path.addEventListener("pointerenter", () => { if (!selected) status.textContent = label; });
+      path.addEventListener("focus", () => { if (!selected) status.textContent = label; });
+      path.addEventListener("click", () => showCounties(geometry));
+      path.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showCounties(geometry); } });
+      statesLayer.append(path);
+    }
+  }
+
+  async function loadGeography() {
+    const stage = document.getElementById("geography-map");
+    if (!stage) return;
+    const worldSvg = document.getElementById("world-geo-map");
+    const usSvg = document.getElementById("us-geo-map");
+    const status = document.getElementById("geography-status");
+    const source = document.getElementById("geography-source");
+    try {
+      const [worldResponse, usResponse] = await Promise.all([
+        fetch(stage.dataset.worldMap, {credentials: "same-origin"}),
+        fetch(stage.dataset.usMap, {credentials: "same-origin"}),
+      ]);
+      if (!worldResponse.ok || !usResponse.ok) throw new Error("Local map boundary request failed.");
+      const world = await worldResponse.json(); const us = await usResponse.json();
+      const render = async () => {
+        const url = new URL(stage.dataset.geographyApi, window.location.href);
+        url.searchParams.set("source", source.value);
+        status.textContent = `Loading ${source.selectedOptions[0].textContent} geography...`;
+        const response = await fetch(url, {headers: {Accept: "application/json"}, credentials: "same-origin"});
+        if (!response.ok) throw new Error(`Geography request failed (${response.status})`);
+        const payload = await response.json();
+        renderWorldMap(worldSvg, world, payload, status); renderUsMap(usSvg, us, payload, status); updateGeographyTable(payload);
+        const withheld = payload.suppression.withheld_country_rows + payload.suppression.withheld_us_state_rows;
+        status.textContent = `${payload.label}: ${payload.countries.length} countries and ${payload.us_states.length} US states displayed; ${withheld} low-volume rows withheld. ${payload.coverage.note}`;
+        stage.dataset.rendered = "true";
+      };
+      source.addEventListener("change", () => render().catch(error => { status.textContent = error.message; stage.dataset.rendered = "error"; }));
+      await render();
+    } catch (error) {
+      status.textContent = error.message; stage.dataset.rendered = "error";
+    }
+  }
+
   function initSiteGraph() {
     const stage = document.querySelector("[data-site-graph-stage]");
     if (!stage) return;
@@ -368,6 +571,14 @@ JS = r"""
       let dragState = null;
 
       function clientToViewBox(clientX, clientY) {
+        const screenMatrix = svg.getScreenCTM?.();
+        if (screenMatrix) {
+          const point = svg.createSVGPoint();
+          point.x = clientX;
+          point.y = clientY;
+          const transformed = point.matrixTransform(screenMatrix.inverse());
+          return {x: transformed.x, y: transformed.y};
+        }
         const rect = svg.getBoundingClientRect();
         const width = rect.width || 1;
         const height = rect.height || 1;
@@ -446,8 +657,6 @@ JS = r"""
           y: transform.y,
           moved: false,
         };
-        svg.setPointerCapture?.(event.pointerId);
-        map?.classList.add("is-panning");
       });
 
       svg.addEventListener("pointermove", event => {
@@ -455,7 +664,11 @@ JS = r"""
         const current = clientToViewBox(event.clientX, event.clientY);
         const screenMove = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
         if (screenMove > 3) {
-          dragState.moved = true;
+          if (!dragState.moved) {
+            dragState.moved = true;
+            svg.setPointerCapture?.(event.pointerId);
+            map?.classList.add("is-panning");
+          }
           stage.dataset.graphDragging = "true";
           setTransform(
             dragState.x + current.x - dragState.startViewX,
@@ -467,10 +680,14 @@ JS = r"""
 
       function finishDrag(event) {
         if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const pointerId = dragState.pointerId;
         const moved = dragState.moved;
         dragState = null;
         map?.classList.remove("is-panning");
         stage.dataset.graphDragging = "false";
+        if (svg.hasPointerCapture?.(pointerId)) {
+          svg.releasePointerCapture(pointerId);
+        }
         if (moved) {
           stage.dataset.graphSuppressClick = "true";
           window.setTimeout(() => { stage.dataset.graphSuppressClick = "false"; }, 0);
@@ -479,6 +696,10 @@ JS = r"""
 
       svg.addEventListener("pointerup", finishDrag);
       svg.addEventListener("pointercancel", finishDrag);
+      svg.addEventListener("lostpointercapture", finishDrag);
+      svg.addEventListener("pointerleave", event => {
+        if (dragState && !dragState.moved) finishDrag(event);
+      });
       fitView();
       window.addEventListener("resize", () => fitView(), {passive: true});
     }
@@ -608,7 +829,7 @@ JS = r"""
       if (event.target === stage || event.target === svg || event.target === viewport || event.target.classList?.contains("graph-depth-plane")) clearGraph();
     });
     document.addEventListener("keydown", event => {
-      if (event.key === "Escape" && stage.contains(document.activeElement)) clearGraph();
+      if (event.key === "Escape" && (isPinned() || stage.contains(document.activeElement))) clearGraph();
     });
     initCanvasView();
     clearGraph();
@@ -626,15 +847,17 @@ JS = r"""
     metric.addEventListener("change", updateSiteOptions);
   }
   loadChart();
+  loadGeography();
   initSiteGraph();
 })();
 """
 
 
-def _window(query, timezone, default_days):
+def _window(query, timezone, default_days, default_end_lag_days=0):
     return report_window(
         timezone=timezone,
         default_days=default_days,
+        default_end_lag_days=default_end_lag_days,
         start=query.get("start", [None])[0],
         end=query.get("end", [None])[0],
     )
@@ -824,6 +1047,23 @@ def _summary_cards(result, expected_metrics):
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
 
 
+def _coverage_summary_html(result):
+    coverage = result.get("coverage") or {}
+    expected = int(coverage.get("expected_cells") or 0)
+    covered = int(coverage.get("covered_cells") or 0)
+    percent = round(covered / expected * 100) if expected else (100 if result.get("complete") else 0)
+    percent = max(0, min(100, percent))
+    state = "complete" if result.get("complete") else "partial"
+    label = "Trusted window" if state == "complete" else "Coverage to review"
+    return (
+        f'<aside class="trust-card" data-state="{state}" aria-label="{_e(label)}: {percent}%">'
+        '<span class="trust-label">Data confidence</span>'
+        f'<span class="trust-value"><strong>{percent}%</strong><span>{_e(label)}</span></span>'
+        f'<span class="coverage-track" aria-hidden="true"><span class="coverage-fill p-{percent}"></span></span>'
+        '</aside>'
+    )
+
+
 def _decision_badge(item):
     state = item.get("state", "unavailable")
     if state == "observed":
@@ -916,7 +1156,7 @@ def _attention_html(support):
             f'<p><strong>Next action:</strong> {_e(item["action"])}</p></div></li>'
         )
     return (
-        '<section class="panel decision-panel" aria-labelledby="attention-title">'
+        '<section class="panel attention-panel" aria-labelledby="attention-title">'
         '<div class="panel-heading"><div><h2 id="attention-title">What needs attention</h2>'
         '<p>Deterministic evidence and a next action; ordinary movement is not called an anomaly.</p>'
         f'</div></div><ol class="attention-list">{"".join(rows)}</ol></section>'
@@ -1028,11 +1268,11 @@ def _operations_html(support, site_names):
             f'{f"; {warning_count} recorded warning(s)" if warning_count else ""}</span>'
         )
     return (
-        '<section class="panel decision-panel" aria-labelledby="operations-title">'
-        '<div class="panel-heading"><div><h2 id="operations-title">Data operations</h2>'
-        '<p>Every current binding plus dated capability limits; resource IDs and provider error bodies stay hidden.</p>'
-        f'</div></div><div class="operations-grid">{"".join(operation_cards)}</div>'
-        f'<div class="capability-strip">{"".join(capability_chips)}</div></section>'
+        '<details class="panel decision-panel evidence-panel" aria-labelledby="operations-title">'
+        '<summary class="panel-heading"><div><h2 id="operations-title">Data operations</h2>'
+        '<p>Sync status and capability evidence for every current binding.</p>'
+        f'</div></summary><div class="evidence-body"><div class="operations-grid">{"".join(operation_cards)}</div>'
+        f'<div class="capability-strip">{"".join(capability_chips)}</div></div></details>'
     )
 
 
@@ -1044,11 +1284,17 @@ def _roadmap_html(support):
             f'<p>{_e(item["question"])}</p><p><strong>Needs:</strong> {_e(item["requires"])}</p></article>'
         )
     return (
-        '<section class="panel decision-panel" aria-labelledby="roadmap-title">'
-        '<div class="panel-heading"><div><h2 id="roadmap-title">Measurement roadmap</h2>'
-        '<p>High-value questions the current facts cannot answer; shown as gaps instead of invented KPIs.</p>'
-        f'</div></div><div class="roadmap-grid">{"".join(cards)}</div></section>'
+        '<details class="panel decision-panel evidence-panel" aria-labelledby="roadmap-title">'
+        '<summary class="panel-heading"><div><h2 id="roadmap-title">Measurement roadmap</h2>'
+        '<p>High-value questions the current facts cannot answer yet.</p>'
+        f'</div></summary><div class="evidence-body"><div class="roadmap-grid">{"".join(cards)}</div></div></details>'
     )
+
+
+def _decision_overview_html(support):
+    if not support:
+        return ""
+    return _attention_html(support)
 
 
 def _decision_support_html(support, site_names):
@@ -1056,7 +1302,6 @@ def _decision_support_html(support, site_names):
         return ""
     return (
         _decision_summary_html(support, site_names)
-        + _attention_html(support)
         + _engagement_html(support, site_names)
         + _site_pulse_html(support, site_names)
         + _operations_html(support, site_names)
@@ -1189,9 +1434,10 @@ def _health_html(result, expected_metrics):
 def _warnings_html(warnings):
     if not warnings:
         return ""
-    return '<section class="alerts" aria-label="Report warnings">' + "".join(
+    count = len(warnings)
+    return f'<details class="data-notices"><summary>{count} data note{"s" if count != 1 else ""} for this window</summary><section class="alerts" aria-label="Report warnings">' + "".join(
         f'<div class="alert"><span class="alert-mark">!</span><span>{_e(item)}</span></div>' for item in warnings
-    ) + "</section>"
+    ) + "</section></details>"
 
 
 def _metrics_table(result, site_names):
@@ -2116,8 +2362,45 @@ def _site_graph_analysis_panels(payload):
     )
 
 
+def _geography_panel(payload, api_url):
+    source_options = "".join(
+        f'<option value="{_e(source)}"{" selected" if source == payload["source"] else ""}>{_e(spec["label"])}</option>'
+        for source, spec in SOURCE_CONFIG.items()
+    )
+    rows = "".join(
+        f'<tr><td class="metric-name">{_e(row["code"])}</td><td>{_format_value(row["value"])}</td><td>{_e(payload["label"])}</td></tr>'
+        for row in payload["countries"]
+    ) or '<tr><td colspan="3" class="geo-empty">No unsuppressed country rows are stored for this source and exact window.</td></tr>'
+    suppression = payload["suppression"]
+    return (
+        '<section class="panel geography-panel" id="geography-map" '
+        f'data-geography-api="{_e(api_url)}" data-world-map="/assets/maps/world-countries.geojson" '
+        'data-us-map="/assets/maps/us-counties.json" aria-labelledby="geography-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Geographic demand</p>'
+        '<h2 id="geography-title">World visitor geography</h2>'
+        '<p>Provider-labeled choropleths from stored aggregate dimensions. Darker areas indicate more activity within the selected source; sources are never blended.</p></div>'
+        '<div class="geography-controls"><label class="field"><span>Map source</span>'
+        f'<select id="geography-source">{source_options}</select></label></div></div>'
+        '<div class="geography-grid"><article class="map-card"><h3>Countries</h3>'
+        '<p>Select the United States to move into state and county-boundary detail.</p>'
+        '<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="World country choropleth"></svg></article>'
+        '<article class="map-card" id="us-geography"><h3>United States</h3>'
+        '<p>State values where the provider supports region data; select a state to reveal county boundaries.</p>'
+        '<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="United States state choropleth and county boundary drilldown"></svg></article></div>'
+        '<div class="geo-status" id="geography-status" role="status">Loading local geography boundaries and stored aggregates...</div>'
+        '<div class="geo-disclosure"><p><strong>Privacy floor</strong>'
+        f'Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are currently hidden.</p>'
+        '<p><strong>County boundaries are orientation only</strong>Current providers do not expose trustworthy county aggregates. No county values are inferred from city names or IP data.</p>'
+        f'<p><strong>Method</strong>{_e(payload["methodology"])}</p></div>'
+        '<details class="geography-fallback"><summary>Accessible ranked country values and no-JavaScript fallback</summary>'
+        '<div class="table-scroll"><table><caption class="sr-only">Geographic activity by country</caption>'
+        f'<thead><tr><th scope="col">Country code</th><th scope="col">Value</th><th scope="col">Provider metric</th></tr></thead><tbody id="geography-table-body">{rows}</tbody></table></div></details></section>'
+    )
+
+
 def handler_factory(config, store, credentials=None):
     reports = ReportService(config, store)
+    geography = GeographyService(config, store)
     graph_reports = SiteGraphDisplayReportService(SiteGraphStore(store.path))
     credential_provider = credentials or ReferenceCredentialProvider()
     password = None
@@ -2187,6 +2470,14 @@ def handler_factory(config, store, credentials=None):
                 return self._send(200, "text/css; charset=utf-8", CSS)
             if parsed.path == "/assets/app.js":
                 return self._send(200, "text/javascript; charset=utf-8", JS)
+            if parsed.path == "/assets/maps/world-countries.geojson":
+                body = files("boho_analytics_platform").joinpath(
+                    "static/natural-earth-countries-110m.geojson").read_text(encoding="utf-8")
+                return self._send(200, "application/geo+json; charset=utf-8", body)
+            if parsed.path == "/assets/maps/us-counties.json":
+                body = files("boho_analytics_platform").joinpath(
+                    "static/us-counties-albers-10m.json").read_text(encoding="utf-8")
+                return self._send(200, "application/json; charset=utf-8", body)
             if parsed.path == "/favicon.svg":
                 return self._send(200, "image/svg+xml", FAVICON_SVG)
             try:
@@ -2196,6 +2487,7 @@ def handler_factory(config, store, credentials=None):
                     "source", "style", "compare", "view",
                 }
                 report_fields = {"report", "subreport", "start", "end", "site"}
+                geography_fields = {"report", "start", "end", "site", "source"}
                 graph_fields = {
                     "site", "page", "graph", "layer", "edge_query", "edge_sort",
                     "edge_order", "edge_page",
@@ -2208,6 +2500,9 @@ def handler_factory(config, store, credentials=None):
                     repeatable = set()
                 elif parsed.path in {"/api/v1/series", "/api/v1/series.csv"}:
                     allowed = analytics_fields
+                    repeatable = set()
+                elif parsed.path == "/api/v1/geography":
+                    allowed = geography_fields
                     repeatable = set()
                 elif parsed.path in {
                     "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
@@ -2235,6 +2530,8 @@ def handler_factory(config, store, credentials=None):
                     return self._site_graph_api(query)
                 if parsed.path == "/api/v1/site-graph.csv":
                     return self._site_graph_csv(query)
+                if parsed.path == "/api/v1/geography":
+                    return self._geography_api(query)
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
@@ -2389,19 +2686,47 @@ def handler_factory(config, store, credentials=None):
                 raise ValueError("unknown report")
             subreport_id = None if force_overview else query.get("subreport", [None])[0]
             default_days = report.default_window_days
+            default_end_lag_days = report.default_end_lag_days
             if subreport_id:
                 subreport = next((item for item in report.subreports if item.id == subreport_id), None)
                 if subreport is None:
                     raise ValueError("unknown subreport")
                 default_days = subreport.default_window_days
+                default_end_lag_days = subreport.default_end_lag_days
             site_id = query.get("site", [None])[0]
             if site_id == "all":
                 site_id = None
-            window = _window(query, config.platform.default_timezone, default_days)
+            window = _window(
+                query,
+                config.platform.default_timezone,
+                default_days,
+                default_end_lag_days,
+            )
             return reports.render(
                 report_id, window, subreport_id, site_id,
                 include_decision_support=include_decision_support,
             ), report
+
+        def _geography_payload(self, query):
+            report_id = query.get("report", [config.reports[0].id])[0]
+            report = next((item for item in config.reports if item.id == report_id), None)
+            if report is None:
+                raise ValueError("unknown report")
+            source = query.get("source", ["umami"])[0]
+            site_id = query.get("site", [None])[0]
+            if site_id == "all":
+                site_id = None
+            window = _window(
+                query, config.platform.default_timezone,
+                report.default_window_days, report.default_end_lag_days,
+            )
+            return geography.render(report_id, window, source, site_id=site_id)
+
+        def _geography_api(self, query):
+            return self._send(
+                200, "application/json",
+                json.dumps(self._geography_payload(query), sort_keys=True, separators=(",", ":")),
+            )
 
         def _series_payload(self, query, *, rendered=None):
             view = query.get("view", [""])[0]
@@ -2431,7 +2756,7 @@ def handler_factory(config, store, credentials=None):
             supported_sites = available_sites.get(source, set())
             if report["site_id"] is not None and report["site_id"] not in supported_sites:
                 raise ValueError("selected site is not configured for this series source")
-            style = query.get("style", ["line"])[0]
+            style = query.get("style", ["line" if is_plot else "area"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
             compare = _compare_flag(query)
@@ -2632,7 +2957,7 @@ def handler_factory(config, store, credentials=None):
                 (metric for metric in CHART_PRIORITY if metric in source_metrics),
                 source_metrics[0] if source_metrics else "",
             )
-            style = query.get("style", ["line"])[0]
+            style = query.get("style", ["line" if is_plot else "area"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
             compare = _compare_flag(query)
@@ -2774,8 +3099,6 @@ def handler_factory(config, store, credentials=None):
             if is_plot:
                 full_report_url = "/api/v1/report?" + urlencode({"report": report.id, "start": start, "end": end})
                 quick_links += f'<a href="{_e(full_report_url)}">Full report JSON</a>'
-            status_class = "" if result["complete"] else " partial"
-            status_text = "Complete coverage" if result["complete"] else "Partial coverage"
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
@@ -2811,6 +3134,10 @@ def handler_factory(config, store, credentials=None):
                 series_params["compare"] = "1"
             series_url = "/api/v1/series?" + urlencode(series_params)
             summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            attention_html = (
+                "" if is_plot
+                else _decision_overview_html(result.get("decision_support"))
+            )
             decision_html = (
                 "" if is_plot
                 else _decision_support_html(result.get("decision_support"), site_names)
@@ -2822,6 +3149,34 @@ def handler_factory(config, store, credentials=None):
                     f'<div class="split-grid">{_forms_html(result["forms_pipeline"])}{_health_html(result, expected_metrics)}</div>'
                     f'<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2><p>Provider-labeled totals with the immediately preceding period for comparison.</p></div></div><div class="table-scroll"><table><thead><tr><th>Metric</th><th>Site</th><th>Source</th><th>Current</th><th>Previous</th><th>Coverage</th><th>Change</th></tr></thead><tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
                 )
+            controls_open = " open" if is_plot else ""
+            coverage_summary = _coverage_summary_html(result)
+            chart_panel = (
+                '<section class="panel chart-panel"><div class="panel-heading"><div>'
+                f'<p class="eyebrow">Primary trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Daily trend"}</h2>'
+                f'<p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div>'
+                f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}</span></div>'
+                f'<div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
+                '<ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>'
+                '<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p>'
+                f'<details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>'
+            )
+            primary_content = (
+                chart_panel if is_plot
+                else f'<div class="dashboard-primary">{chart_panel}{attention_html}</div>'
+            )
+            geography_html = ""
+            if not is_plot:
+                geography_params = {
+                    "report": report.id, "start": start, "end": end, "source": "umami",
+                }
+                if result["site_id"]:
+                    geography_params["site"] = result["site_id"]
+                geography_query = {key: [value] for key, value in geography_params.items()}
+                geography_html = _geography_panel(
+                    self._geography_payload(geography_query),
+                    "/api/v1/geography?" + urlencode(geography_params),
+                )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2829,20 +3184,16 @@ def handler_factory(config, store, credentials=None):
 <body><a class="skip-link" href="#main">Skip to dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
-<section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div><span class="coverage-badge{status_class}">{_e(status_text)}</span></section>
+<section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div>{coverage_summary}</section>
 <nav class="subnav" aria-label="Report sections">{subnav}</nav>
-<section class="panel control-panel"><div class="panel-heading"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>Choose from locally stored data. Browser requests never trigger provider syncs.</p></div></div>
+<details class="panel control-panel"{controls_open}><summary class="panel-heading control-summary"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>{'Choose source, metric, scope, comparison, and chart style.' if is_plot else 'Change the window or site scope, or export the underlying evidence.'}</p></div></summary><div class="control-content">
 <form class="{form_class}" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{view_input}{hidden_subreport}
 <label class="field"><span>Start date</span><input type="date" name="start" value="{_e(start)}" required></label>
 <label class="field"><span>End date</span><input type="date" name="end" value="{_e(end)}" required></label>
 {source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
-<div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></section>
-            {_warnings_html(result['warnings'])}{decision_html}{summary_html}
-<section class="panel chart-panel"><div class="panel-heading"><div><h2>{_e(_metric_label(selected_metric)) if selected_metric else 'Daily trend'}</h2><p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div><span class="source-chip">{_e(_source_label(selected_source)) if selected_source else 'Daily series'}</span></div>
-<div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else 'Daily time series'}"></canvas></div><ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>
-<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p><details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>
-{supporting_html}
+<div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
+{_warnings_html(result['warnings'])}{summary_html}{primary_content}{geography_html}{decision_html}{supporting_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

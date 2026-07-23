@@ -96,8 +96,11 @@ even though they are not credentials.
 
 ## Reports and subreports
 
-Each report has a client, one or more sites, a metric allowlist, and a default window. A subreport
-uses a narrower metric set and may define exact dimension filters:
+Each report has a client, one or more sites, a metric allowlist, and a default window. Set
+`default_end_lag_days` when the default view should stop before provider-finalization lag. The lag
+applies only when dates are omitted; explicit `start` and `end` values are never shifted. Subreports
+inherit the report lag unless they set their own value. A subreport uses a narrower metric set and
+may define exact dimension filters:
 
 ```toml
 [[reports.subreports]]
@@ -105,6 +108,7 @@ id = "contact-form"
 title = "Contact form delivery"
 metric_ids = ["forms.submissions", "forms.sent", "forms.failed"]
 default_window_days = 30
+default_end_lag_days = 1
 
 [reports.subreports.filters]
 form_id = "contact"

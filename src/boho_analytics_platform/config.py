@@ -93,6 +93,7 @@ class SubreportConfig:
     metric_ids: tuple[str, ...]
     default_window_days: int
     filters: tuple[tuple[str, str], ...] = ()
+    default_end_lag_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,7 @@ class ReportConfig:
     metric_ids: tuple[str, ...]
     default_window_days: int
     subreports: tuple[SubreportConfig, ...] = ()
+    default_end_lag_days: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,29 +382,32 @@ def load_config(path: str | Path) -> AppConfig:
 
     reports: list[ReportConfig] = []
     for index, table in enumerate(_as_table_list(root.get("reports"), "reports")):
-        label = f"reports[{index}]"; _reject_unknown(table, {"id", "title", "client_id", "site_ids", "metric_ids", "default_window_days", "subreports"}, label)
+        label = f"reports[{index}]"; _reject_unknown(table, {"id", "title", "client_id", "site_ids", "metric_ids", "default_window_days", "default_end_lag_days", "subreports"}, label)
+        report_end_lag = _int(table, "default_end_lag_days", 0, label, 0, 3650)
         subs: list[SubreportConfig] = []
         for sub_index, sub in enumerate(_as_table_list(table.get("subreports"), f"{label}.subreports", required=False)):
-            sub_label = f"{label}.subreports[{sub_index}]"; _reject_unknown(sub, {"id", "title", "metric_ids", "default_window_days", "filters"}, sub_label)
+            sub_label = f"{label}.subreports[{sub_index}]"; _reject_unknown(sub, {"id", "title", "metric_ids", "default_window_days", "default_end_lag_days", "filters"}, sub_label)
             raw_filters = _as_mapping(sub.get("filters", {}), f"{sub_label}.filters")
             if not all(isinstance(key, str) and key.strip() and isinstance(value, str) and value.strip() for key, value in raw_filters.items()):
                 raise ConfigError(f"{sub_label}.filters must contain non-empty string keys and values")
             subs.append(SubreportConfig(
-                _validate_id(_required_text(sub, "id", sub_label), f"{sub_label}.id"),
-                _required_text(sub, "title", sub_label),
-                _metric_ids(sub.get("metric_ids"), f"{sub_label}.metric_ids"),
-                _int(sub, "default_window_days", _int(table, "default_window_days", 30, label, 1, 3650), sub_label, 1, 3650),
-                tuple(sorted((key.strip(), value.strip()) for key, value in raw_filters.items())),
+                id=_validate_id(_required_text(sub, "id", sub_label), f"{sub_label}.id"),
+                title=_required_text(sub, "title", sub_label),
+                metric_ids=_metric_ids(sub.get("metric_ids"), f"{sub_label}.metric_ids"),
+                default_window_days=_int(sub, "default_window_days", _int(table, "default_window_days", 30, label, 1, 3650), sub_label, 1, 3650),
+                filters=tuple(sorted((key.strip(), value.strip()) for key, value in raw_filters.items())),
+                default_end_lag_days=_int(sub, "default_end_lag_days", report_end_lag, sub_label, 0, 3650),
             ))
         _ensure_unique(subs, f"{label} subreport")
         reports.append(ReportConfig(
-            _validate_id(_required_text(table, "id", label), f"{label}.id"),
-            _required_text(table, "title", label),
-            _validate_id(_required_text(table, "client_id", label), f"{label}.client_id"),
-            _text_list(table.get("site_ids"), f"{label}.site_ids", required=True),
-            _metric_ids(table.get("metric_ids"), f"{label}.metric_ids"),
-            _int(table, "default_window_days", 30, label, 1, 3650),
-            tuple(subs),
+            id=_validate_id(_required_text(table, "id", label), f"{label}.id"),
+            title=_required_text(table, "title", label),
+            client_id=_validate_id(_required_text(table, "client_id", label), f"{label}.client_id"),
+            site_ids=_text_list(table.get("site_ids"), f"{label}.site_ids", required=True),
+            metric_ids=_metric_ids(table.get("metric_ids"), f"{label}.metric_ids"),
+            default_window_days=_int(table, "default_window_days", 30, label, 1, 3650),
+            subreports=tuple(subs),
+            default_end_lag_days=report_end_lag,
         ))
 
     if not clients or not sites or not connections or not bindings or not reports:

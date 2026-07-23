@@ -26,6 +26,22 @@ class ReleaseVerifierTests(unittest.TestCase):
 
         self.assertEqual(verify_tree(self.root), [])
 
+    def test_exact_static_map_directory_and_geojson_are_allowed(self):
+        self.write("src/boho_analytics_platform/static/world.geojson", '{"type":"FeatureCollection","features":[]}')
+        self.write("src/boho_analytics_platform/static/US_ATLAS_LICENSE.txt", "ISC license")
+
+        self.assertEqual(verify_tree(self.root), [])
+
+    def test_unexpected_static_map_sibling_remains_rejected(self):
+        self.write("src/boho_analytics_platform/static-private/world.geojson", "{}")
+
+        failures = verify_tree(self.root)
+
+        self.assertIn(
+            f"unexpected directory: {Path('src') / 'boho_analytics_platform' / 'static-private'}",
+            failures,
+        )
+
     def test_unexpected_site_graph_sibling_remains_rejected(self):
         self.write("docs/site-graph-private/notes.md")
 

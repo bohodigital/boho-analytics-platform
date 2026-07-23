@@ -6,6 +6,8 @@ from pathlib import Path
 
 from boho_analytics_platform.config import (
     ConfigError,
+    ReportConfig,
+    SubreportConfig,
     binding_observation_boundary,
     binding_observation_start,
     load_config,
@@ -22,6 +24,35 @@ class ConfigTests(unittest.TestCase):
 
     def test_valid_schema_v2_configuration(self):
         config = self._load(); self.assertEqual(config.schema_version, 2); self.assertEqual(config.reports[0].subreports[0].id, "forms")
+
+    def test_report_default_end_lag_is_bounded_and_inherited_by_subreports(self):
+        config = self._load(lambda text: text.replace(
+            "default_window_days = 30\n[[reports.subreports]]",
+            "default_window_days = 7\ndefault_end_lag_days = 1\n[[reports.subreports]]",
+            1,
+        ))
+        self.assertEqual(config.reports[0].default_end_lag_days, 1)
+        self.assertEqual(config.reports[0].subreports[0].default_end_lag_days, 1)
+
+        with self.assertRaisesRegex(ConfigError, "default_end_lag_days"):
+            self._load(lambda text: text.replace(
+                "default_window_days = 30\n[[reports.subreports]]",
+                "default_window_days = 7\ndefault_end_lag_days = -1\n[[reports.subreports]]",
+                1,
+            ))
+
+    def test_report_config_positional_callers_keep_the_existing_field_order(self):
+        filters = (("form", "contact"),)
+        subreport = SubreportConfig("forms", "Forms", ("forms.submissions",), 30, filters)
+        report = ReportConfig(
+            "summary", "Summary", "example-client", ("example-site",),
+            ("forms.submissions",), 30, (subreport,),
+        )
+
+        self.assertEqual(subreport.filters, filters)
+        self.assertEqual(subreport.default_end_lag_days, 0)
+        self.assertEqual(report.subreports, (subreport,))
+        self.assertEqual(report.default_end_lag_days, 0)
 
     def test_inline_secret_is_rejected_anywhere(self):
         with self.assertRaisesRegex(ConfigError, "inline secret field"):

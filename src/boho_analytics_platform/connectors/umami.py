@@ -34,7 +34,7 @@ class UmamiConnector:
         data = result.get("data", result) if isinstance(result, dict) else result
         resources = tuple(sorted(str(item["id"]) for item in data if isinstance(item, dict) and "id" in item))
         return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
-            ("umami.pageviews", "umami.sessions", "umami.summary"))
+            ("umami.pageviews", "umami.sessions", "umami.summary", "umami.country-visits", "umami.region-visits"))
 
     def collect(self, connection, credential, request):
         base = str(connection.options["base_url"]).rstrip("/"); headers = self._headers(connection, credential)
@@ -55,6 +55,42 @@ class UmamiConnector:
             if value is not None:
                 yield total_point(client_id=site.client_id, site_id=site.id, source=self.provider, metric=metric,
                     unit=unit, start=request.window.start, end=request.window.end, value=value)
+        country_rows = _metric_rows(self.http.request(
+            "GET", f"{root}/metrics/expanded?{query}&type=country", headers=headers))
+        for row in country_rows:
+            country = _country_code(row.get("name"))
+            visits = row.get("visits")
+            if country and visits is not None:
+                yield total_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric="umami.country-visits", unit="count", start=request.window.start,
+                    end=request.window.end, value=visits, dimensions={
+                        "country_code": country, "country_code_system": "iso-alpha2",
+                    })
+        region_rows = _metric_rows(self.http.request(
+            "GET", f"{root}/metrics/expanded?{query}&type=region", headers=headers))
+        for row in region_rows:
+            country = _country_code(row.get("country"))
+            region = str(row.get("name", "")).strip().upper()
+            visits = row.get("visits")
+            if country and region and visits is not None:
+                yield total_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric="umami.region-visits", unit="count", start=request.window.start,
+                    end=request.window.end, value=visits, dimensions={
+                        "country_code": country, "country_code_system": "iso-alpha2",
+                        "region_code": region,
+                    })
+
+
+def _metric_rows(value) -> list[dict]:
+    rows = value.get("data", value) if isinstance(value, dict) else value
+    if not isinstance(rows, list):
+        raise ValueError("Umami returned invalid expanded metrics")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _country_code(value) -> str | None:
+    code = str(value or "").strip().upper()
+    return code if len(code) == 2 and code.isalpha() else None
 
 
 def _series_day(value, timezone: str) -> date:

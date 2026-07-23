@@ -63,6 +63,12 @@ def _ga_body(start_date, end_date, *, limit: str = "100000") -> dict:
         "metrics": [{"name": name} for name in GoogleAnalyticsConnector.metrics], "limit": limit}
 
 
+def _ga_geography_body(start_date, end_date, *, limit: str = "100000") -> dict:
+    return {"dateRanges": [{"startDate": start_date.isoformat(), "endDate": end_date.isoformat()}],
+        "dimensions": [{"name": name} for name in ("date", "countryId", "region")],
+        "metrics": [{"name": "sessions"}], "limit": limit}
+
+
 def _reported_ga_timezone(result: dict) -> str | None:
     metadata = result.get("metadata")
     value = metadata.get("timeZone") if isinstance(metadata, dict) else None
@@ -80,6 +86,11 @@ def _validate_ga_timezone(result: dict, expected: str) -> str | None:
 def _search_console_body(start_date, end_date, *, row_limit: int = 25000) -> dict:
     return {"startDate": start_date.isoformat(), "endDate": end_date.isoformat(),
         "dimensions": ["date"], "rowLimit": row_limit, "dataState": "final"}
+
+
+def _search_console_geography_body(start_date, end_date, *, row_limit: int = 25000) -> dict:
+    return {"startDate": start_date.isoformat(), "endDate": end_date.isoformat(),
+        "dimensions": ["date", "country"], "rowLimit": row_limit, "dataState": "final"}
 
 
 def _search_console_window(start: datetime, end: datetime):
@@ -110,7 +121,8 @@ class GoogleAnalyticsConnector:
                 warnings.append(
                     f"GA4 property {binding.resource_id} did not disclose its timezone; timezone alignment is unverified.")
         return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
-            tuple(sorted(self.metrics.values())), warnings=tuple(sorted(set(warnings))))
+            tuple(sorted((*self.metrics.values(), "google.country-sessions", "google.region-sessions"))),
+            warnings=tuple(sorted(set(warnings))))
 
     def collect(self, connection, credential, request):
         token = _access_token(credential); property_id = request.binding.resource_id.removeprefix("properties/")
@@ -125,6 +137,35 @@ class GoogleAnalyticsConnector:
                 if name in self.metrics: yield daily_point(client_id=site.client_id, site_id=site.id,
                     source=self.provider, metric=self.metrics[name], unit="count", day=day,
                     value=value["value"], timezone=site.timezone)
+        geography = _require_response(self.http.request(
+            "POST", f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
+            headers=bearer(token), body=_ga_geography_body(
+                request.window.start.date(), request.window.end.date() - timedelta(days=1))), "GA4")
+        _validate_ga_timezone(geography, site.timezone)
+        geo_headers = [item["name"] for item in geography.get("metricHeaders", [])]
+        sessions_index = geo_headers.index("sessions") if "sessions" in geo_headers else None
+        for row in geography.get("rows", []):
+            dimensions = [item.get("value", "") for item in row.get("dimensionValues", [])]
+            values = row.get("metricValues", [])
+            if len(dimensions) < 3 or sessions_index is None or sessions_index >= len(values):
+                continue
+            raw_day, country, region = dimensions[:3]
+            country = country.strip().upper()
+            if len(country) != 2 or not country.isalpha():
+                continue
+            day = f"{raw_day[:4]}-{raw_day[4:6]}-{raw_day[6:]}"
+            value = values[sessions_index].get("value")
+            if value is None:
+                continue
+            base_dimensions = {"country_code": country, "country_code_system": "iso-alpha2"}
+            yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                metric="google.country-sessions", unit="count", day=day, value=value,
+                timezone=site.timezone, dimensions=base_dimensions)
+            region = region.strip()
+            if region and region.casefold() not in {"(not set)", "not set"}:
+                yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric="google.region-sessions", unit="count", day=day, value=value,
+                    timezone=site.timezone, dimensions={**base_dimensions, "region_name": region})
 
 
 class SearchConsoleConnector:
@@ -145,7 +186,7 @@ class SearchConsoleConnector:
                 headers=bearer(token), body=_search_console_body(probe_day, probe_day, row_limit=1)),
                 "Search Console")
         return CapabilitySnapshot(connection.id, self.provider, datetime.now(UTC), True, resources,
-            tuple(sorted(v[0] for v in self.metrics.values())), max_lookback_days=480,
+            tuple(sorted((*[v[0] for v in self.metrics.values()], "search.country-clicks"))), max_lookback_days=480,
             warnings=(f"Search Console daily facts use the provider date basis {SEARCH_CONSOLE_TIMEZONE}.",))
 
     def collect(self, connection, credential, request):
@@ -159,3 +200,15 @@ class SearchConsoleConnector:
                 if key in row: yield daily_point(client_id=site.client_id, site_id=site.id,
                     source=self.provider, metric=metric, unit=unit, day=row["keys"][0], value=row[key],
                     timezone=site.timezone)
+        geography = _require_response(self.http.request(
+            "POST", f"https://www.googleapis.com/webmasters/v3/sites/{encoded}/searchAnalytics/query",
+            headers=bearer(token), body=_search_console_geography_body(start_date, end_date)),
+            "Search Console")
+        for row in geography.get("rows", []):
+            keys = row.get("keys", [])
+            country = str(keys[1]).strip().upper() if len(keys) > 1 else ""
+            if len(country) == 3 and country.isalpha() and "clicks" in row:
+                yield daily_point(client_id=site.client_id, site_id=site.id,
+                    source=self.provider, metric="search.country-clicks", unit="count",
+                    day=keys[0], value=row["clicks"], timezone=site.timezone,
+                    dimensions={"country_code": country, "country_code_system": "iso-alpha3"})
