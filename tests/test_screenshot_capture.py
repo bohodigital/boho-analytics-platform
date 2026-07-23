@@ -18,6 +18,11 @@ class ScreenshotCaptureTests(unittest.TestCase):
         self.assertIn("drag completion leaked state or triggered selection", verifier)
         self.assertIn("Emulation.setDeviceMetricsOverride", verifier)
         self.assertIn("browser JavaScript exceptions", verifier)
+        self.assertIn("wheel zoom exceeded or failed to reach the upper bound", verifier)
+        self.assertIn("keyboard focus did not expose edge information", verifier)
+        self.assertIn("click suppression persisted after a completed drag", verifier)
+        self.assertIn("browser console failures", verifier)
+        self.assertIn("No graph controls.", verifier)
         self.assertIn("unsafe-inline", verifier)
 
     class _Response:
@@ -51,6 +56,18 @@ credential_ref = "env:private-token"
         routes = [route for _filename, route in capture_dashboard_headless.CAPTURES]
         self.assertTrue(any(route.startswith("/site-graph?site=fixture-static") for route in routes))
         self.assertIn("key: fixture-static", capture_dashboard_headless.DEMO_SITE_GRAPH_MANIFEST)
+
+    @patch("scripts.capture_dashboard_headless.sys.platform", "darwin")
+    @patch("scripts.capture_dashboard_headless.shutil.which", return_value=None)
+    def test_browser_candidates_include_standard_macos_installations(self, _which) -> None:
+        candidates = capture_dashboard_headless._browser_candidates()
+
+        self.assertIn(
+            capture_dashboard_headless.Path(
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ),
+            candidates,
+        )
 
     @patch.dict(os.environ, {"VERY_SECRET_API_KEY": "sentinel"})
     def test_child_environment_does_not_receive_provider_secrets(self) -> None:

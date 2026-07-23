@@ -36,7 +36,7 @@ class DevTools:
 
     def __init__(self, url: str) -> None:
         parsed = urlparse(url)
-        self.socket = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+        self.socket = socket.create_connection((parsed.hostname, parsed.port), timeout=15)
         key = base64.b64encode(os.urandom(16)).decode()
         request = (
             f"GET {parsed.path} HTTP/1.1\r\n"
@@ -53,6 +53,8 @@ class DevTools:
             raise RuntimeError("browser rejected the DevTools WebSocket")
         self.next_id = 1
         self.exceptions: list[str] = []
+        self.console_failures: list[str] = []
+        self.log_failures: list[str] = []
 
     def close(self) -> None:
         self.socket.close()
@@ -121,6 +123,14 @@ class DevTools:
             if message.get("method") == "Runtime.exceptionThrown":
                 details = message.get("params", {}).get("exceptionDetails", {})
                 self.exceptions.append(str(details.get("text", "JavaScript exception")))
+            if message.get("method") == "Runtime.consoleAPICalled":
+                params = message.get("params", {})
+                if params.get("type") in {"error", "warning"}:
+                    self.console_failures.append(str(params))
+            if message.get("method") == "Log.entryAdded":
+                entry = message.get("params", {}).get("entry", {})
+                if entry.get("level") in {"error", "warning"}:
+                    self.log_failures.append(str(entry.get("text", "browser log failure")))
             if message.get("id") != request_id:
                 continue
             if "error" in message:
@@ -171,14 +181,18 @@ def _click(devtools: DevTools, point: dict[str, float]) -> None:
 
 
 def _press_escape(devtools: DevTools) -> None:
+    _press_key(devtools, key="Escape", code="Escape", key_code=27)
+
+
+def _press_key(devtools: DevTools, *, key: str, code: str, key_code: int) -> None:
     for event_type in ("keyDown", "keyUp"):
         devtools.call(
             "Input.dispatchKeyEvent",
             type=event_type,
-            key="Escape",
-            code="Escape",
-            windowsVirtualKeyCode=27,
-            nativeVirtualKeyCode=27,
+            key=key,
+            code=code,
+            windowsVirtualKeyCode=key_code,
+            nativeVirtualKeyCode=key_code,
         )
 
 
@@ -187,9 +201,17 @@ def _assert(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
+def _exercise(devtools: DevTools, url: str, app_script: str) -> dict[str, object]:
     devtools.call("Runtime.enable")
+    devtools.call("Log.enable")
     devtools.call("Page.enable")
+    devtools.call(
+        "Emulation.setDeviceMetricsOverride",
+        width=1280,
+        height=720,
+        deviceScaleFactor=1,
+        mobile=False,
+    )
     devtools.call("Page.navigate", url=url)
     for _ in range(100):
         if devtools.evaluate("document.readyState") == "complete":
@@ -198,20 +220,27 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
     else:
         raise RuntimeError("Site Graph page did not finish loading")
 
+    devtools.evaluate(
+        """(() => {const svg=document.querySelector('.site-graph-svg');
+        document.documentElement.style.scrollBehavior='auto';
+        window.scrollTo(0,svg.getBoundingClientRect().top+window.scrollY-120);return window.scrollY;})()"""
+    )
     state = devtools.evaluate(
         """(() => {
           const svg=document.querySelector('.site-graph-svg');
           const node=document.querySelector('[data-graph-node][data-graph-node-route="/services/"]');
+          const nodeShape=node.querySelector('.graph-node');
           const edge=document.querySelector('[data-graph-edge]');
           const sr=svg.getBoundingClientRect();
-          const nr=node.getBoundingClientRect();
+          const nr=nodeShape.getBoundingClientRect();
           const point=edge.getPointAtLength(edge.getTotalLength()/2).matrixTransform(edge.getScreenCTM());
           return {
             svg:{x:sr.x,y:sr.y,width:sr.width,height:sr.height},
             node:{x:nr.x+nr.width/2,y:nr.y+nr.height/2},
             edge:{x:point.x,y:point.y},
             transform:document.querySelector('[data-graph-viewport]').getAttribute('transform'),
-            status:document.querySelector('[data-graph-zoom-status]').textContent
+            status:document.querySelector('[data-graph-zoom-status]').textContent,
+            scrollY:window.scrollY
           };
         })()"""
     )
@@ -221,7 +250,7 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
         return {pinned:s.dataset.graphPinned,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
     )
     _assert(node_selection["pinned"] == "true" and "Pinned page" in node_selection["inspector"],
-            "ordinary pointer click did not pin a node")
+            f"ordinary pointer click did not pin a node: geometry={state}, state={node_selection}")
     _press_escape(devtools)
     _click(devtools, state["edge"])
     edge_selection = devtools.evaluate(
@@ -230,6 +259,37 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
     )
     _assert(edge_selection["pinned"] == "true" and "Pinned edge" in edge_selection["inspector"],
             "ordinary pointer click did not pin an edge")
+    _press_escape(devtools)
+
+    keyboard_focus = devtools.evaluate(
+        """(() => {const node=document.querySelector('[data-graph-node][data-graph-node-route="/services/"]');
+        node.focus();const s=document.querySelector('[data-site-graph-stage]');
+        return {focused:document.activeElement===node,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
+    )
+    _assert(keyboard_focus["focused"] and "Focused page" in keyboard_focus["inspector"],
+            "keyboard focus did not expose node information")
+    _press_key(devtools, key="Enter", code="Enter", key_code=13)
+    enter_selection = devtools.evaluate(
+        """(() => {const s=document.querySelector('[data-site-graph-stage]');
+        return {pinned:s.dataset.graphPinned,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
+    )
+    _assert(enter_selection["pinned"] == "true" and "Pinned page" in enter_selection["inspector"],
+            "Enter did not pin the focused node")
+    _press_escape(devtools)
+    edge_focus = devtools.evaluate(
+        """(() => {const edge=document.querySelector('[data-graph-edge]');edge.focus();
+        const s=document.querySelector('[data-site-graph-stage]');
+        return {focused:document.activeElement===edge,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
+    )
+    _assert(edge_focus["focused"] and "Focused edge" in edge_focus["inspector"],
+            "keyboard focus did not expose edge information")
+    _press_key(devtools, key=" ", code="Space", key_code=32)
+    space_selection = devtools.evaluate(
+        """(() => {const s=document.querySelector('[data-site-graph-stage]');
+        return {pinned:s.dataset.graphPinned,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
+    )
+    _assert(space_selection["pinned"] == "true" and "Pinned edge" in space_selection["inspector"],
+            "Space did not pin the focused edge")
     _press_escape(devtools)
 
     zoom_button = devtools.evaluate(
@@ -243,6 +303,17 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
     )
     _assert(zoomed["status"] != state["status"] and zoomed["transform"] != state["transform"],
             "zoom-in control did not change the viewport")
+    zoom_out_button = devtools.evaluate(
+        """(() => {const r=document.querySelector('[data-graph-zoom-out]').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2};})()"""
+    )
+    _click(devtools, zoom_out_button)
+    zoomed_out = devtools.evaluate(
+        """({status:document.querySelector('[data-graph-zoom-status]').textContent,
+        transform:document.querySelector('[data-graph-viewport]').getAttribute('transform')})"""
+    )
+    _assert(zoomed_out["status"] == state["status"] and zoomed_out["transform"] == state["transform"],
+            "zoom-out did not reverse one zoom-in step")
     reset_button = devtools.evaluate(
         """(() => {const r=document.querySelector('[data-graph-zoom-reset]').getBoundingClientRect();
         return {x:r.x+r.width/2,y:r.y+r.height/2};})()"""
@@ -266,6 +337,21 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
         scrollY:window.scrollY})"""
     )
     _assert(wheel["status"] != state["status"], "wheel zoom did not change scale")
+    _assert(wheel["scrollY"] == state["scrollY"], "wheel zoom scrolled the page")
+
+    for _ in range(45):
+        _mouse(devtools, "mouseWheel", center, deltaX=0, deltaY=-400)
+    upper_bound = devtools.evaluate(
+        "document.querySelector('[data-graph-zoom-status]').textContent"
+    )
+    _assert(upper_bound == "320%", "wheel zoom exceeded or failed to reach the upper bound")
+    for _ in range(90):
+        _mouse(devtools, "mouseWheel", center, deltaX=0, deltaY=400)
+    lower_bound = devtools.evaluate(
+        "document.querySelector('[data-graph-zoom-status]').textContent"
+    )
+    _assert(lower_bound == "45%", "wheel zoom exceeded or failed to reach the lower bound")
+    _click(devtools, reset_button)
 
     _press_escape(devtools)
     drag_start = state["node"]
@@ -274,15 +360,34 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
     drag_end = {"x": drag_start["x"] + 80, "y": drag_start["y"] - 40}
     _mouse(devtools, "mouseMoved", drag_end, button="left", buttons=1)
     _mouse(devtools, "mouseReleased", drag_end, button="left", buttons=0, clickCount=1)
-    dragged = devtools.evaluate(
-        """(() => {const s=document.querySelector('[data-site-graph-stage]');return {
-        transform:document.querySelector('[data-graph-viewport]').getAttribute('transform'),
-        dragging:s.dataset.graphDragging,suppress:s.dataset.graphSuppressClick,
-        pinned:s.dataset.graphPinned};})()"""
-    )
+    for _ in range(100):
+        dragged = devtools.evaluate(
+            """(() => {const s=document.querySelector('[data-site-graph-stage]');return {
+            transform:document.querySelector('[data-graph-viewport]').getAttribute('transform'),
+            dragging:s.dataset.graphDragging,suppress:s.dataset.graphSuppressClick,
+            pinned:s.dataset.graphPinned};})()"""
+        )
+        if dragged["suppress"] == "false":
+            break
+        time.sleep(0.01)
     _assert(dragged["transform"] != wheel["transform"], "dragging did not pan the viewport")
-    _assert(dragged["dragging"] == "false" and dragged["pinned"] == "false",
-            "drag completion leaked state or triggered selection")
+    _assert(
+        dragged["dragging"] == "false"
+        and dragged["suppress"] == "false"
+        and dragged["pinned"] == "false",
+            f"drag completion leaked state or triggered selection: {dragged}")
+    node_after_drag = devtools.evaluate(
+        """(() => {const r=document.querySelector('[data-graph-node][data-graph-node-route="/services/"]').getBoundingClientRect();
+        return {x:r.x+r.width/2,y:r.y+r.height/2};})()"""
+    )
+    _click(devtools, node_after_drag)
+    post_drag_click = devtools.evaluate(
+        """(() => {const s=document.querySelector('[data-site-graph-stage]');
+        return {pinned:s.dataset.graphPinned,inspector:s.querySelector('[data-graph-inspector]').textContent};})()"""
+    )
+    _assert(post_drag_click["pinned"] == "true" and "Pinned page" in post_drag_click["inspector"],
+            "click suppression persisted after a completed drag")
+    _press_escape(devtools)
 
     devtools.call(
         "Emulation.setDeviceMetricsOverride",
@@ -298,16 +403,39 @@ def _exercise(devtools: DevTools, url: str) -> dict[str, object]:
     )
     _assert(responsive["innerWidth"] == 390 and responsive["overflow"] == 0 and responsive["svgWidth"] > 0,
             "responsive Site Graph viewport is unusable or overflows horizontally")
-    devtools.call("Runtime.evaluate", expression="0", returnByValue=True)
+
+    empty_documents = (
+        "<!doctype html><html><body><p>No graph controls.</p>",
+        """<!doctype html><html><body><div data-site-graph-stage>
+        <div data-graph-map><svg class="site-graph-svg"><g data-graph-viewport></g></svg></div>
+        <aside data-graph-inspector></aside></div>""",
+    )
+    for document in empty_documents:
+        encoded = base64.b64encode(
+            f"{document}<script>{app_script}</script></body></html>".encode()
+        ).decode()
+        devtools.call("Page.navigate", url=f"data:text/html;base64,{encoded}")
+        for _ in range(100):
+            if devtools.evaluate("document.readyState") == "complete":
+                break
+            time.sleep(0.01)
+        devtools.call("Runtime.evaluate", expression="0", returnByValue=True)
     _assert(not devtools.exceptions, f"browser JavaScript exceptions: {devtools.exceptions}")
+    _assert(not devtools.console_failures, f"browser console failures: {devtools.console_failures}")
+    _assert(not devtools.log_failures, f"browser resource/log failures: {devtools.log_failures}")
     return {
         "node_click": "passed",
         "edge_click": "passed",
+        "keyboard_focus_enter_space_escape": "passed",
+        "zoom_out": "passed",
         "toolbar_zoom_reset": "passed",
-        "wheel_zoom": "passed",
+        "wheel_zoom_and_bounds": "passed",
         "drag_pan_and_click_suppression": "passed",
         "responsive_390x844": "passed",
+        "controls_absent": "passed",
+        "zero_nodes_edges": "passed",
         "javascript_exceptions": 0,
+        "console_resource_failures": 0,
     }
 
 
@@ -359,9 +487,13 @@ def verify(browser: Path) -> dict[str, object]:
             url = f"http://127.0.0.1:{app_port}/site-graph?site=fixture-static&page=%2Fservices%2F"
             with urlopen(url, timeout=3) as response:  # noqa: S310 - fixed loopback URL
                 csp = response.headers.get("Content-Security-Policy", "")
+            with urlopen(  # noqa: S310 - fixed loopback URL
+                f"http://127.0.0.1:{app_port}/assets/app.js", timeout=3
+            ) as response:
+                app_script = response.read().decode()
             _assert("script-src 'self'" in csp and "unsafe-inline" not in csp,
                     "Site Graph CSP is missing or weakened")
-            results = _exercise(devtools, url)
+            results = _exercise(devtools, url, app_script)
             results["csp"] = "passed"
             results["browser"] = browser.name
             return results

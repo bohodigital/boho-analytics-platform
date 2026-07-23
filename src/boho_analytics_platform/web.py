@@ -657,8 +657,6 @@ JS = r"""
           y: transform.y,
           moved: false,
         };
-        svg.setPointerCapture?.(event.pointerId);
-        map?.classList.add("is-panning");
       });
 
       svg.addEventListener("pointermove", event => {
@@ -666,7 +664,11 @@ JS = r"""
         const current = clientToViewBox(event.clientX, event.clientY);
         const screenMove = Math.hypot(event.clientX - dragState.startClientX, event.clientY - dragState.startClientY);
         if (screenMove > 3) {
-          dragState.moved = true;
+          if (!dragState.moved) {
+            dragState.moved = true;
+            svg.setPointerCapture?.(event.pointerId);
+            map?.classList.add("is-panning");
+          }
           stage.dataset.graphDragging = "true";
           setTransform(
             dragState.x + current.x - dragState.startViewX,
@@ -695,6 +697,9 @@ JS = r"""
       svg.addEventListener("pointerup", finishDrag);
       svg.addEventListener("pointercancel", finishDrag);
       svg.addEventListener("lostpointercapture", finishDrag);
+      svg.addEventListener("pointerleave", event => {
+        if (dragState && !dragState.moved) finishDrag(event);
+      });
       fitView();
       window.addEventListener("resize", () => fitView(), {passive: true});
     }
