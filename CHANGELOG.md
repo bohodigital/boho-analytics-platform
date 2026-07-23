@@ -16,6 +16,9 @@ the first stable release.
 
 ### Fixed
 
+- Reconciled the existing Site Graph pan-and-zoom interaction with responsive SVG
+  coordinates, lost pointer-capture cleanup, and Escape dismissal for pointer-pinned
+  graph selections.
 - Added configurable maturity lag for default report windows so provider-finalization delay does
   not make the dashboard's normal landing view look broken; explicit historical windows remain
   unchanged and retain truthful partial-coverage warnings.

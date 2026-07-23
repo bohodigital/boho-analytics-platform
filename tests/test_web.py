@@ -641,6 +641,10 @@ metric_groups = ["traffic"]
         self.assertIn("<svg", body)
         self.assertIn("<title>", body)
         self.assertIn("Graph nodes and edges", body)
+        self.assertIn('data-graph-zoom-out aria-label="Zoom out"', body)
+        self.assertIn('data-graph-zoom-in aria-label="Zoom in"', body)
+        self.assertIn("data-graph-zoom-reset", body)
+        self.assertIn("data-graph-viewport", body)
         self.assertIn('name="page" value="/services/"', body)
         self.assertNotIn("github.com/example", body)
         self.assertEqual(headers["Cache-Control"], "no-store")
@@ -652,6 +656,26 @@ metric_groups = ["traffic"]
         self.assertIn('"analysis_basis": "compiled-contextual"', api_body)
         self.assertIn('"edge_basis": "selected-layers"', api_body)
         self.assertIn('"selected_page": "/services/"', api_body)
+
+    def test_site_graph_script_preserves_bounded_pointer_and_keyboard_interactions(self):
+        status, _headers, script = self.request("/assets/app.js")
+
+        self.assertEqual(status, 200)
+        self.assertIn("svg.getScreenCTM?.()", script)
+        self.assertIn("svg.createSVGPoint()", script)
+        self.assertIn('zoomInButton?.addEventListener("click"', script)
+        self.assertIn('zoomOutButton?.addEventListener("click"', script)
+        self.assertIn('zoomResetButton?.addEventListener("click", fitView)', script)
+        self.assertIn('addEventListener("wheel"', script)
+        self.assertIn("Math.min(Math.max(scale", script)
+        self.assertIn("svg.setPointerCapture?.(event.pointerId)", script)
+        self.assertIn('addEventListener("lostpointercapture", finishDrag)', script)
+        self.assertIn("svg.releasePointerCapture(pointerId)", script)
+        self.assertIn('stage.dataset.graphSuppressClick = "true"', script)
+        self.assertIn('event.key === "Enter" || event.key === " "', script)
+        self.assertIn('event.key === "Escape" && (isPinned()', script)
+        self.assertIn("if (!stage) return", script)
+        self.assertIn("if (!inspector || !svg || (!nodes.length && !edges.length)) return", script)
 
     def test_site_graph_rejects_unknown_layer_without_mutating_database(self):
         before = self.store.path.stat().st_size

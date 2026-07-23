@@ -571,6 +571,14 @@ JS = r"""
       let dragState = null;
 
       function clientToViewBox(clientX, clientY) {
+        const screenMatrix = svg.getScreenCTM?.();
+        if (screenMatrix) {
+          const point = svg.createSVGPoint();
+          point.x = clientX;
+          point.y = clientY;
+          const transformed = point.matrixTransform(screenMatrix.inverse());
+          return {x: transformed.x, y: transformed.y};
+        }
         const rect = svg.getBoundingClientRect();
         const width = rect.width || 1;
         const height = rect.height || 1;
@@ -670,10 +678,14 @@ JS = r"""
 
       function finishDrag(event) {
         if (!dragState || dragState.pointerId !== event.pointerId) return;
+        const pointerId = dragState.pointerId;
         const moved = dragState.moved;
         dragState = null;
         map?.classList.remove("is-panning");
         stage.dataset.graphDragging = "false";
+        if (svg.hasPointerCapture?.(pointerId)) {
+          svg.releasePointerCapture(pointerId);
+        }
         if (moved) {
           stage.dataset.graphSuppressClick = "true";
           window.setTimeout(() => { stage.dataset.graphSuppressClick = "false"; }, 0);
@@ -682,6 +694,7 @@ JS = r"""
 
       svg.addEventListener("pointerup", finishDrag);
       svg.addEventListener("pointercancel", finishDrag);
+      svg.addEventListener("lostpointercapture", finishDrag);
       fitView();
       window.addEventListener("resize", () => fitView(), {passive: true});
     }
@@ -811,7 +824,7 @@ JS = r"""
       if (event.target === stage || event.target === svg || event.target === viewport || event.target.classList?.contains("graph-depth-plane")) clearGraph();
     });
     document.addEventListener("keydown", event => {
-      if (event.key === "Escape" && stage.contains(document.activeElement)) clearGraph();
+      if (event.key === "Escape" && (isPinned() || stage.contains(document.activeElement))) clearGraph();
     });
     initCanvasView();
     clearGraph();
