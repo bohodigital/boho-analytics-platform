@@ -471,7 +471,7 @@ def _exercise(devtools: DevTools, url: str, app_script: str) -> dict[str, object
     }
 
 
-def verify(browser: Path) -> dict[str, object]:
+def verify(browser: Path, *, installed_package: bool = False) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="boho-site-graph-browser-") as temporary:
         runtime = Path(temporary)
         app_port = _free_port()
@@ -483,6 +483,8 @@ def verify(browser: Path) -> dict[str, object]:
             encoding="utf-8",
         )
         environment = _safe_environment()
+        if installed_package:
+            environment.pop("PYTHONPATH", None)
         _run_cli(config_path, "config", "validate", env=environment)
         _run_cli(config_path, "db", "init", env=environment)
         _seed_demo_site_graph(state_path)
@@ -528,6 +530,7 @@ def verify(browser: Path) -> dict[str, object]:
             results = _exercise(devtools, url, app_script)
             results["csp"] = "passed"
             results["browser"] = browser.name
+            results["runtime"] = "installed-package" if installed_package else "source"
             return results
         finally:
             if devtools is not None:
@@ -544,10 +547,15 @@ def verify(browser: Path) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", type=Path, help="Chromium-family browser executable")
+    parser.add_argument(
+        "--installed-package",
+        action="store_true",
+        help="exercise the package installed in this Python environment instead of ROOT/src",
+    )
     arguments = parser.parse_args()
     try:
         browser = arguments.browser.resolve() if arguments.browser else _find_browser()
-        results = verify(browser)
+        results = verify(browser, installed_package=arguments.installed_package)
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

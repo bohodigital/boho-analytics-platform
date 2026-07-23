@@ -25,6 +25,7 @@ class ScreenshotCaptureTests(unittest.TestCase):
         self.assertIn("No graph controls.", verifier)
         self.assertIn("nodes_with_zero_edges", verifier)
         self.assertIn("edges_with_zero_nodes", verifier)
+        self.assertIn("--installed-package", verifier)
         self.assertIn("unsafe-inline", verifier)
 
     class _Response:
