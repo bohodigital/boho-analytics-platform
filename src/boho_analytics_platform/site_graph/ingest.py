@@ -11,10 +11,17 @@ from dataclasses import asdict, dataclass
 from fnmatch import fnmatchcase
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from .manifest import SiteGraphManifest
+from .contracts import AdapterResult
+from .analysis import analyze_structural_semantics
+from .reconciliation import (
+    publish_reconciled_evidence,
+    reconcile_adapter_results,
+)
+from .reporting import core21_evidence_report
 from .storage import LinkOccurrence, PageFact, SiteGraphStore
 
 
@@ -104,6 +111,63 @@ class IngestResult:
 
     def sanitized_summary(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class Core21EvidenceIngestResult:
+    site_key: str
+    graph_snapshot_id: str
+    evidence_batch_id: str
+    evidence_hash: str
+    structural_hash: str
+    coverage: dict[str, Any]
+
+    def sanitized_summary(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def ingest_evidence_core21(
+    store: SiteGraphStore,
+    adapter_results: Iterable[AdapterResult],
+    *,
+    site_key: str,
+    repository_revision: str,
+    canonical_origin: str,
+    repository_snapshot_id: str,
+    manifest_version_id: str,
+    goal_definition_hash: str,
+    goal_routes: Iterable[str] = (),
+    selected_layers: Iterable[str] = ("contextual", "related"),
+) -> Core21EvidenceIngestResult:
+    """Reconcile and atomically persist already-bounded Core 2.1 lane results."""
+
+    reconciled = reconcile_adapter_results(
+        adapter_results,
+        site_key=site_key,
+        repository_revision=repository_revision,
+        canonical_origin=canonical_origin,
+    )
+    structural = analyze_structural_semantics(
+        reconciled.batch,
+        selected_layers=selected_layers,
+        goal_routes=goal_routes,
+    )
+    snapshot_id = publish_reconciled_evidence(
+        store,
+        reconciled,
+        repository_snapshot_id=repository_snapshot_id,
+        manifest_version_id=manifest_version_id,
+        goal_definition_hash=goal_definition_hash,
+    )
+    report = core21_evidence_report(reconciled, structural=structural)
+    return Core21EvidenceIngestResult(
+        site_key,
+        snapshot_id,
+        reconciled.batch.batch_id,
+        reconciled.content_hash,
+        structural.content_hash,
+        report["coverage"],
+    )
 
 
 def _bounded_process(

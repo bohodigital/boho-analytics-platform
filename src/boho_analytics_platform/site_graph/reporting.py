@@ -17,7 +17,9 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from .analysis import PROJECTION_LAYERS
+from .analysis import StructuralSummary
 from .dashboard import MAX_VISUAL_EDGES, MAX_VISUAL_NODES, SiteGraphReportService
+from .reconciliation import ReconciliationResult
 
 
 EDGE_TABLE_PAGE_SIZE = 1_000
@@ -31,6 +33,80 @@ _EDGE_SORTS = {
     "occurrences": "occurrence_count",
 }
 _SAFE_METADATA_LABEL = re.compile(r"[A-Za-z0-9_. -]{1,80}\Z")
+
+
+def core21_evidence_report(
+    result: ReconciliationResult,
+    *,
+    structural: StructuralSummary | None = None,
+) -> dict[str, Any]:
+    """Return a complete, cap-independent evidence and reconciliation summary."""
+
+    batch = result.batch
+    state_counts = dict(batch.coverage.state_counts)
+    lane_rows = [
+        {
+            "adapter": lane.adapter,
+            "status": lane.status,
+            "revision_relation": lane.revision_relation,
+            "candidates": lane.candidates,
+            "pages": lane.pages,
+            "relationships": lane.relationships,
+            "diagnostics": lane.diagnostics,
+        }
+        for lane in result.lanes
+    ]
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "evidence_core": "2.1",
+        "batch_id": batch.batch_id,
+        "content_hash": result.content_hash,
+        "freshness_basis": "exact-revision",
+        "repository_revision": batch.repository_revision,
+        "coverage": {
+            "candidates": batch.coverage.route_total,
+            "entities": batch.coverage.page_total,
+            "relationships": batch.coverage.relationship_total,
+            "state_counts": state_counts,
+            "unresolved": state_counts.get("unresolved", 0)
+            + state_counts.get("dynamic-unknown", 0)
+            + state_counts.get("unchecked", 0),
+            "contradictions": len(result.contradictions),
+            "exclusions": len(result.exclusions),
+            "revision_mismatches": sum(
+                lane.revision_relation == "mismatch" for lane in result.lanes
+            ),
+            "failed_lanes": sum(lane.status == "failed" for lane in result.lanes),
+            "complete_totals": True,
+            "display_cap_applied": False,
+        },
+        "lanes": lane_rows,
+        "contradicted_routes": list(result.contradictions),
+        "excluded_routes": list(result.exclusions),
+    }
+    if structural is None:
+        payload["structural_metrics"] = {
+            "available": False,
+            "reason": "no-compatible-selected-projection",
+        }
+    else:
+        payload["structural_metrics"] = {
+            "available": True,
+            "selected_layers": list(structural.selected_layers),
+            "pages": structural.pages,
+            "full_relationships": structural.full_relationships,
+            "selected_relationships": structural.selected_relationships,
+            "true_orphans": len(structural.true_orphans),
+            "contextual_orphans": len(structural.contextual_orphans),
+            "contextual_dead_ends": len(structural.contextual_dead_ends),
+            "menu_dependent": len(structural.menu_dependent),
+            "homepage_dependent": len(structural.homepage_dependent),
+            "global_shell_dependent": len(structural.global_shell_dependent),
+            "full_goal_reachable": len(structural.full_goal_reachable),
+            "selected_goal_reachable": len(structural.selected_goal_reachable),
+            "content_hash": structural.content_hash,
+        }
+    return payload
 
 
 def _pretty_name(route: str) -> str:

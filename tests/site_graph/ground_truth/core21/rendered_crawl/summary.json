@@ -1,0 +1,13 @@
+{
+  "adapter_state": "partial",
+  "candidate_states": {
+    "complete": 1,
+    "partial": 1
+  },
+  "link_resolution_states": [
+    "action",
+    "fragment",
+    "rendered-only"
+  ],
+  "revision_state": "matched"
+}

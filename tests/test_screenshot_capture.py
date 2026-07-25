@@ -32,7 +32,7 @@ class ScreenshotCaptureTests(unittest.TestCase):
         status = 200
 
         def read(self):
-            return b'{"ok":true,"version":"0.1.1.dev0","database_schema":3}'
+            return b'{"ok":true,"version":"0.2.0","database_schema":3}'
 
         def __enter__(self):
             return self

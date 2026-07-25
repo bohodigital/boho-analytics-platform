@@ -9,10 +9,10 @@ from boho_analytics_platform.models import Completeness, MetricPoint, TimeGrain
 
 
 class CatalogTests(unittest.TestCase):
-    def point(self, metric="umami.pageviews", unit="count", source="umami"):
+    def point(self, metric="umami.pageviews", unit="count", source="umami", dimensions=()):
         start = datetime(2026, 7, 1, tzinfo=UTC)
         return MetricPoint("client", "site", source, metric, unit, start, start + timedelta(days=1),
-            TimeGrain.DAY, Decimal(1), (), Completeness.FINAL, start)
+            TimeGrain.DAY, Decimal(1), dimensions, Completeness.FINAL, start)
 
     def test_unknown_metric_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "unknown metric"): validate_points([self.point("unknown")])
@@ -32,6 +32,25 @@ class CatalogTests(unittest.TestCase):
             METRICS["search.position"].coverage_inputs,
             ("search.impressions", "search.position"),
         )
+        self.assertFalse(METRICS["search.route-ctr"].reportable)
+
+    def test_route_metrics_reject_ambiguous_or_unapproved_dimension_sets(self):
+        valid = self.point(
+            metric="search.route-clicks",
+            source="search-console",
+            dimensions=(
+                ("data_state", "final"),
+                ("observation_scope", "page"),
+                ("route", "/about"),
+            ),
+        )
+        validate_points([valid])
+        with self.assertRaisesRegex(ValueError, "invalid dimensions"):
+            validate_points([self.point(
+                metric="search.route-clicks",
+                source="search-console",
+                dimensions=(("route", "/about"),),
+            )])
 
     def test_source_semantics_do_not_claim_unknown_provider_details(self):
         self.assertEqual(

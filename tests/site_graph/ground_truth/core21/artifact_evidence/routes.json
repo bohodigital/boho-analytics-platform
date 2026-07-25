@@ -1,0 +1,13 @@
+{
+  "routes": [
+    "/",
+    "/about/",
+    "/manifest-only/",
+    "/old/",
+    "/sitemap-only/"
+  ],
+  "excluded_routes": [
+    "/must-not-become-a-route/"
+  ],
+  "revision_state": "matched"
+}

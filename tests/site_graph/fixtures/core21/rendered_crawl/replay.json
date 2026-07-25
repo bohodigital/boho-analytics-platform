@@ -1,0 +1,78 @@
+{
+  "desktop": {
+    "https://example.test/": {
+      "requested_url": "https://example.test/",
+      "final_url": "https://example.test/",
+      "http_status": 200,
+      "canonical_url": "https://example.test/",
+      "robots": "index,follow",
+      "title": "Home",
+      "h1": ["Welcome"],
+      "schema_types": ["WebSite", "Organization"],
+      "dom_html": "<main><h1>Welcome</h1></main>",
+      "anchors": [
+        {
+          "href": "/about",
+          "text": "About us",
+          "accessible_name": "About Boho",
+          "landmark": "navigation",
+          "visible": true,
+          "in_viewport": true,
+          "rel": []
+        },
+        {
+          "href": "#details",
+          "text": "Details",
+          "accessible_name": "Details",
+          "landmark": "main",
+          "visible": true,
+          "in_viewport": false,
+          "rel": ["nofollow"]
+        }
+      ],
+      "forms": [
+        {
+          "action": "/contact/save",
+          "text": "Send",
+          "accessible_name": "Send message",
+          "landmark": "main",
+          "visible": true,
+          "in_viewport": false
+        }
+      ],
+      "console_failures": ["javascript"],
+      "network_failures": ["resource"],
+      "blocked_resources": ["tracker"],
+      "hydration_complete": true
+    }
+  },
+  "mobile": {
+    "https://example.test/": {
+      "requested_url": "https://example.test/",
+      "final_url": "https://example.test/",
+      "http_status": 200,
+      "canonical_url": "https://example.test/",
+      "robots": "index,follow",
+      "title": "Home",
+      "h1": ["Welcome"],
+      "schema_types": ["Organization", "WebSite"],
+      "dom_html": "<main><h1>Welcome</h1></main>",
+      "anchors": [
+        {
+          "href": "/about",
+          "text": "About us",
+          "accessible_name": "About Boho",
+          "landmark": "navigation",
+          "visible": true,
+          "in_viewport": true,
+          "rel": []
+        }
+      ],
+      "forms": [],
+      "console_failures": [],
+      "network_failures": [],
+      "blocked_resources": [],
+      "hydration_complete": false
+    }
+  }
+}

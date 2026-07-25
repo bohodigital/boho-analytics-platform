@@ -1,0 +1,5 @@
+{
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "staticRoutes": ["/", "/manifest-only/"],
+  "untrustedDescription": "/must-not-become-a-route/"
+}

@@ -1,0 +1,181 @@
+schema_version: "2.1"
+fixture_id: public_graph_evidence_core21
+description: Synthetic analyzer-independent contract for Graph Evidence Core 2.1.
+site:
+  origin: https://graph-core21.example
+  repository_revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  deployment_revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  analyzer_independent: true
+routes:
+  - id: about
+    path: /about/
+    canonical_path: /about/
+    goal: false
+  - id: about_alias
+    path: /about-us/
+    canonical_path: /about/
+    goal: false
+  - id: article_alpha
+    path: /articles/alpha/
+    canonical_path: /articles/alpha/
+    goal: false
+  - id: article_beta
+    path: /articles/beta/
+    canonical_path: /articles/beta/
+    goal: false
+  - id: contact
+    path: /contact/
+    canonical_path: /contact/
+    goal: true
+  - id: gateway
+    path: /start/
+    canonical_path: /start/
+    goal: false
+  - id: healthy_a
+    path: /learn/a/
+    canonical_path: /learn/a/
+    goal: false
+  - id: healthy_b
+    path: /learn/b/
+    canonical_path: /learn/b/
+    goal: false
+  - id: home
+    path: /
+    canonical_path: /
+    goal: false
+  - id: pricing
+    path: /pricing/
+    canonical_path: /pricing/
+    goal: false
+  - id: resources
+    path: /resources/
+    canonical_path: /resources/
+    goal: false
+  - id: services
+    path: /services/
+    canonical_path: /services/
+    goal: false
+  - id: trap_a
+    path: /trapped/a/
+    canonical_path: /trapped/a/
+    goal: false
+  - id: trap_b
+    path: /trapped/b/
+    canonical_path: /trapped/b/
+    goal: false
+scenarios:
+  - id: s01_direct_links
+    category: direct_links
+    description: A direct anchor resolves to a declared internal page.
+    input_forms: [jsx_anchor]
+    expected_evidence: [e01_direct]
+  - id: s02_wrapped_links
+    category: wrapped_links
+    description: A local wrapper forwards a statically known route prop.
+    input_forms: [component_alias, wrapper_prop]
+    expected_evidence: [e02_wrapped]
+  - id: s03_route_registries
+    category: route_registries
+    description: A bounded constant registry resolves a route by literal key.
+    input_forms: [constant_object, literal_property]
+    expected_evidence: [e03_registry]
+  - id: s04_nested_props
+    category: nested_props
+    description: A nested route-specific prop resolves without executing code.
+    input_forms: [nested_object, property_access]
+    expected_evidence: [e04_nested]
+  - id: s05_arrays_maps_spreads
+    category: arrays_maps_spreads
+    description: Bounded arrays, maps, and object spreads retain separate occurrences.
+    input_forms: [array_literal, bounded_map, object_spread]
+    expected_evidence: [e05_array_map_spread]
+  - id: s06_conditions
+    category: conditions
+    description: Statically bounded branches preserve checked and unchecked evidence.
+    input_forms: [conditional_branch, viewport_branch]
+    expected_evidence: [e06_conditional_unchecked]
+  - id: s07_dynamic_routes
+    category: dynamic_routes
+    description: Enumerated parameters resolve while runtime slugs remain explicitly unknown.
+    input_forms: [dynamic_segment, static_parameters]
+    expected_evidence: [e07_dynamic_unknown]
+  - id: s08_duplicate_occurrences
+    category: duplicate_occurrences
+    description: Two links between the same pages retain distinct occurrence identities.
+    input_forms: [body_link, menu_link]
+    expected_evidence: [e08_duplicate_body, e09_duplicate_menu]
+  - id: s09_fragments
+    category: fragments
+    description: Same-page fragments remain evidence but never become page topology.
+    input_forms: [fragment_href]
+    expected_evidence: [e10_fragment]
+  - id: s10_actions
+    category: actions
+    description: Action targets remain classified evidence and never become page topology.
+    input_forms: [form_action, mailto_href]
+    expected_evidence: [e11_action]
+  - id: s11_redirects
+    category: redirects
+    description: A declared redirect preserves source, destination, and revision provenance.
+    input_forms: [redirect_manifest]
+    expected_evidence: [e12_redirect]
+  - id: s12_canonical_conflicts
+    category: canonical_conflicts
+    description: Conflicting canonical evidence is preserved as contradiction.
+    input_forms: [html_canonical, route_manifest]
+    expected_evidence: [e13_canonical_conflict]
+  - id: s13_source_artifact_rendered_disagreements
+    category: source_artifact_rendered_disagreements
+    description: Revision-matched evidence disagreements remain explicit and unmerged.
+    input_forms: [artifact_html, rendered_dom, source_ast]
+    expected_evidence: [e14_artifact_only, e15_rendered_only, e16_source_only]
+  - id: s14_unresolved_expressions
+    category: unresolved_expressions
+    description: Runtime and environment expressions emit no invented destination.
+    input_forms: [environment_expression, runtime_state]
+    expected_evidence: [e17_unresolved]
+  - id: s15_menu_home_dependence
+    category: menu_home_dependence
+    description: A route reachable only through the home menu is explicitly classified.
+    input_forms: [global_menu]
+    expected_evidence: [e18_menu_dependence]
+  - id: s16_healthy_and_trapped_sccs
+    category: healthy_and_trapped_sccs
+    description: Healthy and goal-trapped strongly connected components coexist.
+    input_forms: [contextual_cycle]
+    expected_evidence: [e19_healthy_cycle, e20_trap_cycle]
+  - id: s17_dominators_gateways
+    category: dominators_gateways
+    description: A gateway that dominates goal paths is retained as a graph expectation.
+    input_forms: [contextual_link]
+    expected_evidence: [e21_gateway]
+  - id: s18_alternate_goal_paths
+    category: alternate_goal_paths
+    description: Two edge-disjoint routes from home to the goal remain distinguishable.
+    input_forms: [contextual_link, related_link]
+    expected_evidence: [e22_alternate_path]
+  - id: s19_snapshot_changes
+    category: snapshot_changes
+    description: Added, changed, and removed evidence is compared between exact snapshots.
+    input_forms: [snapshot_pair]
+    expected_evidence: [e23_snapshot_change]
+  - id: s20_invented_route_regressions
+    category: invented_route_regressions
+    description: Undeclared candidates are rejected instead of becoming pages.
+    input_forms: [candidate_route_set]
+    expected_evidence: [e24_missing, e25_excluded]
+  - id: s21_interrupted_publication
+    category: interrupted_publication
+    description: An interrupted publication leaves the previous complete snapshot visible.
+    input_forms: [atomic_publication]
+    expected_evidence: [e26_interrupted]
+  - id: s22_projection_consistency
+    category: projection_consistency
+    description: All projections derive from one occurrence set with stable totals.
+    input_forms: [projection_control]
+    expected_evidence: [e27_projection]
+  - id: s23_visual_limit_analytical_total
+    category: visual_limit_analytical_total
+    description: Visual truncation never changes analytical totals.
+    input_forms: [display_control]
+    expected_evidence: [e28_visual_limit]

@@ -1,0 +1,390 @@
+schema_version: "2.1"
+fixture_id: public_graph_evidence_core21
+resolution_states:
+  - action
+  - artifact-only
+  - confirmed-page
+  - contradicted
+  - dynamic-unknown
+  - excluded
+  - external
+  - fragment
+  - missing
+  - redirect
+  - rendered-only
+  - source-only
+  - unchecked
+  - unresolved
+evidence:
+  - id: e01_direct
+    scenario_id: s01_direct_links
+    source_route: home
+    target_route: services
+    raw_target: /services/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/page.tsx:12:services
+    layer: contextual
+  - id: e02_wrapped
+    scenario_id: s02_wrapped_links
+    source_route: services
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/services/page.tsx:18:contact
+    layer: action
+  - id: e03_registry
+    scenario_id: s03_route_registries
+    source_route: resources
+    target_route: article_alpha
+    raw_target: /articles/alpha/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/resources/page.tsx:21:article-alpha
+    layer: related
+  - id: e04_nested
+    scenario_id: s04_nested_props
+    source_route: article_alpha
+    target_route: article_beta
+    raw_target: /articles/beta/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:components/card.tsx:9:article-beta
+    layer: related
+  - id: e05_array_map_spread
+    scenario_id: s05_arrays_maps_spreads
+    source_route: resources
+    target_route: services
+    raw_target: /services/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:components/link-list.tsx:14:services
+    layer: contextual
+  - id: e06_conditional_unchecked
+    scenario_id: s06_conditions
+    source_route: home
+    target_route: null
+    raw_target: /pricing/
+    resolution_state: unchecked
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:components/header.tsx:27:conditional-pricing
+    layer: menu
+  - id: e07_dynamic_unknown
+    scenario_id: s07_dynamic_routes
+    source_route: article_alpha
+    target_route: null
+    raw_target: /articles/{runtime-slug}/
+    resolution_state: dynamic-unknown
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/articles/slug/page.tsx:30:runtime-slug
+    layer: contextual
+  - id: e08_duplicate_body
+    scenario_id: s08_duplicate_occurrences
+    source_route: home
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/page.tsx:42:contact-body
+    layer: action
+  - id: e09_duplicate_menu
+    scenario_id: s08_duplicate_occurrences
+    source_route: home
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:components/header.tsx:8:contact-menu
+    layer: menu
+  - id: e10_fragment
+    scenario_id: s09_fragments
+    source_route: about
+    target_route: null
+    raw_target: "#team"
+    resolution_state: fragment
+    provenance_kind: artifact
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: artifact:about.html:33:team-fragment
+    layer: fragment
+  - id: e11_action
+    scenario_id: s10_actions
+    source_route: contact
+    target_route: null
+    raw_target: "mailto:hello@example.com"
+    resolution_state: action
+    provenance_kind: rendered
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: rendered:contact:form:email-action
+    layer: action
+  - id: e12_redirect
+    scenario_id: s11_redirects
+    source_route: about_alias
+    target_route: about
+    raw_target: /about/
+    resolution_state: redirect
+    provenance_kind: artifact
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: artifact:redirects:about-alias
+    layer: redirect
+  - id: e13_canonical_conflict
+    scenario_id: s12_canonical_conflicts
+    source_route: about_alias
+    target_route: about
+    raw_target: /services/
+    resolution_state: contradicted
+    provenance_kind: rendered
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: rendered:about-us:canonical-conflict
+    layer: canonical
+  - id: e14_artifact_only
+    scenario_id: s13_source_artifact_rendered_disagreements
+    source_route: resources
+    target_route: pricing
+    raw_target: /pricing/
+    resolution_state: artifact-only
+    provenance_kind: artifact
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: artifact:resources.html:55:pricing
+    layer: contextual
+  - id: e15_rendered_only
+    scenario_id: s13_source_artifact_rendered_disagreements
+    source_route: resources
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: rendered-only
+    provenance_kind: rendered
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: rendered:resources:runtime-contact
+    layer: action
+  - id: e16_source_only
+    scenario_id: s13_source_artifact_rendered_disagreements
+    source_route: resources
+    target_route: services
+    raw_target: /services/
+    resolution_state: source-only
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/resources/page.tsx:70:dead-services
+    layer: contextual
+  - id: e17_unresolved
+    scenario_id: s14_unresolved_expressions
+    source_route: resources
+    target_route: null
+    raw_target: null
+    resolution_state: unresolved
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/resources/page.tsx:82:runtime-expression
+    layer: unresolved
+  - id: e18_menu_dependence
+    scenario_id: s15_menu_home_dependence
+    source_route: home
+    target_route: pricing
+    raw_target: /pricing/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:components/header.tsx:10:pricing
+    layer: menu
+  - id: e19_healthy_cycle
+    scenario_id: s16_healthy_and_trapped_sccs
+    source_route: healthy_a
+    target_route: healthy_b
+    raw_target: /learn/b/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/learn/a/page.tsx:11:learn-b
+    layer: contextual
+  - id: e20_trap_cycle
+    scenario_id: s16_healthy_and_trapped_sccs
+    source_route: trap_a
+    target_route: trap_b
+    raw_target: /trapped/b/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/trapped/a/page.tsx:11:trap-b
+    layer: contextual
+  - id: e21_gateway
+    scenario_id: s17_dominators_gateways
+    source_route: services
+    target_route: gateway
+    raw_target: /start/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/services/page.tsx:41:start
+    layer: contextual
+  - id: e22_alternate_path
+    scenario_id: s18_alternate_goal_paths
+    source_route: pricing
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: confirmed-page
+    provenance_kind: source
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: source:app/pricing/page.tsx:20:contact
+    layer: action
+  - id: e23_snapshot_change
+    scenario_id: s19_snapshot_changes
+    source_route: article_beta
+    target_route: contact
+    raw_target: /contact/
+    resolution_state: confirmed-page
+    provenance_kind: synthetic-control
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: control:snapshot-after:article-beta-contact
+    layer: contextual
+  - id: e24_missing
+    scenario_id: s20_invented_route_regressions
+    source_route: home
+    target_route: null
+    raw_target: /ghost/
+    resolution_state: missing
+    provenance_kind: synthetic-control
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: control:candidate-routes:ghost-missing
+    layer: missing
+  - id: e25_excluded
+    scenario_id: s20_invented_route_regressions
+    source_route: home
+    target_route: null
+    raw_target: https://external.example/excluded/
+    resolution_state: excluded
+    provenance_kind: synthetic-control
+    revision: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    occurrence_key: control:candidate-routes:excluded-external
+    layer: excluded
+  - id: e26_interrupted
+    scenario_id: s21_interrupted_publication
+    source_route: home
+    target_route: null
+    raw_target: null
+    resolution_state: unchecked
+    provenance_kind: synthetic-control
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: control:publication:interrupted-snapshot
+    layer: publication
+  - id: e27_projection
+    scenario_id: s22_projection_consistency
+    source_route: resources
+    target_route: null
+    raw_target: https://external.example/reference/
+    resolution_state: external
+    provenance_kind: synthetic-control
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: control:projection:external-exclusion
+    layer: external
+  - id: e28_visual_limit
+    scenario_id: s23_visual_limit_analytical_total
+    source_route: home
+    target_route: resources
+    raw_target: /resources/
+    resolution_state: confirmed-page
+    provenance_kind: synthetic-control
+    revision: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    occurrence_key: control:display:bounded-view
+    layer: contextual
+graph_expectations:
+  components:
+    - id: c01_healthy
+      classification: healthy-scc
+      routes: [healthy_a, healthy_b]
+      reaches_goal: true
+    - id: c02_trapped
+      classification: trap-scc
+      routes: [trap_a, trap_b]
+      reaches_goal: false
+  dominators:
+    - route: gateway
+      dominates: [contact]
+      gateway: true
+  alternate_goal_paths:
+    - source: home
+      goal: contact
+      edge_disjoint_paths:
+        - [home, services, gateway, contact]
+        - [home, pricing, contact]
+snapshot_expectations:
+  - id: d01_added
+    kind: added
+    before: null
+    after: source:app/article-beta/page.tsx:12:contact
+  - id: d02_changed
+    kind: changed
+    before: source:app/page.tsx:12:services
+    after: source:app/page.tsx:12:resources
+  - id: d03_removed
+    kind: removed
+    before: source:app/about/page.tsx:19:pricing
+    after: null
+publication_expectations:
+  published_snapshot: snapshot_complete_001
+  interrupted_snapshot: snapshot_interrupted_002
+  visible_snapshot: snapshot_complete_001
+projection_expectations:
+  all-internal:
+    layers: [action, contextual, menu, related]
+    node_total: 14
+    edge_total: 18
+    occurrence_total: 22
+  contextual:
+    layers: [action, contextual, related]
+    node_total: 14
+    edge_total: 14
+    occurrence_total: 17
+  navigation:
+    layers: [menu]
+    node_total: 14
+    edge_total: 4
+    occurrence_total: 5
+display_expectations:
+  analytical_node_total: 72
+  analytical_edge_total: 96
+  visual_node_limit: 36
+  visual_edge_limit: 60
+  truncated: true
+regression_expectations:
+  declared_routes:
+    - /
+    - /about-us/
+    - /about/
+    - /articles/alpha/
+    - /articles/beta/
+    - /contact/
+    - /learn/a/
+    - /learn/b/
+    - /pricing/
+    - /resources/
+    - /services/
+    - /start/
+    - /trapped/a/
+    - /trapped/b/
+  candidate_routes:
+    - /
+    - /about-us/
+    - /about/
+    - /articles/alpha/
+    - /articles/beta/
+    - /contact/
+    - /ghost/
+    - /learn/a/
+    - /learn/b/
+    - /pricing/
+    - /resources/
+    - /services/
+    - /start/
+    - /trapped/a/
+    - /trapped/b/
+  invented_routes: [/ghost/]

@@ -11,6 +11,7 @@ from boho_analytics_platform.config import (
     binding_observation_boundary,
     binding_observation_start,
     load_config,
+    route_analytics_options,
 )
 from support import config_text, write_fixture
 
@@ -83,6 +84,10 @@ class ConfigTests(unittest.TestCase):
                 'metric_ids = ["made.up"]',
                 1,
             ))
+        with self.assertRaisesRegex(ConfigError, "acquisition-only metric ids"):
+            self._load(lambda text: text.replace(
+                '"umami.pageviews"', '"search.route-clicks"', 1
+            ))
 
     def test_binding_observation_start_is_strict_and_uses_site_timezone(self):
         config = self._load(lambda text: text.replace(
@@ -117,6 +122,41 @@ class ConfigTests(unittest.TestCase):
                         'metric_groups = ["traffic"]\n[bindings.options]\n'
                         f'observation_start = {raw}',
                     ))
+
+    def test_route_analytics_is_disabled_by_default_and_rejects_unbounded_options(self):
+        config = self._load()
+        self.assertFalse(route_analytics_options(config.bindings[0]).enabled)
+
+        with self.assertRaisesRegex(ConfigError, "route_analytics.max_days"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'enabled = true\nmax_days = 365',
+            ))
+        with self.assertRaisesRegex(ConfigError, "disallowed key"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'allowed_query_parameters = ["email"]',
+            ))
+        configured = self._load(lambda text: text.replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+            'umami_dimensions = ["title", "channel", "domain", "device", "country"]',
+        ))
+        self.assertEqual(
+            route_analytics_options(configured.bindings[0]).umami_dimensions,
+            ("channel", "country", "device", "domain", "title"),
+        )
+        configured = self._load(lambda text: text.replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+            'ga4_dimensions = ["title", "channel", "referrer"]',
+        ))
+        self.assertEqual(
+            route_analytics_options(configured.bindings[0]).ga4_dimensions,
+            ("channel", "referrer", "title"),
+        )
 
 
 if __name__ == "__main__": unittest.main()

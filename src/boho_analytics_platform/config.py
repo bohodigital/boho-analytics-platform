@@ -18,6 +18,9 @@ from .catalog import METRICS
 SCHEMA_VERSION = 2
 _ID_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _REFERENCE_SCHEME_PATTERN = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+_ROUTE_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_DOMAIN_PATTERN = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+_SAFE_ROUTE_QUERY_PARAMETERS = {"lang", "locale", "page", "sort", "tab", "variant", "view"}
 _FORBIDDEN_INLINE_KEYS = {
     "accesstoken", "apikey", "authorization", "bearer", "clientsecret", "cookie",
     "password", "privatekey", "refreshtoken", "secret", "token"
@@ -84,6 +87,26 @@ class BindingConfig:
     resource_id: str
     metric_groups: tuple[str, ...] = ()
     options: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RouteAnalyticsOptions:
+    """Strict, privacy-bounded acquisition controls for route observations."""
+
+    enabled: bool = False
+    max_days: int = 31
+    page_size: int = 1_000
+    max_pages: int = 25
+    allowed_query_parameters: tuple[str, ...] = ()
+    exclusions: tuple[str, ...] = ()
+    approved_referrer_domains: tuple[str, ...] = ()
+    search_type: str = "web"
+    search_console_dimensions: tuple[str, ...] = ()
+    ga4_dimensions: tuple[str, ...] = ()
+    umami_dimensions: tuple[str, ...] = ()
+    query_clusters: tuple[tuple[str, str], ...] = ()
+    ga4_event_names: tuple[str, ...] = ()
+    umami_event_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +182,115 @@ def binding_observation_boundary(
     return datetime.combine(value, time.min, ZoneInfo(site.timezone))
 
 
+def route_analytics_options(binding: BindingConfig) -> RouteAnalyticsOptions:
+    """Return validated opt-in controls without exposing provider raw records."""
+
+    raw = binding.options.get("route_analytics", {})
+    if not isinstance(raw, dict):
+        raise ConfigError("binding route_analytics must be a TOML table")
+    allowed = {
+        "enabled", "max_days", "page_size", "max_pages", "allowed_query_parameters",
+        "excluded_routes", "approved_referrer_domains", "search_type",
+        "search_console_dimensions", "query_clusters", "ga4_event_names", "umami_event_names",
+        "ga4_dimensions", "umami_dimensions",
+    }
+    _reject_unknown(raw, allowed, "binding route_analytics")
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError("binding route_analytics.enabled must be a boolean")
+    max_days = _route_int(raw, "max_days", 31, 1, 92)
+    page_size = _route_int(raw, "page_size", 1_000, 1, 25_000)
+    max_pages = _route_int(raw, "max_pages", 25, 1, 100)
+    query_parameters = _route_query_keys(raw.get("allowed_query_parameters", []))
+    exclusions = _route_paths(raw.get("excluded_routes", []))
+    domains = _route_domains(raw.get("approved_referrer_domains", []))
+    search_type = raw.get("search_type", "web")
+    if search_type not in {"web", "image", "video", "news", "discover", "googleNews"}:
+        raise ConfigError("binding route_analytics.search_type is unsupported")
+    dimensions = _route_enum_list(
+        raw.get("search_console_dimensions", []), "search_console_dimensions",
+        {"device", "country", "searchAppearance"},
+    )
+    ga4_dimensions = _route_enum_list(
+        raw.get("ga4_dimensions", []), "ga4_dimensions",
+        {"title", "channel", "referrer"},
+    )
+    umami_dimensions = _route_enum_list(
+        raw.get("umami_dimensions", []), "umami_dimensions",
+        {"title", "channel", "domain", "device", "country"},
+    )
+    clusters_raw = raw.get("query_clusters", {})
+    if not isinstance(clusters_raw, dict) or len(clusters_raw) > 20:
+        raise ConfigError("binding route_analytics.query_clusters must be a table with at most 20 entries")
+    clusters: list[tuple[str, str]] = []
+    for key, expression in clusters_raw.items():
+        if not isinstance(key, str) or not _ROUTE_KEY_PATTERN.fullmatch(key):
+            raise ConfigError("binding route_analytics.query_clusters keys must be bounded identifiers")
+        if not isinstance(expression, str) or not expression.strip() or len(expression) > 128 or any(ord(item) < 32 or ord(item) == 127 for item in expression):
+            raise ConfigError("binding route_analytics.query_clusters values must be bounded text")
+        clusters.append((key, expression.strip()))
+    return RouteAnalyticsOptions(
+        enabled=enabled, max_days=max_days, page_size=page_size, max_pages=max_pages,
+        allowed_query_parameters=query_parameters, exclusions=exclusions,
+        approved_referrer_domains=domains, search_type=search_type,
+        search_console_dimensions=dimensions, ga4_dimensions=ga4_dimensions,
+        umami_dimensions=umami_dimensions,
+        query_clusters=tuple(sorted(clusters)),
+        ga4_event_names=_route_keys(raw.get("ga4_event_names", []), "ga4_event_names"),
+        umami_event_names=_route_keys(raw.get("umami_event_names", []), "umami_event_names"),
+    )
+
+
+def _route_int(value: Mapping[str, Any], key: str, default: int, low: int, high: int) -> int:
+    raw = value.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, int) or not low <= raw <= high:
+        raise ConfigError(f"binding route_analytics.{key} must be an integer from {low} to {high}")
+    return raw
+
+
+def _route_keys(value: object, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and _ROUTE_KEY_PATTERN.fullmatch(item) for item in value):
+        raise ConfigError(f"binding route_analytics.{label} must be bounded identifiers")
+    output = tuple(sorted(set(value)))
+    if len(output) != len(value) or len(output) > 50:
+        raise ConfigError(f"binding route_analytics.{label} must have at most 50 unique values")
+    return output
+
+
+def _route_paths(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item.startswith("/") and len(item) <= 256 and "?" not in item and "#" not in item for item in value):
+        raise ConfigError("binding route_analytics.excluded_routes must be bounded absolute paths")
+    output = tuple(sorted(set(item.rstrip("/") or "/" for item in value)))
+    if len(output) != len(value) or len(output) > 100:
+        raise ConfigError("binding route_analytics.excluded_routes must have at most 100 unique values")
+    return output
+
+
+def _route_query_keys(value: object) -> tuple[str, ...]:
+    output = _route_keys(value, "allowed_query_parameters")
+    if not set(output) <= _SAFE_ROUTE_QUERY_PARAMETERS:
+        raise ConfigError("binding route_analytics.allowed_query_parameters contains a disallowed key")
+    return output
+
+
+def _route_domains(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and _DOMAIN_PATTERN.fullmatch(item.casefold()) for item in value):
+        raise ConfigError("binding route_analytics.approved_referrer_domains must be DNS domains")
+    output = tuple(sorted(set(item.casefold() for item in value)))
+    if len(output) != len(value) or len(output) > 100:
+        raise ConfigError("binding route_analytics.approved_referrer_domains must have at most 100 unique values")
+    return output
+
+
+def _route_enum_list(value: object, label: str, choices: set[str]) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(item, str) and item in choices for item in value):
+        raise ConfigError(f"binding route_analytics.{label} contains unsupported values")
+    output = tuple(sorted(set(value)))
+    if len(output) != len(value):
+        raise ConfigError(f"binding route_analytics.{label} must not contain duplicates")
+    return output
+
+
 def _as_mapping(value: object, label: str) -> dict[str, Any]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise ConfigError(f"{label} must be a TOML table")
@@ -211,6 +343,12 @@ def _metric_ids(value: object, label: str) -> tuple[str, ...]:
     unknown = tuple(item for item in output if item not in METRICS)
     if unknown:
         raise ConfigError(f"{label} contains unknown metric ids: {', '.join(unknown)}")
+    acquisition_only = tuple(item for item in output if not METRICS[item].reportable)
+    if acquisition_only:
+        raise ConfigError(
+            f"{label} contains acquisition-only metric ids that require a dimension-aware consumer: "
+            f"{', '.join(acquisition_only)}"
+        )
     return output
 
 
@@ -378,6 +516,10 @@ def load_config(path: str | Path) -> AppConfig:
             raise ConfigError(
                 f"{label}.options.observation_start must use YYYY-MM-DD"
             ) from exc
+        try:
+            route_analytics_options(binding)
+        except ConfigError as exc:
+            raise ConfigError(f"{label}.options.route_analytics is invalid: {exc}") from exc
         bindings.append(binding)
 
     reports: list[ReportConfig] = []

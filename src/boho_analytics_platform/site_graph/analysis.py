@@ -6,12 +6,15 @@ import hashlib
 import json
 import re
 from collections import defaultdict, deque
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable, Mapping
 
+from .contracts import EvidenceBatch, LinkOccurrence
+from .models import LINK_LAYERS, stable_hash
 from .storage import SiteGraphStore, _id, _json
 
 
-COMPILER_VERSION = "site-graph-v1"
+COMPILER_VERSION = "site-graph-core21-reconciliation-2.1.0"
 PROJECTION_LAYERS = {
     "full": frozenset({"menu", "breadcrumb", "contextual", "related", "action", "utility"}),
     "navigation": frozenset({"menu", "breadcrumb", "utility"}),
@@ -20,6 +23,171 @@ PROJECTION_LAYERS = {
     "goal": frozenset({"contextual", "related", "action"}),
     "authority": frozenset({"contextual", "related"}),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralFinding:
+    finding_type: str
+    route: str
+    evidence_occurrence_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StructuralSummary:
+    selected_layers: tuple[str, ...]
+    pages: int
+    full_relationships: int
+    selected_relationships: int
+    true_orphans: tuple[str, ...]
+    contextual_orphans: tuple[str, ...]
+    contextual_dead_ends: tuple[str, ...]
+    menu_dependent: tuple[str, ...]
+    homepage_dependent: tuple[str, ...]
+    global_shell_dependent: tuple[str, ...]
+    full_goal_reachable: tuple[str, ...]
+    selected_goal_reachable: tuple[str, ...]
+    findings: tuple[StructuralFinding, ...]
+    content_hash: str
+
+
+def _reachable(start: str, adjacency: Mapping[str, set[str]]) -> set[str]:
+    if start not in adjacency:
+        return set()
+    seen = {start}
+    pending = deque([start])
+    while pending:
+        node = pending.popleft()
+        for destination in sorted(adjacency[node]):
+            if destination not in seen:
+                seen.add(destination)
+                pending.append(destination)
+    return seen
+
+
+def analyze_structural_semantics(
+    batch: EvidenceBatch,
+    *,
+    selected_layers: Iterable[str] = ("contextual", "related"),
+    goal_routes: Iterable[str] = (),
+) -> StructuralSummary:
+    """Calculate only deterministic, evidence-backed structural semantics."""
+
+    layers = tuple(sorted(set(selected_layers)))
+    if not layers or any(layer not in LINK_LAYERS for layer in layers):
+        raise ValueError("selected layers must be a non-empty subset of known link layers")
+    pages = {page.canonical_route: page for page in batch.pages}
+    pages_by_candidate = {page.candidate_id: page for page in batch.pages}
+    full = {route: set() for route in pages}
+    selected = {route: set() for route in pages}
+    without_menu = {route: set() for route in pages}
+    incoming_full: dict[str, list[LinkOccurrence]] = {route: [] for route in pages}
+    incoming_selected: dict[str, list[LinkOccurrence]] = {route: [] for route in pages}
+    for link in batch.links:
+        source_page = pages_by_candidate.get(link.source_candidate_id)
+        destination = link.canonical_destination
+        if source_page is None or not link.topology_eligible or destination not in pages:
+            continue
+        source = source_page.canonical_route
+        full[source].add(destination)
+        incoming_full[destination].append(link)
+        if link.layer != "menu":
+            without_menu[source].add(destination)
+        if link.layer in layers:
+            selected[source].add(destination)
+            incoming_selected[destination].append(link)
+
+    full_reachable = _reachable("/", full)
+    without_menu_reachable = _reachable("/", without_menu)
+    goals = {route for route in goal_routes if route in pages}
+    reverse_full = {route: set() for route in pages}
+    reverse_selected = {route: set() for route in pages}
+    for source, destinations in full.items():
+        for destination in destinations:
+            reverse_full[destination].add(source)
+    for source, destinations in selected.items():
+        for destination in destinations:
+            reverse_selected[destination].add(source)
+    full_goal = (
+        set().union(*(_reachable(goal, reverse_full) for goal in goals)) if goals else set()
+    )
+    selected_goal = (
+        set().union(*(_reachable(goal, reverse_selected) for goal in goals))
+        if goals
+        else set()
+    )
+    true_orphans = tuple(
+        route for route in sorted(pages) if route != "/" and not incoming_full[route]
+    )
+    contextual_orphans = tuple(
+        route
+        for route in sorted(pages)
+        if route != "/" and incoming_full[route] and not incoming_selected[route]
+    )
+    dead_ends = tuple(
+        route for route in sorted(pages) if route not in goals and not selected[route]
+    )
+    menu_dependent = tuple(sorted(full_reachable - without_menu_reachable))
+    homepage_dependent = (
+        tuple(
+            route
+            for route in sorted(pages)
+            if route != "/"
+            and incoming_full[route]
+            and {link.source_candidate_id for link in incoming_full[route]}
+            == {pages["/"].candidate_id}
+        )
+        if "/" in pages
+        else ()
+    )
+    global_shell_dependent = tuple(
+        route
+        for route in sorted(pages)
+        if route != "/"
+        and incoming_full[route]
+        and {link.layer for link in incoming_full[route]}.issubset({"menu", "utility"})
+    )
+    findings: list[StructuralFinding] = []
+    for finding_type, routes, evidence in (
+        ("true_orphan", true_orphans, incoming_full),
+        ("contextual_orphan", contextual_orphans, incoming_full),
+        ("contextual_dead_end", dead_ends, incoming_selected),
+        ("menu_dependence", menu_dependent, incoming_full),
+        ("homepage_dependence", homepage_dependent, incoming_full),
+        ("global_shell_dependence", global_shell_dependent, incoming_full),
+    ):
+        for route in routes:
+            findings.append(
+                StructuralFinding(
+                    finding_type,
+                    route,
+                    tuple(sorted(link.occurrence_id for link in evidence[route])),
+                )
+            )
+    body = {
+        "batch_id": batch.batch_id,
+        "selected_layers": layers,
+        "full": {key: sorted(value) for key, value in sorted(full.items())},
+        "selected": {key: sorted(value) for key, value in sorted(selected.items())},
+        "findings": [asdict(item) for item in findings],
+        "full_goal_reachable": sorted(full_goal),
+        "selected_goal_reachable": sorted(selected_goal),
+    }
+    return StructuralSummary(
+        layers,
+        len(pages),
+        sum(len(value) for value in full.values()),
+        sum(len(value) for value in selected.values()),
+        true_orphans,
+        contextual_orphans,
+        dead_ends,
+        menu_dependent,
+        homepage_dependent,
+        global_shell_dependent,
+        tuple(sorted(full_goal)),
+        tuple(sorted(selected_goal)),
+        tuple(findings),
+        stable_hash(body),
+    )
 
 
 def _sha(value: Any) -> str:
@@ -181,6 +349,9 @@ def compile_graph(
     aggregates: dict[tuple[str, str, str], list[Any]] = defaultdict(list)
     full_adjacency = {node: set() for node in nodes}
     adjacency = {node: set() for node in nodes}
+    without_menu_adjacency = {node: set() for node in nodes}
+    incoming_sources: dict[str, set[str]] = {node: set() for node in nodes}
+    incoming_layers: dict[str, set[str]] = {node: set() for node in nodes}
     for row in link_rows:
         if not row["crawlable"] or row["external"]:
             continue
@@ -188,6 +359,10 @@ def compile_graph(
         if destination not in route_to_page:
             continue
         full_adjacency[row["source_route"]].add(destination)
+        incoming_sources[destination].add(row["source_route"])
+        incoming_layers[destination].add(row["layer"])
+        if row["layer"] != "menu":
+            without_menu_adjacency[row["source_route"]].add(destination)
         if row["layer"] in selected_layers:
             adjacency[row["source_route"]].add(destination)
             aggregates[(row["source_page_fact_id"], destination, row["layer"])].append(row)
@@ -195,9 +370,16 @@ def compile_graph(
     goals = _goal_routes(manifest, nodes)
     distances = _goal_distances(nodes, adjacency, goals)
     in_degree = {node: 0 for node in nodes}
+    full_in_degree = {node: 0 for node in nodes}
     for destinations in adjacency.values():
         for destination in destinations:
             in_degree[destination] += 1
+    for destinations in full_adjacency.values():
+        for destination in destinations:
+            full_in_degree[destination] += 1
+    full_reachable = _reachable("/", full_adjacency)
+    without_menu_reachable = _reachable("/", without_menu_adjacency)
+    menu_dependent = full_reachable - without_menu_reachable
     authority = _authority(nodes, adjacency)
     components = _strongly_connected(nodes, adjacency)
     content_hash = _sha({
@@ -210,27 +392,42 @@ def compile_graph(
     findings: dict[str, int] = defaultdict(int)
     finding_rows: list[dict[str, Any]] = []
     for route in nodes:
-        finding_type = None
-        severity = "warning"
-        if route != "/" and in_degree[route] == 0:
-            finding_type = "orphan"
-        elif route not in goals and not adjacency[route]:
-            finding_type = "contextual_dead_end"
-        elif full_adjacency[route] and not adjacency[route]:
-            finding_type = "menu_dependence"
-        if finding_type:
+        route_findings: list[str] = []
+        if route != "/" and full_in_degree[route] == 0:
+            route_findings.append("true_orphan")
+        elif route != "/" and in_degree[route] == 0:
+            route_findings.append("contextual_orphan")
+        if route not in goals and not adjacency[route]:
+            route_findings.append("contextual_dead_end")
+        if route in menu_dependent:
+            route_findings.append("menu_dependence")
+        if route != "/" and incoming_sources[route] == {"/"}:
+            route_findings.append("homepage_dependence")
+        if (
+            route != "/"
+            and incoming_layers[route]
+            and incoming_layers[route].issubset({"menu", "utility"})
+        ):
+            route_findings.append("global_shell_dependence")
+        for finding_type in route_findings:
             finding_rows.append({
                 "finding_key": f"{finding_type}:{route}",
                 "finding_type": finding_type,
-                "severity": severity,
-                "algorithm": "site-graph-v1-rules",
-                "parameters": {"projection": projection, "layers": sorted(selected_layers)},
+                "severity": "warning",
+                "algorithm": COMPILER_VERSION,
+                "parameters": {
+                    "projection": projection,
+                    "layers": sorted(selected_layers),
+                    "full_graph_basis": True,
+                },
                 "affected_nodes": [route],
                 "affected_edges": [],
                 "source_fact_keys": [route_to_page[route]["fact_key"]],
                 "content_hash": _sha([finding_type, route, content_hash]),
             })
             findings[finding_type] += 1
+    if findings.get("true_orphan"):
+        findings["orphan"] = findings["true_orphan"]
 
     aggregate_ids: dict[tuple[str, str, str], str] = {}
     with store.connect() as db:
@@ -264,7 +461,7 @@ def compile_graph(
                 "out_degree": float(len(adjacency[route])),
                 "goal_distance": float(distances[route]),
                 "internal_authority": float(authority[route]),
-                "menu_dependence": float(bool(full_adjacency[route]) and not adjacency[route]),
+                "menu_dependence": float(route in menu_dependent),
             }
             for metric_name, metric_value in metrics.items():
                 metric_id = _id("sgn", graph_id, page["id"], metric_name, COMPILER_VERSION)

@@ -37,6 +37,28 @@ forms dimensions, which require explicit source facts.
 The [metric catalog](../src/boho_analytics_platform/catalog.py) defines source, unit, aggregation,
 and meaning. Unknown metrics, wrong units, and wrong non-fixture sources fail ingestion.
 
+## Route observations and privacy boundary
+
+Route analytics uses the same schema-4 deterministic metric-fact identity, upsert, provenance,
+successful-empty coverage, watermarks, locks, retention, and integrity checks as existing aggregate
+connectors. Search clicks are not GA4 sessions, GA4 sessions are not Umami visits, and a referrer
+aggregate is not an exact link-click record.
+
+Route observations are acquisition facts for dimension-aware consumers. They are intentionally not
+selectable as ordinary saved-report metrics: the current headline reporter aggregates by metric,
+site, source, and unit and would erase route/scope distinctions. Search Console page, breakdown, and
+query-cluster facts retain an explicit observation scope and must never be summed across scopes.
+Their CTR and position definitions remain weighted by route impressions rather than additive.
+
+The shared normalizer stores internal routes only: it removes fragments, strips non-allowlisted query
+parameters, canonicalizes percent encoding and trailing slashes, and rejects malformed, excluded, or
+external URLs. External GA4 referrers can contribute only an explicitly allowlisted domain. No fact
+stores raw URLs, raw Search Console queries, arbitrary event parameters, sessions, visitor/client or
+distinct IDs, IP addresses, user agents, city locations, form payloads, email addresses, or phone
+numbers. Search Console page facts are `UNKNOWN` completeness because the provider can return top
+rows rather than a complete high-dimensional result set; their separately stored `data_state`
+records that finalized rows were requested.
+
 ## Aggregation integrity
 
 - Additive counts and bytes sum over the requested window.

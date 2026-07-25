@@ -1,0 +1,10 @@
+{
+  "provider": "cloudflare-pages",
+  "project_name": "fixture-site",
+  "deployment_id": "deployment-001",
+  "deployment_url": "https://fixture.example",
+  "branch": "main",
+  "commit_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hostnames": ["www.fixture.example", "fixture.example"],
+  "status": "success"
+}

@@ -19,6 +19,17 @@ repository or starts an ingest.
 Source-only evidence describes repository structure. It does not claim that a route was deployed,
 crawled, visited, or converted.
 
+Graph Evidence Core 2.1 can reconcile three bounded evidence lanes at one exact repository revision:
+
+- source-semantic extraction from tracked source;
+- artifact evidence from authorized, locally supplied build/deployment artifacts;
+- rendered-crawl evidence from an explicitly authorized origin or deterministic replay.
+
+Unavailable lanes remain failed or unchecked; revision mismatches and contradictions remain visible.
+Reconciliation never promotes action, fragment, external, unresolved, or contradicted destinations
+into topology. Publication is atomic and carries complete route-resolution coverage into the
+existing immutable fact tables.
+
 ## Safe workflow
 
 1. Copy `examples/site-graph/vinext-site.yaml` or `static-site.yaml` to a private path.
@@ -38,7 +49,9 @@ boho-analytics site-graph report --database var/analytics.sqlite3 --site example
 
 The CLI output contains the sanitized repository identity, exact revision, adapter version, manifest
 hash, content hash, counts, layer coverage, and whether an existing immutable snapshot was reused.
-It does not emit the local repository path, source excerpts, provider references, or credential values.
+For reconciled snapshots, `site-graph report` also exposes complete Core 2.1 candidate, entity,
+relationship, resolution-state, contradiction, exclusion, and corrected structural summaries. It
+does not emit the local repository path, source excerpts, provider references, or credential values.
 
 ## Limits and failure behavior
 

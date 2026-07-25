@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from boho_analytics_platform.config import load_config
 from boho_analytics_platform.connectors.cloudflare import CloudflareAnalyticsConnector
+from boho_analytics_platform.connectors.common import normalize_route, sanitize_referrer
 from boho_analytics_platform.connectors.google import GoogleAnalyticsConnector, SearchConsoleConnector
 from boho_analytics_platform.connectors.umami import UmamiConnector
 from boho_analytics_platform.contracts import SyncRequest
@@ -36,6 +37,41 @@ class ProviderConnectorTests(unittest.TestCase):
         text = text.replace('timezone = "UTC"', f'timezone = "{timezone}"')
         path = self.root / f"{provider}.toml"; path.write_text(text, encoding="utf-8")
         return load_config(path)
+
+    def test_route_normalizer_keeps_only_safe_internal_route_information(self):
+        self.assertEqual(
+            normalize_route(
+                "https://EXAMPLE.com/products/%7Eblue/?keep=one&drop=two#section",
+                "https://example.com",
+                allow_query_parameters=("keep",),
+            ),
+            "/products/~blue?keep=one",
+        )
+        self.assertEqual(normalize_route("/products/", "https://example.com"), "/products")
+        self.assertIsNone(normalize_route("/invite/jane@example.com", "https://example.com"))
+        self.assertIsNone(normalize_route("/call/415-555-1212", "https://example.com"))
+        self.assertIsNone(normalize_route("/bad%ZZ", "https://example.com"))
+        for unsafe in (
+            "/a%00b",
+            "/%2f%2foutside.example/path",
+            "/%252f%252foutside.example/path",
+            "/%2e%2e/private",
+            "https:%2f%2foutside.example/path",
+            "/https%3A%2F%2Foutside.example/path",
+            r"/safe\..\private",
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertIsNone(normalize_route(unsafe, "https://example.com"))
+        self.assertEqual(
+            normalize_route("/products?variant=customer@example.com", "https://example.com", allow_query_parameters=("variant",)),
+            "/products",
+        )
+        self.assertIsNone(normalize_route("https://outside.example/path?email=a@example.com", "https://example.com"))
+        self.assertIsNone(normalize_route("https://example.com/private/form", "https://example.com", exclusions=("/private",)))
+        self.assertEqual(
+            sanitize_referrer("https://outside.example/form?email=a@example.com", "https://example.com", approved_domains=("outside.example",)),
+            {"referrer_domain": "outside.example"},
+        )
 
     @staticmethod
     def cloudflare_settings(*, enabled=True, max_duration=86400, not_older_than=691200):
@@ -65,6 +101,16 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertEqual(dict(region.dimensions)["country_code"], "US")
         self.assertIn("type=country", http.calls[2][1]); self.assertIn("type=region", http.calls[3][1])
         self.assertIn("startAt=", http.calls[0][1]); self.assertTrue(all("test" not in call[1] for call in http.calls))
+
+    def test_umami_route_probe_requires_a_valid_available_date_range(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {"enabled": True}})
+        snapshot = UmamiConnector(config, QueueHttp([
+            [{"id": "demo"}], {"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-07-01T00:00:00Z"},
+        ])).probe(config.connections[0], MemoryCredentialLease({"token": b"test"}))
+        self.assertTrue(any("available date range" in warning for warning in snapshot.warnings))
+        self.assertIn("umami.route-visits", snapshot.metric_groups)
+        self.assertNotIn("umami.page-title-visits", snapshot.metric_groups)
 
     def test_cloudflare_parses_adaptive_groups_without_rescaling(self):
         config = self.config("cloudflare")
@@ -185,6 +231,71 @@ class ProviderConnectorTests(unittest.TestCase):
             config.connections[0], MemoryCredentialLease({"access_token": b"test"}))
         self.assertTrue(any("timezone" in warning.casefold() for warning in snapshot.warnings))
 
+    def test_ga4_route_probe_validates_metadata_and_reports_route_capabilities(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {"enabled": True}})
+        dimensions = (
+            "date", "landingPagePlusQueryString", "pagePathPlusQueryString", "pageTitle",
+            "sessionDefaultChannelGroup", "fullReferrer", "eventName",
+        )
+        metrics = (
+            "sessions", "screenPageViews", "engagedSessions", "userEngagementDuration",
+            "keyEvents", "eventCount",
+        )
+        snapshot = GoogleAnalyticsConnector(config, QueueHttp([
+            {"metadata": {"timeZone": "UTC"}},
+            {
+                "dimensions": [{"apiName": item} for item in dimensions],
+                "metrics": [{"apiName": item} for item in metrics],
+            },
+        ])).probe(config.connections[0], MemoryCredentialLease({"access_token": b"test"}))
+        self.assertIn("google.landing-page-sessions", snapshot.metric_groups)
+        self.assertNotIn("google.page-title-views", snapshot.metric_groups)
+        self.assertNotIn("google.configured-event-count", snapshot.metric_groups)
+
+    def test_ga4_route_observations_are_paginated_and_drop_unapproved_referrer_urls(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "page_size": 10, "max_pages": 2,
+            "approved_referrer_domains": ["search.example"],
+            "ga4_dimensions": ["title", "channel", "referrer"],
+        }})
+        aggregate = {"rows": []}
+        geography = {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "sessions"}], "rows": []}
+        route_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "/about/?email=a@example.com"}], "metricValues": [{"value": "2"}]}]}
+        title_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "About us"}], "metricValues": [{"value": "2"}]}]}
+        channel_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "Organic Search"}], "metricValues": [{"value": "2"}]}]}
+        referrer_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "https://outside.example/form?email=a@example.com"}], "metricValues": [{"value": "2"}]}]}
+        http = QueueHttp([
+            aggregate, geography,
+            route_row, route_row, route_row, route_row, route_row,
+            channel_row, referrer_row, title_row,
+        ])
+        points = list(GoogleAnalyticsConnector(config, http).collect(
+            config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ())))
+        self.assertIn("google.landing-page-sessions", {point.metric for point in points})
+        self.assertNotIn("google.referrer-sessions", {point.metric for point in points})
+        landing = next(point for point in points if point.metric == "google.landing-page-sessions")
+        self.assertEqual(dict(landing.dimensions), {"route": "/about"})
+        self.assertTrue(all("email=a@example.com" not in str(point.dimensions) for point in points))
+        self.assertEqual(http.calls[2][3]["dimensions"][1]["name"], "landingPagePlusQueryString")
+        self.assertEqual(http.calls[2][3]["offset"], "0")
+
+    def test_route_observations_reject_out_of_bounds_and_partial_day_windows(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {"enabled": True, "max_days": 1}})
+        long_window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC), "UTC")
+        with self.assertRaisesRegex(ValueError, "max_days"):
+            list(GoogleAnalyticsConnector(config, QueueHttp([])).collect(
+                config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(config.bindings[0], long_window, ())))
+        partial = QueryWindow(datetime(2026, 7, 1, 1, tzinfo=UTC), datetime(2026, 7, 2, 1, tzinfo=UTC), "UTC")
+        with self.assertRaisesRegex(ValueError, "whole site-local days"):
+            list(SearchConsoleConnector(config, QueueHttp([])).collect(
+                config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(config.bindings[0], partial, ())))
+
     def test_search_console_parses_metrics_and_uses_encoded_site(self):
         config = self.config("search-console"); binding = config.bindings[0]
         object.__setattr__(binding, "resource_id", "sc-domain:example.com")
@@ -227,6 +338,7 @@ class ProviderConnectorTests(unittest.TestCase):
         config = self.config("search-console")
         binding = config.bindings[0]
         object.__setattr__(binding, "resource_id", "sc-domain:example.com")
+        object.__setattr__(binding, "options", {"route_analytics": {"enabled": True}})
         http = QueueHttp([{"rows": []}])
         snapshot = SearchConsoleConnector(config, http).probe(
             config.connections[0], MemoryCredentialLease({"access_token": b"test"}))
@@ -234,6 +346,54 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertTrue(any("America/Los_Angeles" in warning for warning in snapshot.warnings))
         self.assertIn("sc-domain%3Aexample.com", http.calls[0][1])
         self.assertEqual(http.calls[0][3]["rowLimit"], 1)
+        self.assertIn("search.route-clicks", snapshot.metric_groups)
+
+    def test_search_console_route_observations_use_page_pagination_and_unknown_completeness(self):
+        config = self.config("search-console")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "page_size": 10, "max_pages": 2,
+        }})
+        http = QueueHttp([
+            {"rows": [{"keys": ["2026-07-01"], "clicks": 2}]}, {"rows": []},
+            {"rows": [{"keys": ["2026-07-01", "https://example.com/blog/?email=a@example.com"], "clicks": 2, "impressions": 10, "ctr": 0.2, "position": 3.0}]},
+        ])
+        points = list(SearchConsoleConnector(config, http).collect(
+            config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ())))
+        route = next(point for point in points if point.metric == "search.route-clicks")
+        self.assertEqual(dict(route.dimensions), {
+            "data_state": "final",
+            "observation_scope": "page",
+            "route": "/blog",
+        })
+        self.assertIs(route.completeness, Completeness.UNKNOWN)
+        self.assertEqual(http.calls[2][3]["dimensions"], ["date", "page"])
+        self.assertEqual(http.calls[2][3]["startRow"], 0)
+
+    def test_umami_route_observations_issue_bounded_daily_path_queries(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 2, "page_size": 10, "max_pages": 2,
+        }})
+        responses = [
+            {"pageviews": [], "sessions": []}, {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0}, [], [],
+            {"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-07-03T00:00:00Z"},
+        ]
+        responses.extend([[{"name": "/pricing/?email=a@example.com", "visits": 3}]] + [[]] * 5)
+        http = QueueHttp(responses)
+        points = list(UmamiConnector(config, http).collect(
+            config.connections[0], MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ())))
+        route = next(point for point in points if point.metric == "umami.route-visits")
+        self.assertEqual(dict(route.dimensions), {"route": "/pricing"})
+        self.assertIn("/daterange", http.calls[4][1])
+        self.assertIn("type=path", http.calls[5][1])
+        self.assertIn("startAt=", http.calls[5][1])
+        self.assertFalse(any(
+            f"type={item}" in call[1]
+            for call in http.calls[5:]
+            for item in ("title", "channel", "domain", "device", "country")
+        ))
 
 
 if __name__ == "__main__": unittest.main()
