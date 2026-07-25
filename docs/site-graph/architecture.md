@@ -60,9 +60,10 @@ definition, and fact content. The contextual projection includes `contextual`, `
 contextual reachability metrics. Distinct occurrences remain linked to their immutable evidence even
 when a structural edge aggregate is emitted.
 
-The compiler currently records in-degree, out-degree, goal distance, internal authority, menu
-dependence, strongly connected components, orphans, contextual dead ends, and menu-dependence
-findings. Component analysis is iterative so large acyclic sites do not hit Python's recursion limit.
+The Core 2.1 compiler records in-degree, out-degree, goal distance, internal authority, strongly
+connected components, true and contextual orphans, contextual dead ends, and menu, homepage, and
+global-shell dependence. It does not claim traps or bottlenecks. Component analysis is iterative so
+large acyclic sites do not hit Python's recursion limit.
 
 See [site graph engine](engine.md) for the full manifest, ingestion, compilation, display, and
 public/private-boundary documentation.
@@ -72,6 +73,11 @@ public/private-boundary documentation.
 `/site-graph` is part of the existing loopback server. It uses the same Host allowlist, Basic-auth
 option, restrictive CSP, no-CORS policy, `no-store` response policy, and credential isolation as the
 analytics reports. `/api/v1/site-graph` returns the same normalized read model as JSON.
+For reconciled snapshots, `evidence_core21` adds complete cap-independent candidate, entity,
+relationship, resolution-state, contradiction, exclusion, and revision-mismatch accounting. The
+legacy `overview.orphans` field remains as a true-orphan alias; unsupported trap and bottleneck
+fields are omitted. Structural metrics are withheld when requested display layers differ from the
+compiled contextual analysis projection.
 
 The dashboard uses two explicit rendering modes. A selected graph containing no more than 36 nodes
 and 60 resolved unique edges automatically uses full-graph mode. Larger graphs use bounded mode and
@@ -110,6 +116,19 @@ table filtering, sorting, pagination, and CSV export are ordinary same-origin li
 
 The page labels all outputs as structural evidence. Link topology does not prove visits, attention,
 intent, conversion, or revenue impact.
+
+## Route-observation compatibility
+
+`/route-observations`, `/api/v1/route-observations`, and
+`/api/v1/route-observations.csv` expose accepted non-reportable route-dimensional aggregates without
+turning them into cross-provider KPIs. The bounded filters cover report, exact window, site,
+provider, metric, and exact route. Rows retain their provider, metric, unit, coverage, freshness,
+data state, provider time basis, and limitations. Matching-row totals are complete even when the
+display/export row list reaches its 500-row compatibility cap. Requests are limited to 366 days.
+
+GA4 sessions remain GA4 sessions, Umami visits remain Umami visits, and Search Console clicks remain
+search clicks. The surface excludes raw queries and query clusters, visitor/session identifiers,
+and full external referrer URLs. It is read-only and cannot trigger collection.
 
 ## Database operations
 

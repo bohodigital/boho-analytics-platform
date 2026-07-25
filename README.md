@@ -4,9 +4,9 @@ Boho Analytics Platform is a lightweight, public-first website analytics dashboa
 Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
 Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
 
-> **Status: v0.1.0 is the latest public release; v0.1.1.dev0 is an unreleased stabilization
-candidate.** Each installation must use account-specific least-privilege credentials, verify the
-configured provider resources, and treat incomplete coverage as incomplete rather than zero.
+> **Status: v0.2.0 is the latest public source release.** Each installation must use
+account-specific least-privilege credentials, verify the configured provider resources, and treat
+incomplete coverage as incomplete rather than zero.
 
 ![Boho Analytics Plot Builder using public example data](docs/images/boho-analytics-plot-builder.png)
 
@@ -16,6 +16,9 @@ used._
 The browser only reads normalized local aggregates. Provider credentials stay server-side, syncs
 are explicit or scheduled, and every metric remains source-labeled. The public repository contains
 no client mappings, live resource IDs, credentials, submission content, or mailbox content.
+The dashboard is designed for private loopback operation; this release does not provide a publicly
+hosted analytics instance. Ingestion remains an operator-triggered CLI or scheduled server task and
+cannot be initiated from the browser.
 
 ## V1 capabilities
 
@@ -39,8 +42,13 @@ no client mappings, live resource IDs, credentials, submission content, or mailb
   aggregates; no county values are inferred from cities or IP data.
 - A Site Graph dashboard for compiled repository snapshots: bounded structural SVGs, accessible
   node and edge tables, selectable link layers, two-hop page neighborhoods, goal-distance buckets,
-  strongly connected components, and evidence-linked findings. It is structural evidence only and
-  never presents link topology as visitor behavior.
+  strongly connected components, Core 2.1 reconciliation coverage, and evidence-linked corrected
+  findings. Complete coverage totals are independent of the SVG cap. It is structural evidence only
+  and never presents link topology as visitor behavior.
+- A read-only `/route-observations` compatibility table for accepted GA4, Search Console, and Umami
+  route-dimensional aggregates. Providers, metric semantics, coverage, freshness, provider date
+  basis, and limitations remain separate; no raw queries, visitor/session identifiers, or full
+  external referrer URLs are exposed.
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
@@ -78,7 +86,8 @@ boho-analytics --config platform.toml serve
 ```
 
 The browser route is read-only: it cannot ingest a repository, run a build, compile a graph, or sync
-a provider. See [site graph architecture](docs/site-graph/architecture.md) for the provenance and
+a provider. The same is true for `/route-observations` and its JSON/CSV exports. See
+[site graph architecture](docs/site-graph/architecture.md) for the provenance and
 projection model, [site graph engine](docs/site-graph/engine.md) for the full engine behavior, and
 [repository ingestion](docs/site-graph/ingestion.md) for adapter behavior.
 

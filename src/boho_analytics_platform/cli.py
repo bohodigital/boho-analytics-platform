@@ -15,12 +15,12 @@ from .models import QueryWindow
 from .reporting import ReportService, to_csv
 from .site_graph.manifest import ManifestError, load_manifest
 from .site_graph.analysis import PROJECTION_LAYERS, compile_graph
-from .site_graph.dashboard import SiteGraphReportService
+from .site_graph.reporting import SiteGraphDisplayReportService
 from .site_graph.ingest import IngestError, ingest_repository, inspect_repository
 from .site_graph.storage import SiteGraphStore
 from .storage import LockBusy, SQLiteMetricStore
 from .time_window import report_window
-from .web import serve
+from .web import serve, site_graph_core21_projection
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -121,7 +121,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 graph_store = SiteGraphStore(args.database)
                 graph_store.initialize()
                 layers = tuple(args.layer or ("contextual", "related", "action"))
-                _emit(SiteGraphReportService(graph_store).summary(site_key=args.site, selected_page=args.page, layers=layers))
+                payload = SiteGraphDisplayReportService(graph_store).summary(
+                    site_key=args.site, selected_page=args.page, layers=layers
+                )
+                payload["evidence_core21"] = site_graph_core21_projection(
+                    graph_store, payload, layers
+                )
+                if (
+                    payload["evidence_core21"].get("available")
+                    and payload["evidence_core21"]["structural_metrics"].get("available")
+                ):
+                    structural = payload["evidence_core21"]["structural_metrics"]
+                    payload["overview"].update({
+                        "orphans": structural["true_orphans"],
+                        "true_orphans": structural["true_orphans"],
+                        "contextual_orphans": structural["contextual_orphans"],
+                        "contextual_dead_ends": structural["contextual_dead_ends"],
+                        "menu_dependent_pages": structural["menu_dependent"],
+                        "global_shell_dependent_pages": structural["global_shell_dependent"],
+                    })
+                    payload["overview"].pop("traps", None)
+                    payload["overview"].pop("bottlenecks", None)
+                _emit(payload)
                 return 0
             return 2
         config = load_config(args.config)

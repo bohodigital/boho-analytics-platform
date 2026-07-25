@@ -6,12 +6,14 @@ import hashlib
 import json
 import sqlite3
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ..storage import SQLiteMetricStore
+from .contracts import EvidenceBatch
 from .manifest import SiteGraphManifest, validate_repository_remote
 
 
@@ -231,10 +233,12 @@ class SiteGraphStore:
         *,
         pages: list[PageFact],
         links: list[LinkOccurrence],
+        _connection: sqlite3.Connection | None = None,
     ) -> None:
         if len(pages) > 100_000 or len(links) > 2_000_000:
             raise ValueError("fact batch exceeds bounded limits")
-        with self.connect() as db:
+        manager = nullcontext(_connection) if _connection is not None else self.connect()
+        with manager as db:
             if db.execute("SELECT 1 FROM site_graph_repository_snapshots WHERE id=?", (repository_snapshot_id,)).fetchone() is None:
                 raise ValueError("unknown repository snapshot")
             seen_pages: set[str] = set()
@@ -325,6 +329,163 @@ class SiteGraphStore:
                 )
                 _immutable(db, "site_graph_link_occurrences", record_id, record_hash)
 
+    def publish_evidence_batch(
+        self,
+        batch: EvidenceBatch,
+        *,
+        repository_snapshot_id: str,
+        manifest_version_id: str,
+        compiler_version: str,
+        projection_name: str,
+        goal_definition_hash: str,
+    ) -> str:
+        """Atomically publish one Core 2.1 batch through current fact-first tables."""
+
+        with self.connect() as db:
+            repository = db.execute(
+                """SELECT r.site_key,r.revision,i.manifest_version_id
+                     FROM site_graph_repository_snapshots r
+                     JOIN site_graph_ingest_runs i ON i.id=r.ingest_run_id
+                    WHERE r.id=?""",
+                (repository_snapshot_id,),
+            ).fetchone()
+            if repository is None:
+                raise ValueError("unknown repository snapshot")
+            if repository["site_key"] != batch.site_key:
+                raise ValueError("evidence batch site does not match repository snapshot")
+            if repository["revision"] != batch.repository_revision:
+                raise ValueError("evidence batch repository revision does not match repository snapshot")
+            if repository["manifest_version_id"] != manifest_version_id:
+                raise ValueError("evidence batch manifest does not match repository ingest")
+
+            batch_id = batch.batch_id
+            candidate_by_id = {candidate.candidate_id: candidate for candidate in batch.candidates}
+            pages_by_candidate = {page.candidate_id: page for page in batch.pages}
+            carrier_ids = sorted(pages_by_candidate)
+            if not carrier_ids and (batch.candidates or batch.links):
+                raise ValueError("persisted evidence requires at least one page entity carrier")
+            carried_candidates: dict[str, list[dict[str, Any]]] = {
+                candidate_id: [] for candidate_id in carrier_ids
+            }
+            unresolved_index = 0
+            for candidate in sorted(batch.candidates, key=lambda item: item.candidate_id):
+                if candidate.candidate_id in pages_by_candidate:
+                    carrier_id = candidate.candidate_id
+                else:
+                    carrier_id = carrier_ids[unresolved_index % len(carrier_ids)]
+                    unresolved_index += 1
+                carried_candidates[carrier_id].append(candidate.normalized())
+
+            page_facts: list[PageFact] = []
+            for candidate_id in carrier_ids:
+                candidate = candidate_by_id[candidate_id]
+                page = pages_by_candidate[candidate_id]
+                evidence: dict[str, Any] = {
+                    "evidence_batch_id": batch_id,
+                    "adapter": batch.adapter,
+                    "adapter_version": batch.adapter_version,
+                    "revision_relation": batch.revision_relation,
+                    "candidate_evidence": carried_candidates[candidate_id],
+                }
+                if candidate_id == carrier_ids[0]:
+                    evidence["repository_revision"] = batch.repository_revision
+                    evidence["evidence_revision"] = batch.evidence_revision
+                    evidence["coverage"] = {
+                        "coverage_id": batch.coverage.coverage_id,
+                        **batch.coverage.normalized(),
+                    }
+                    evidence["diagnostics"] = batch.normalized(include_id=False)["diagnostics"]
+                # Validate the distributed schema-4 carrier before entering persistence.
+                _bounded_json(evidence, "Core 2.1 page evidence", MAX_EVIDENCE_BYTES)
+                page_facts.append(PageFact(
+                    candidate.candidate_id,
+                    candidate.canonical_route,
+                    page.canonical_url,
+                    candidate.source_path,
+                    evidence,
+                    candidate.content_hash,
+                ))
+            persisted_source_ids = {page.fact_key for page in page_facts}
+            unknown_sources = sorted({
+                link.source_candidate_id for link in batch.links
+                if link.source_candidate_id not in persisted_source_ids
+            })
+            if unknown_sources:
+                raise ValueError(f"link source has no persisted page entity: {unknown_sources[0]}")
+            link_facts = [
+                LinkOccurrence(
+                    occurrence_key=link.occurrence_id,
+                    source_fact_key=link.source_candidate_id,
+                    raw_destination=link.raw_destination,
+                    canonical_destination=link.canonical_destination,
+                    anchor_text=link.anchor_text,
+                    context_excerpt="",
+                    source_location=link.source_location,
+                    landmark=link.landmark,
+                    layer=link.layer,
+                    confidence=float(link.confidence),
+                    evidence={
+                        "accessible_name": link.accessible_name,
+                        "evidence_batch_id": batch_id,
+                        "provenance": dict(link.provenance),
+                        "resolution_state": link.resolution_state,
+                        "topology_eligible": link.topology_eligible,
+                        "viewport": link.viewport,
+                        "visible": link.visible,
+                    },
+                    crawlable=link.topology_eligible,
+                    nofollow=link.nofollow,
+                    external=link.resolution_state == "external",
+                    fragment=link.resolution_state == "fragment",
+                    action_kind="action" if link.resolution_state == "action" else None,
+                )
+                for link in batch.links
+            ]
+            self.save_fact_batch(
+                repository_snapshot_id, pages=page_facts, links=link_facts, _connection=db
+            )
+
+            page_fact_rows = db.execute(
+                "SELECT id,fact_key FROM site_graph_page_facts WHERE repository_snapshot_id=?",
+                (repository_snapshot_id,),
+            ).fetchall()
+            page_fact_ids = {row["fact_key"]: row["id"] for row in page_fact_rows}
+            for page in batch.pages:
+                evidence = page.normalized()
+                record_id = _id("sge", batch_id, page.page_id)
+                page_fact_id = page_fact_ids[page.candidate_id]
+                evidence_json = _bounded_json(evidence, "page entity evidence", MAX_EVIDENCE_BYTES)
+                values = (
+                    record_id, repository_snapshot_id, page_fact_id, "core21-page",
+                    page.canonical_route, float(page.naming_confidence), evidence_json,
+                )
+                db.execute(
+                    """INSERT OR IGNORE INTO site_graph_page_entities
+                       (id,repository_snapshot_id,page_fact_id,entity_type,entity_value,confidence,evidence_json)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    values,
+                )
+                row = db.execute(
+                    """SELECT repository_snapshot_id,page_fact_id,entity_type,entity_value,confidence,evidence_json
+                         FROM site_graph_page_entities WHERE id=?""",
+                    (record_id,),
+                ).fetchone()
+                if row is None or tuple(row) != values[1:]:
+                    raise ValueError("immutable site_graph_page_entities key collides with different content")
+
+            graph_id = self.save_graph_snapshot(
+                site_key=batch.site_key,
+                repository_snapshot_id=repository_snapshot_id,
+                manifest_version_id=manifest_version_id,
+                compiler_version=compiler_version,
+                projection_name=projection_name,
+                goal_definition_hash=goal_definition_hash,
+                content_hash=batch.content_hash,
+                _connection=db,
+                _identity_seed=batch_id,
+            )
+            return graph_id
+
     def save_graph_snapshot(
         self,
         *,
@@ -336,6 +497,7 @@ class SiteGraphStore:
         goal_definition_hash: str,
         content_hash: str,
         _connection: sqlite3.Connection | None = None,
+        _identity_seed: str | None = None,
     ) -> str:
         values = {
             "site_key": _text(site_key, "site_key", maximum=100),
@@ -345,7 +507,7 @@ class SiteGraphStore:
             "content_hash": _text(content_hash, "content_hash", maximum=128),
         }
         record_id = _id(
-            "sgg", repository_snapshot_id, manifest_version_id, values["compiler_version"],
+            "sgg", _identity_seed or repository_snapshot_id, manifest_version_id, values["compiler_version"],
             values["projection_name"], values["goal_definition_hash"], values["content_hash"],
         )
         def persist(db: sqlite3.Connection) -> None:
@@ -366,6 +528,19 @@ class SiteGraphStore:
                 (record_id, values["site_key"], repository_snapshot_id, manifest_version_id, values["compiler_version"],
                  values["projection_name"], values["goal_definition_hash"], values["content_hash"], _now()),
             )
+            row = db.execute(
+                """SELECT site_key,repository_snapshot_id,manifest_version_id,compiler_version,
+                          projection_name,goal_definition_hash,content_hash
+                     FROM site_graph_snapshots WHERE id=?""",
+                (record_id,),
+            ).fetchone()
+            expected = (
+                values["site_key"], repository_snapshot_id, manifest_version_id,
+                values["compiler_version"], values["projection_name"],
+                values["goal_definition_hash"], values["content_hash"],
+            )
+            if row is None or tuple(row) != expected:
+                raise ValueError("immutable graph snapshot key collides with different provenance")
         if _connection is None:
             with self.connect() as db:
                 persist(db)

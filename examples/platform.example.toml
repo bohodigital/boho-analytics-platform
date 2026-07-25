@@ -75,6 +75,11 @@ metric_groups = ["traffic"]
 [bindings.options]
 # First site-local date on which this tracker is independently known active.
 observation_start = "2026-01-01"
+[bindings.options.route_analytics]
+enabled = false
+# Optional dimension families remain off unless named here.
+# umami_dimensions = ["title", "channel", "domain", "device", "country"]
+# umami_event_names = ["demo-request"]
 
 [[bindings]]
 site_id = "example-site"
@@ -89,6 +94,18 @@ connection_id = "example-google"
 resource_type = "property"
 resource_id = "replace-with-ga4-property-id"
 metric_groups = ["traffic"]
+[bindings.options.route_analytics]
+# Disabled unless explicitly changed to true after validating provider scope and privacy policy.
+enabled = false
+# max_days = 31
+# page_size = 1000
+# max_pages = 25
+# allowed_query_parameters = ["variant"]
+# excluded_routes = ["/private"]
+# approved_referrer_domains = ["www.google.com"]
+# Optional dimension families remain off unless named here.
+# ga4_dimensions = ["title", "channel", "referrer"]
+# ga4_event_names = ["demo-request"]
 
 [[bindings]]
 site_id = "example-site"
@@ -96,6 +113,11 @@ connection_id = "example-search"
 resource_type = "site"
 resource_id = "sc-domain:example.com"
 metric_groups = ["search"]
+[bindings.options.route_analytics]
+enabled = false
+# search_type = "web"
+# search_console_dimensions = ["device", "country"]
+# query_clusters = { brand = "example" }
 
 [[bindings]]
 site_id = "example-site"

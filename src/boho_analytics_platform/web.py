@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import hmac
 import html
+import io
 import json
 import math
 from datetime import UTC, datetime, timedelta
@@ -14,7 +16,7 @@ from importlib.resources import files
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .build_info import build_identity
-from .catalog import METRICS
+from .catalog import METRICS, SOURCE_SEMANTICS
 from .credentials import ReferenceCredentialProvider, require_text
 from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
@@ -37,6 +39,247 @@ SECURITY_HEADERS = {
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#17201d"/><path d="M17 15h18c10 0 15 4 15 12 0 5-3 8-7 10 5 1 8 5 8 11 0 9-6 13-17 13H17V15zm12 10v8h6c3 0 5-1 5-4s-2-4-5-4h-6zm0 17v9h7c3 0 5-2 5-5 0-2-2-4-5-4h-7z" fill="#ffd4c2"/></svg>"""
 
 SITE_GRAPH_LAYERS = ("contextual", "related", "action", "menu", "breadcrumb", "utility")
+ROUTE_OBSERVATION_METRICS = tuple(sorted(
+    metric_id for metric_id, definition in METRICS.items()
+    if not definition.reportable and definition.source in {
+        "google-analytics", "search-console", "umami"
+    }
+))
+ROUTE_OBSERVATION_DIMENSIONS = frozenset({
+    "channel", "country_code", "country_code_system", "data_state", "device",
+    "domain", "event_name", "observation_scope", "page_title", "referrer_domain",
+    "referrer_route", "route", "search_appearance",
+})
+ROUTE_OBSERVATION_LIMIT = 500
+ROUTE_OBSERVATION_MAX_DAYS = 366
+
+
+def _reachable_routes(start, adjacency):
+    if start not in adjacency:
+        return set()
+    seen = {start}
+    pending = [start]
+    while pending:
+        route = pending.pop()
+        for destination in sorted(adjacency[route]):
+            if destination not in seen:
+                seen.add(destination)
+                pending.append(destination)
+    return seen
+
+
+def site_graph_core21_projection(graph_store, payload, layers):
+    """Project persisted Core 2.1 evidence without exposing private provenance."""
+
+    if payload.get("empty") or not payload.get("site"):
+        return {"available": False, "reason": "no-compiled-snapshot"}
+    with graph_store.connect(readonly=True) as db:
+        graph = db.execute(
+            """SELECT id,repository_snapshot_id,compiler_version
+                 FROM site_graph_snapshots
+                WHERE site_key=? AND projection_name='contextual'
+                ORDER BY created_at DESC,id DESC LIMIT 1""",
+            (payload["site"]["key"],),
+        ).fetchone()
+        if graph is None:
+            return {"available": False, "reason": "no-compatible-selected-projection"}
+        pages = db.execute(
+            """SELECT id,route,evidence_json FROM site_graph_page_facts
+                WHERE repository_snapshot_id=? ORDER BY route,id""",
+            (graph["repository_snapshot_id"],),
+        ).fetchall()
+        entities = db.execute(
+            """SELECT evidence_json FROM site_graph_page_entities
+                WHERE repository_snapshot_id=? AND entity_type='core21-page'""",
+            (graph["repository_snapshot_id"],),
+        ).fetchall()
+        links = db.execute(
+            """SELECT source.route AS source_route,l.canonical_destination,l.layer,
+                      l.crawlable,l.evidence_json
+                 FROM site_graph_link_occurrences l
+                 JOIN site_graph_page_facts source ON source.id=l.source_page_fact_id
+                WHERE l.repository_snapshot_id=?
+                ORDER BY source.route,l.canonical_destination,l.layer,l.id""",
+            (graph["repository_snapshot_id"],),
+        ).fetchall()
+        finding_rows = db.execute(
+            """SELECT finding_type,COUNT(*) AS count
+                 FROM site_graph_findings WHERE graph_snapshot_id=?
+                GROUP BY finding_type ORDER BY finding_type""",
+            (graph["id"],),
+        ).fetchall()
+        reachable_goal_count = db.execute(
+            """SELECT COUNT(DISTINCT page_fact_id) FROM site_graph_node_metrics
+                WHERE graph_snapshot_id=? AND metric_name='goal_distance'
+                  AND metric_value>=0""",
+            (graph["id"],),
+        ).fetchone()[0]
+
+    candidates = {}
+    batch_id = ""
+    repository_revision = payload.get("revision", "")
+    diagnostics = []
+    for row in pages:
+        try:
+            evidence = json.loads(row["evidence_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(evidence, dict) or not evidence.get("evidence_batch_id"):
+            continue
+        batch_id = str(evidence["evidence_batch_id"])
+        repository_revision = str(evidence.get("repository_revision", repository_revision))
+        if isinstance(evidence.get("diagnostics"), list):
+            diagnostics.extend(item for item in evidence["diagnostics"] if isinstance(item, dict))
+        for candidate in evidence.get("candidate_evidence", ()):
+            if isinstance(candidate, dict) and isinstance(candidate.get("candidate_id"), str):
+                candidates[candidate["candidate_id"]] = candidate
+    if not batch_id:
+        return {"available": False, "reason": "legacy-evidence-snapshot"}
+
+    entity_rows = []
+    for row in entities:
+        try:
+            item = json.loads(row["evidence_json"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, dict):
+            entity_rows.append(item)
+    topology = []
+    relationship_count = 0
+    for row in links:
+        try:
+            evidence = json.loads(row["evidence_json"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(evidence, dict) or evidence.get("evidence_batch_id") != batch_id:
+            continue
+        relationship_count += 1
+        if (
+            row["crawlable"]
+            and evidence.get("topology_eligible") is True
+            and row["canonical_destination"]
+        ):
+            topology.append((row["source_route"], row["canonical_destination"], row["layer"]))
+
+    state_counts = {}
+    for candidate in candidates.values():
+        state = str(candidate.get("resolution_state", "unchecked"))
+        state_counts[state] = state_counts.get(state, 0) + 1
+    routes = {str(item.get("canonical_route")) for item in entity_rows if item.get("canonical_route")}
+    incoming_full = {route: set() for route in routes}
+    incoming_selected = {route: set() for route in routes}
+    full = {route: set() for route in routes}
+    selected = {route: set() for route in routes}
+    without_menu = {route: set() for route in routes}
+    for source, destination, layer in topology:
+        if source not in routes or destination not in routes:
+            continue
+        full[source].add(destination)
+        incoming_full[destination].add(source)
+        if layer != "menu":
+            without_menu[source].add(destination)
+        if layer in layers:
+            selected[source].add(destination)
+            incoming_selected[destination].add(source)
+    full_reachable = _reachable_routes("/", full)
+    without_menu_reachable = _reachable_routes("/", without_menu)
+    true_orphans = sorted(route for route in routes if route != "/" and not incoming_full[route])
+    contextual_orphans = sorted(
+        route for route in routes
+        if route != "/" and incoming_full[route] and not incoming_selected[route]
+    )
+    dead_ends = sorted(route for route in routes if not selected[route])
+    homepage_dependent = sorted(
+        route for route in routes
+        if route != "/" and incoming_full[route] == {"/"}
+    )
+    global_shell_dependent = sorted(
+        route for route in routes
+        if route != "/" and incoming_full[route]
+        and all(
+            layer in {"menu", "utility"}
+            for source, destination, layer in topology
+            if destination == route and source in routes
+        )
+    )
+    contradictions = sorted(
+        candidate.get("canonical_route", "")
+        for candidate in candidates.values()
+        if candidate.get("resolution_state") == "contradicted"
+    )
+    exclusions = sorted(
+        candidate.get("canonical_route", "")
+        for candidate in candidates.values()
+        if candidate.get("resolution_state") == "excluded"
+    )
+    revision_mismatches = sum(
+        item.get("code") == "revision-mismatch" for item in diagnostics
+    )
+    finding_counts = {row["finding_type"]: row["count"] for row in finding_rows}
+    compatible_layers = set(layers) == {"contextual", "related", "action"}
+    structural_metrics = (
+        {
+            "available": True,
+            "selected_layers": sorted(layers),
+            "pages": len(routes),
+            "full_relationships": sum(len(destinations) for destinations in full.values()),
+            "selected_relationships": sum(len(destinations) for destinations in selected.values()),
+            "true_orphans": finding_counts.get("true_orphan", len(true_orphans)),
+            "contextual_orphans": finding_counts.get(
+                "contextual_orphan", len(contextual_orphans)
+            ),
+            "contextual_dead_ends": finding_counts.get(
+                "contextual_dead_end", len(dead_ends)
+            ),
+            "menu_dependent": finding_counts.get(
+                "menu_dependence", len(full_reachable - without_menu_reachable)
+            ),
+            "homepage_dependent": finding_counts.get(
+                "homepage_dependence", len(homepage_dependent)
+            ),
+            "global_shell_dependent": finding_counts.get(
+                "global_shell_dependence", len(global_shell_dependent)
+            ),
+            "selected_goal_reachable": reachable_goal_count,
+            "withheld_full_goal_metrics": True,
+            "withheld_reason": (
+                "full-topology goal reachability is not carried by the compiled "
+                "contextual display projection"
+            ),
+        }
+        if compatible_layers and graph["compiler_version"].startswith("site-graph-core21-")
+        else {
+            "available": False,
+            "selected_layers": list(layers),
+            "reason": "displayed layers differ from the compiled contextual analysis projection",
+        }
+    )
+    return {
+        "available": True,
+        "evidence_core": "2.1",
+        "schema_version": 1,
+        "batch_id": batch_id,
+        "repository_revision": repository_revision,
+        "freshness_basis": "exact-revision",
+        "coverage": {
+            "candidates": len(candidates),
+            "entities": len(entity_rows),
+            "relationships": relationship_count,
+            "state_counts": dict(sorted(state_counts.items())),
+            "unresolved": sum(
+                state_counts.get(state, 0)
+                for state in ("unresolved", "dynamic-unknown", "unchecked")
+            ),
+            "contradictions": len(contradictions),
+            "exclusions": len(exclusions),
+            "revision_mismatches": revision_mismatches,
+            "complete_totals": True,
+            "display_cap_applied": False,
+        },
+        "contradicted_routes": contradictions,
+        "excluded_routes": exclusions,
+        "structural_metrics": structural_metrics,
+    }
 
 
 METRIC_LABELS = {
@@ -2252,13 +2495,34 @@ def _site_graph_evidence_panel(payload):
 
 def _site_graph_resilience_panel(payload):
     overview = payload["overview"]
+    structural = payload.get("evidence_core21", {}).get("structural_metrics", {})
     cards = (
         ("Components", overview["components"], "Strongly connected structural groups"),
-        ("Orphans", overview["orphans"], "Pages without structural inbound evidence"),
-        ("Traps", overview["traps"], "Pages with no non-menu outbound route in this projection"),
-        ("Bottlenecks", overview["bottlenecks"], "Pages whose removal increases structural fragmentation"),
-        ("Contextual dead ends", overview["contextual_dead_ends"], "Contextual projection pages with no continuation"),
-        ("Menu-dependent", overview["menu_dependent_pages"], "Pages reachable only through menu layers"),
+        (
+            "True orphans",
+            structural.get("true_orphans", overview["orphans"]),
+            "Pages without inbound evidence in the complete topology",
+        ),
+        (
+            "Contextual orphans",
+            structural.get("contextual_orphans", 0),
+            "Pages with inbound evidence only outside the selected layers",
+        ),
+        (
+            "Contextual dead ends",
+            structural.get("contextual_dead_ends", overview["contextual_dead_ends"]),
+            "Selected-projection pages with no continuation",
+        ),
+        (
+            "Menu-dependent",
+            structural.get("menu_dependent", overview["menu_dependent_pages"]),
+            "Pages reachable from home only through menu relationships",
+        ),
+        (
+            "Global-shell-dependent",
+            structural.get("global_shell_dependent", 0),
+            "Pages whose inbound evidence is limited to menu or utility relationships",
+        ),
     )
     card_html = "".join(
         f'<article class="health-item"><b>{_e(label)}</b><span class="pipeline-value">{value}</span><span>{_e(note)}</span></article>'
@@ -2268,6 +2532,64 @@ def _site_graph_resilience_panel(payload):
         '<section id="site-graph-resilience" class="panel section-panel"><div class="panel-heading"><div><h2>Resilience view</h2>'
         '<p>Structural failure-mode indicators from the compiled graph snapshot.</p></div></div>'
         f'<div class="health-grid">{card_html}</div></section>'
+    )
+
+
+def _site_graph_core21_panel(payload):
+    evidence = payload.get("evidence_core21", {})
+    if not evidence.get("available"):
+        return (
+            '<section id="site-graph-core21" class="panel section-panel">'
+            '<div class="panel-heading"><div><h2>Evidence coverage</h2>'
+            '<p>Core 2.1 evidence is unavailable for this legacy snapshot.</p></div></div></section>'
+        )
+    coverage = evidence["coverage"]
+    structural = evidence["structural_metrics"]
+    state_rows = "".join(
+        f"<tr><td>{_e(state.replace('-', ' ').title())}</td><td>{count}</td></tr>"
+        for state, count in coverage["state_counts"].items()
+    ) or '<tr><td colspan="2">No route candidates.</td></tr>'
+    structural_rows = (
+        "".join(
+            f"<tr><td>{_e(label)}</td><td>{structural[key]}</td></tr>"
+            for key, label in (
+                ("true_orphans", "True orphans"),
+                ("contextual_orphans", "Contextual orphans"),
+                ("contextual_dead_ends", "Contextual dead ends"),
+                ("menu_dependent", "Menu-dependent pages"),
+                ("homepage_dependent", "Homepage-dependent pages"),
+                ("global_shell_dependent", "Global-shell-dependent pages"),
+            )
+        )
+        if structural.get("available")
+        else (
+            '<tr><td colspan="2">Structural metrics withheld: '
+            f'{_e(structural["reason"])}</td></tr>'
+        )
+    )
+    return (
+        '<section id="site-graph-core21" class="panel table-panel">'
+        '<div class="panel-heading"><div><h2>Graph Evidence Core 2.1 coverage</h2>'
+        '<p>Complete reconciliation totals are independent of the bounded SVG. '
+        f'Freshness uses {_e(evidence["freshness_basis"])} evidence for revision '
+        f'{_e(evidence["repository_revision"][:12])}.</p></div></div>'
+        '<div class="graph-meta">'
+        f'<span>{coverage["candidates"]} candidates</span>'
+        f'<span>{coverage["entities"]} resolved entities</span>'
+        f'<span>{coverage["relationships"]} relationships</span>'
+        f'<span>{coverage["unresolved"]} unresolved</span>'
+        f'<span>{coverage["contradictions"]} contradictions</span></div>'
+        '<div class="split-grid"><div class="table-scroll"><table>'
+        '<caption class="sr-only">Complete route-resolution coverage by state</caption>'
+        '<thead><tr><th>Resolution state</th><th>Routes</th></tr></thead>'
+        f'<tbody>{state_rows}</tbody></table></div>'
+        '<div class="table-scroll"><table>'
+        '<caption class="sr-only">Corrected structural findings for the selected projection</caption>'
+        '<thead><tr><th>Corrected finding</th><th>Pages</th></tr></thead>'
+        f'<tbody>{structural_rows}</tbody></table></div></div>'
+        '<p class="graph-caption">Full-topology goal reachability is withheld because the '
+        'compatible display model carries only the compiled contextual projection.</p>'
+        '</section>'
     )
 
 
@@ -2351,7 +2673,8 @@ def _site_graph_snapshot_panel(payload):
 
 def _site_graph_analysis_panels(payload):
     return (
-        _site_graph_page_table(payload)
+        _site_graph_core21_panel(payload)
+        + _site_graph_page_table(payload)
         + '<div class="graph-view-grid">'
         + _site_graph_matrix_panel(payload)
         + _site_graph_resilience_panel(payload)
@@ -2396,6 +2719,83 @@ def _geography_panel(payload, api_url):
         '<div class="table-scroll"><table><caption class="sr-only">Geographic activity by country</caption>'
         f'<thead><tr><th scope="col">Country code</th><th scope="col">Value</th><th scope="col">Provider metric</th></tr></thead><tbody id="geography-table-body">{rows}</tbody></table></div></details></section>'
     )
+
+
+def _route_observation_csv(payload):
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow((
+        "site_id", "source", "metric", "unit", "window_start", "window_end",
+        "route", "dimensions", "value", "coverage", "freshness", "data_state",
+        "provider_time_basis", "provider_limitation",
+    ))
+    for row in payload["rows"]:
+        writer.writerow((
+            row["site_id"], row["source"], row["metric"], row["unit"],
+            row["window"]["start"], row["window"]["end"], row["route"] or "",
+            json.dumps(row["dimensions"], sort_keys=True, separators=(",", ":")),
+            row["value"], row["coverage"], row["freshness"], row["data_state"],
+            row["provider_time_basis"], row["provider_limitation"],
+        ))
+    return output.getvalue()
+
+
+def _route_observation_html(payload):
+    filters = payload["filters"]
+    site_options = "".join(
+        f'<option value="{_e(site)}"{" selected" if site == filters["site"] else ""}>{_e(site)}</option>'
+        for site in payload["available_sites"]
+    )
+    source_options = '<option value="">All configured providers</option>' + "".join(
+        f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(source)}</option>'
+        for source in payload["available_sources"]
+    )
+    metric_options = '<option value="">All accepted route metrics</option>' + "".join(
+        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(metric)}</option>'
+        for metric in payload["available_metrics"]
+    )
+    rows = "".join(
+        "<tr>"
+        f'<td>{_e(row["site_id"])}</td><td>{_e(row["source"])}</td>'
+        f'<td>{_e(row["metric"])}</td><td>{_e(row["route"] or "Provider dimension")}</td>'
+        f'<td>{_e(", ".join(f"{key}={value}" for key, value in row["dimensions"].items()))}</td>'
+        f'<td>{_e(row["value"])} {_e(row["unit"])}</td><td>{_e(row["coverage"])}</td>'
+        f'<td>{_e(row["data_state"])}</td><td>{_e(row["freshness"])}</td>'
+        f'<td>{_e(row["provider_limitation"])}</td></tr>'
+        for row in payload["rows"]
+    ) or '<tr><td colspan="10">No accepted route observations match this bounded window.</td></tr>'
+    query = {
+        key: value for key, value in (
+            ("report", filters["report"]),
+            ("start", payload["window"]["start"][:10]),
+            ("end", payload["window"]["end"][:10]),
+            ("site", filters["site"]),
+            ("source", filters["source"]),
+            ("metric", filters["metric"]),
+            ("route", filters["route"]),
+        ) if value
+    }
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Route observations - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to route observations</a>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only route observations</div></div></header>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a href="/site-graph">Site Graph</a><a class="active" href="/route-observations">Route observations</a></div>
+<section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} - end exclusive</p><h1>Route observations</h1><p class="hero-copy">Provider-separated, privacy-bounded route and acquisition facts. Search clicks are not sessions; GA4 sessions are not Umami visits.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["displayed_rows"]} of {payload["total_rows"]} rows</span></section>
+<section class="panel control-panel"><div class="panel-heading"><div><h2>Bounded filters</h2><p>Filters never trigger provider collection or alter stored facts.</p></div></div>
+<form class="filter-form" method="get" action="/route-observations"><input type="hidden" name="report" value="{_e(filters["report"])}">
+<label class="field"><span>Start</span><input type="date" name="start" value="{_e(payload["window"]["start"][:10])}"></label>
+<label class="field"><span>End (exclusive)</span><input type="date" name="end" value="{_e(payload["window"]["end"][:10])}"></label>
+<label class="field"><span>Site</span><select name="site">{site_options}</select></label>
+<label class="field"><span>Provider</span><select name="source">{source_options}</select></label>
+<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
+<label class="field"><span>Exact route</span><input name="route" value="{_e(filters["route"])}" placeholder="/services/"></label>
+<button type="submit">Apply filters</button></form></section>
+<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Provider semantics remain separate</strong><br>No visitor or session identifiers, raw queries, or full external referrer URLs are exposed. Search Console completeness remains provider-limited and its provider-date basis is disclosed per row.</div></div></aside>
+<section class="panel table-panel"><div class="panel-heading"><div><h2>Accepted observations</h2><p>Complete matching-row total: {payload["total_rows"]}. Display is bounded to {payload["limit"]}; export uses the same bounded, sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
+<div class="table-scroll"><table><caption class="sr-only">Provider-separated route observations with coverage, freshness, and limitations</caption>
+<thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section>
+<footer class="footer"><span>Read-only compatibility view</span><span>No provider sync, raw query, identifier, or full external referrer data</span></footer></main></body></html>"""
 
 
 def handler_factory(config, store, credentials=None):
@@ -2492,6 +2892,9 @@ def handler_factory(config, store, credentials=None):
                     "site", "page", "graph", "layer", "edge_query", "edge_sort",
                     "edge_order", "edge_page",
                 }
+                route_observation_fields = {
+                    "report", "start", "end", "site", "source", "metric", "route",
+                }
                 if parsed.path == "/":
                     allowed = analytics_fields
                     repeatable = set()
@@ -2509,6 +2912,12 @@ def handler_factory(config, store, credentials=None):
                 }:
                     allowed = graph_fields
                     repeatable = {"layer"}
+                elif parsed.path in {
+                    "/route-observations", "/api/v1/route-observations",
+                    "/api/v1/route-observations.csv",
+                }:
+                    allowed = route_observation_fields
+                    repeatable = set()
                 else:
                     allowed = set()
                     repeatable = set()
@@ -2516,9 +2925,17 @@ def handler_factory(config, store, credentials=None):
                     raise ValueError("unknown query field")
                 if any(len(values) != 1 for key, values in query.items() if key not in repeatable):
                     raise ValueError("duplicate query field")
+                nonblank_fields = (
+                    ("start", "end", "site")
+                    if parsed.path in {
+                        "/route-observations", "/api/v1/route-observations",
+                        "/api/v1/route-observations.csv",
+                    }
+                    else ("start", "end", "site", "metric", "source")
+                )
                 if any(
                     value == ""
-                    for field in ("start", "end", "site", "metric", "source")
+                    for field in nonblank_fields
                     for value in query.get(field, ())
                 ):
                     raise ValueError("blank query value")
@@ -2530,6 +2947,12 @@ def handler_factory(config, store, credentials=None):
                     return self._site_graph_api(query)
                 if parsed.path == "/api/v1/site-graph.csv":
                     return self._site_graph_csv(query)
+                if parsed.path == "/route-observations":
+                    return self._route_observations(query)
+                if parsed.path == "/api/v1/route-observations":
+                    return self._route_observations_api(query)
+                if parsed.path == "/api/v1/route-observations.csv":
+                    return self._route_observations_csv(query)
                 if parsed.path == "/api/v1/geography":
                     return self._geography_api(query)
                 if parsed.path in {
@@ -2540,8 +2963,155 @@ def handler_factory(config, store, credentials=None):
             except (ValueError, KeyError):
                 message = "invalid site graph request" if parsed.path in {
                     "/site-graph", "/api/v1/site-graph", "/api/v1/site-graph.csv"
+                } else "invalid route observation request" if parsed.path in {
+                    "/route-observations", "/api/v1/route-observations",
+                    "/api/v1/route-observations.csv",
                 } else "invalid report request"
                 self._send(400, "application/json", json.dumps({"error": message}, sort_keys=True))
+
+        def _route_observation_payload(self, query):
+            report_id = query.get("report", [config.reports[0].id])[0]
+            report = next((item for item in config.reports if item.id == report_id), None)
+            if report is None:
+                raise ValueError("unknown report")
+            site_id = query.get("site", [report.site_ids[0]])[0]
+            if site_id not in report.site_ids:
+                raise ValueError("unknown route observation site")
+            source = query.get("source", [""])[0]
+            metric = query.get("metric", [""])[0]
+            route = query.get("route", [""])[0].strip()
+            available_sources = sorted({
+                METRICS[item].source for item in ROUTE_OBSERVATION_METRICS
+            })
+            if source and source not in available_sources:
+                raise ValueError("unknown route observation source")
+            if metric and metric not in ROUTE_OBSERVATION_METRICS:
+                raise ValueError("unknown route observation metric")
+            if metric and source and METRICS[metric].source != source:
+                raise ValueError("metric does not belong to selected source")
+            if len(route) > 2_000 or "\n" in route or "\r" in route:
+                raise ValueError("invalid route observation route")
+            window = _window(
+                query,
+                config.platform.default_timezone,
+                report.default_window_days,
+                report.default_end_lag_days,
+            )
+            if (window.end - window.start).days > ROUTE_OBSERVATION_MAX_DAYS:
+                raise ValueError("route observation window exceeds the bounded limit")
+            metric_ids = tuple(
+                item for item in ROUTE_OBSERVATION_METRICS
+                if (not source or METRICS[item].source == source)
+                and (not metric or item == metric)
+            )
+            points = store.query(
+                client_id=report.client_id,
+                site_ids=(site_id,),
+                metric_ids=metric_ids,
+                window=window,
+            )
+            rows = []
+            for point in points:
+                dimension_names = {key for key, _value in point.dimensions}
+                if dimension_names & {"query", "query_cluster"}:
+                    continue
+                dimensions = {
+                    key: value for key, value in point.dimensions
+                    if key in ROUTE_OBSERVATION_DIMENSIONS
+                }
+                point_route = dimensions.get("route") or dimensions.get("referrer_route")
+                if route and point_route != route:
+                    continue
+                semantics = SOURCE_SEMANTICS.get(point.source)
+                data_state = dimensions.get(
+                    "data_state",
+                    semantics.data_state if semantics else point.completeness.value,
+                )
+                limitation = {
+                    "search-console": (
+                        "Provider-limited Search Console rows; newest dates can be provisional "
+                        "and the provider-date basis differs from the site day."
+                    ),
+                    "google-analytics": (
+                        "GA4 provider-reported aggregates; sessions and engagement remain GA4-only."
+                    ),
+                    "umami": (
+                        "Umami provider-reported aggregates; visits remain separate from GA4 sessions."
+                    ),
+                }.get(point.source, "Provider-reported aggregate.")
+                rows.append({
+                    "site_id": point.site_id,
+                    "source": point.source,
+                    "metric": point.metric,
+                    "unit": point.unit,
+                    "value": str(point.value),
+                    "route": point_route,
+                    "dimensions": dict(sorted(dimensions.items())),
+                    "window": {
+                        "start": point.start.isoformat(),
+                        "end": point.end.isoformat(),
+                    },
+                    "coverage": point.completeness.value,
+                    "freshness": point.observed_at.isoformat(),
+                    "data_state": data_state,
+                    "provider_time_basis": semantics.time_basis if semantics else "unknown",
+                    "provider_limitation": limitation,
+                })
+            rows.sort(key=lambda item: (
+                item["source"], item["metric"], item["route"] or "",
+                tuple(item["dimensions"].items()), item["window"]["start"],
+            ))
+            total_rows = len(rows)
+            return {
+                "schema_version": 1,
+                "read_only": True,
+                "provider_aggregation": "separate",
+                "window": {
+                    "start": window.start.isoformat(),
+                    "end": window.end.isoformat(),
+                    "timezone": window.timezone,
+                },
+                "filters": {
+                    "report": report_id,
+                    "site": site_id,
+                    "source": source,
+                    "metric": metric,
+                    "route": route,
+                },
+                "available_sites": list(report.site_ids),
+                "available_sources": available_sources,
+                "available_metrics": list(ROUTE_OBSERVATION_METRICS),
+                "total_rows": total_rows,
+                "displayed_rows": min(total_rows, ROUTE_OBSERVATION_LIMIT),
+                "limit": ROUTE_OBSERVATION_LIMIT,
+                "truncated": total_rows > ROUTE_OBSERVATION_LIMIT,
+                "complete_totals": True,
+                "rows": rows[:ROUTE_OBSERVATION_LIMIT],
+                "privacy": {
+                    "visitor_or_session_identifiers": False,
+                    "raw_queries": False,
+                    "full_external_referrer_urls": False,
+                },
+            }
+
+        def _route_observations(self, query):
+            return self._send(
+                200, "text/html; charset=utf-8",
+                _route_observation_html(self._route_observation_payload(query)),
+            )
+
+        def _route_observations_api(self, query):
+            return self._send(
+                200, "application/json",
+                json.dumps(self._route_observation_payload(query), sort_keys=True),
+            )
+
+        def _route_observations_csv(self, query):
+            return self._send(
+                200, "text/csv; charset=utf-8",
+                _route_observation_csv(self._route_observation_payload(query)),
+                {"Content-Disposition": 'attachment; filename="route-observations.csv"'},
+            )
 
         @staticmethod
         def _graph_layers(query):
@@ -2560,7 +3130,7 @@ def handler_factory(config, store, credentials=None):
                 edge_page = int(query.get("edge_page", ["1"])[0])
             except (TypeError, ValueError) as error:
                 raise ValueError("invalid edge page") from error
-            return graph_reports.summary(
+            payload = graph_reports.summary(
                 site_key=site_key,
                 selected_page=selected_page,
                 layers=self._graph_layers(query),
@@ -2570,6 +3140,25 @@ def handler_factory(config, store, credentials=None):
                 edge_order=query.get("edge_order", ["asc"])[0],
                 edge_page=edge_page,
             )
+            payload["evidence_core21"] = site_graph_core21_projection(
+                graph_reports.store, payload, tuple(payload.get("selected_layers", ()))
+            )
+            if (
+                payload["evidence_core21"].get("available")
+                and payload["evidence_core21"]["structural_metrics"].get("available")
+            ):
+                structural = payload["evidence_core21"]["structural_metrics"]
+                payload["overview"].update({
+                    "orphans": structural["true_orphans"],
+                    "true_orphans": structural["true_orphans"],
+                    "contextual_orphans": structural["contextual_orphans"],
+                    "contextual_dead_ends": structural["contextual_dead_ends"],
+                    "menu_dependent_pages": structural["menu_dependent"],
+                    "global_shell_dependent_pages": structural["global_shell_dependent"],
+                })
+                payload["overview"].pop("traps", None)
+                payload["overview"].pop("bottlenecks", None)
+            return payload
 
         def _site_graph_api(self, query):
             return self._send(200, "application/json", json.dumps(self._site_graph_payload(query), sort_keys=True))
@@ -2601,7 +3190,7 @@ def handler_factory(config, store, credentials=None):
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a>{site_links}</div>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a>{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
                 return self._send(200, "text/html; charset=utf-8", page)
 
@@ -2659,7 +3248,7 @@ def handler_factory(config, store, credentials=None):
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to graph dashboard</a>
 <header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a></div>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a></div>
 <section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Inspect internal-link structure with exact completeness disclosures, a safe full-graph mode for small sites, bounded rendering for larger sites, and a complete paginated evidence table.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
 <div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
 {view_links}
@@ -3022,6 +3611,7 @@ def handler_factory(config, store, credentials=None):
             plot_url = "/?" + urlencode({"report": report.id, "view": "plot", "start": start, "end": end})
             report_nav += f'<a class="plot-mode {"active" if is_plot else ""}" href="{_e(plot_url)}">Plot Builder</a>'
             report_nav += '<a href="/site-graph">Site Graph</a>'
+            report_nav += '<a href="/route-observations">Route observations</a>'
             if is_plot:
                 source_defaults = {
                     source: next(

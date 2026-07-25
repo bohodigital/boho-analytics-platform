@@ -21,6 +21,16 @@ partial, and exact-window totals spanning it cannot become complete decision inp
 Umami Cloud and differently versioned self-hosted installations may use different base paths or
 authentication behavior. Confirm live version compatibility during connection testing.
 
+Route observations are disabled unless a binding explicitly opts in. The connector then issues
+bounded, paginated daily aggregate requests for paths, entries, and exits. Title, channel, domain,
+device, country, and configured event facts remain individually disabled unless named in the
+binding. It never reads event payloads, event properties, distinct IDs, sessions, IPs, user agents,
+or city records. The connector checks the provider-reported available date range before collection
+and rejects a request that predates it rather than treating pre-instrumentation silence as zero. A
+request exceeding `max_days`, `max_pages`, or `page_size` fails with a sanitized diagnostic rather
+than silently collecting a partial route slice. Provider contract:
+<https://docs.umami.is/docs/api/website-stats>.
+
 ## Cloudflare traffic
 
 V1 uses the GraphQL Analytics endpoint and `httpRequestsAdaptiveGroups` grouped by date with
@@ -46,6 +56,15 @@ an explicit warning rather than an assumption.
 The geography query groups sessions by date, ISO country ID, and provider-reported region. Country
 and region values remain GA4 sessions and are not deduplicated against Umami or Cloudflare.
 
+Opt-in route observations use GA4 `runReport` pagination and property metadata validation. They
+collect landing-page sessions, page-path views, engagement, and key events. Title, channel, and
+referrer families remain off unless individually selected in `ga4_dimensions`; event counts require
+individually configured names. Internal referrers retain a normalized route; external referrers
+retain an allowlisted domain only. Full referrer URLs, event parameters, client IDs, session IDs,
+and raw events are never facts or diagnostics. Contracts:
+<https://developers.google.com/analytics/devguides/reporting/data/v1/basics> and
+<https://developers.google.com/analytics/devguides/reporting/data/v1>.
+
 ## Google Search Console
 
 V1 calls `sites/{siteUrl}/searchAnalytics/query` with daily rows, final data, and the documented
@@ -59,6 +78,16 @@ reporting contract; the provider basis remains explicit in health and probe meta
 Geographic search demand is a second query grouped by provider date and ISO alpha-3 country. Search
 Console does not expose a state or county dimension, and high-dimensional results are top rows rather
 than guaranteed exhaustive data.
+
+Opt-in page observations add `date,page` Search Analytics requests with `startRow` pagination,
+`aggregationType=auto`, the configured search type, and final data only. Existing date-only facts
+remain control totals; page rows are provider-limited and stored with unknown completeness. Optional
+device, country, and search-appearance dimensions are disabled by default. Named query clusters
+persist only their configured cluster identifier and aggregate values, never a returned query value.
+Every fact also records `data_state=final` and an explicit observation scope (`page`, one named
+page-breakdown scope, or `query-cluster`) so overlapping views cannot be mistaken for one additive
+population.
+Contract: <https://developers.google.com/webmaster-tools/v1/searchanalytics/query>.
 
 ## Geographic display boundary
 

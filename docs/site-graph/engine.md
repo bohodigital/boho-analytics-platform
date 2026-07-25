@@ -160,11 +160,12 @@ The compiler currently derives:
 - shortest goal distance;
 - unreachable pages;
 - strongly connected components;
-- orphans;
-- traps;
-- bottlenecks;
+- true orphans across the complete internal topology;
+- contextual orphans with inbound evidence only outside the selected layers;
 - contextual dead ends;
 - menu-dependent pages;
+- homepage-dependent pages;
+- global-shell-dependent pages;
 - evidence-linked findings.
 
 Component analysis is iterative so large acyclic sites do not hit Python recursion limits.
@@ -191,14 +192,17 @@ should not be presented as SEO authority outside the analyzed internal graph.
 
 Findings summarize graph conditions that are useful for review:
 
-- pages with no incoming links;
-- pages with no selected-layer path to a goal;
+- true orphans with no complete-topology inbound evidence;
+- contextual orphans with no selected-layer inbound evidence;
 - contextual dead ends;
 - menu-dependent pages;
-- bottlenecks and strongly connected component structure;
+- homepage- and global-shell-dependent pages;
+- strongly connected component structure;
 - unresolved internal references.
 
 Every finding remains tied to stored evidence and selected projection settings.
+Core 2.1 does not claim traps or bottlenecks: those labels require stronger algorithms and evidence
+than the current compiler establishes.
 
 ## Report and display model
 
@@ -208,6 +212,7 @@ The report service builds one normalized read model for HTML, JSON, and CSV cons
 - selected layers;
 - projection;
 - coverage counts;
+- complete Core 2.1 candidate, entity, relationship, and resolution-state totals;
 - layer counts;
 - graph-mode metadata;
 - displayed and total node counts;
@@ -226,6 +231,9 @@ The report service builds one normalized read model for HTML, JSON, and CSV cons
 
 The SVG view is intentionally bounded. It renders a coherent graph, not every stored relationship at
 once. The complete table and CSV export are the accounting surfaces for full unique-edge coverage.
+Reconciliation coverage is calculated from the complete persisted batch, never from displayed
+nodes or edges. Corrected structural metrics are shown only when the selected display layers equal
+the compiled contextual projection; otherwise they are explicitly withheld.
 
 ## SVG graph layout
 

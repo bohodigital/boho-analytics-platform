@@ -1,0 +1,16 @@
+{
+  "destinations": [
+    "/",
+    "/resources/",
+    "/company/about/",
+    "/pricing/",
+    "/contact/",
+    "/contact/"
+  ],
+  "unresolved_reasons": [
+    "environment-expression",
+    "state-or-runtime-expression"
+  ],
+  "minimum_precision": 1.0,
+  "minimum_recall": 1.0
+}

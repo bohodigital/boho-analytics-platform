@@ -254,7 +254,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["version"], "0.1.1.dev0")
+        self.assertEqual(payload["version"], "0.2.0")
         self.assertIn("build_commit", payload)
         self.assertIn("build_tree", payload)
         self.assertGreaterEqual(payload["database_schema"], 2)

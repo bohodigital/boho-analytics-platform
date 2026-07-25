@@ -5,8 +5,17 @@ the first stable release.
 
 ## Unreleased
 
+## 0.2.0 - 2026-07-25
+
 ### Changed
 
+- Projected persisted Graph Evidence Core 2.1 reconciliation coverage and corrected structural
+  findings through the CLI, Site Graph HTML, and JSON while retaining bounded SVG rendering and
+  complete non-visual accounting. Structural metrics are withheld when selected display layers do
+  not match the compiled contextual projection.
+- Added a bounded, read-only route-observation HTML/JSON/CSV view for the accepted GA4, Search
+  Console, and Umami aggregates, with provider-separated semantics, coverage, freshness, provider
+  limitations, and privacy-safe filters.
 - Rebuilt the analytics landing experience around a high-confidence summary, four visual KPI cards,
   one dominant area trend, and a compact action rail. Filters, raw data notes, operations evidence,
   and measurement gaps remain available without competing with the decisions the dashboard supports.
@@ -16,6 +25,8 @@ the first stable release.
 
 ### Fixed
 
+- Removed compatibility-layer trap and bottleneck claims that the corrected Core 2.1 compiler does
+  not establish; the legacy `orphans` summary key remains a true-orphan alias for compatible clients.
 - Reconciled the existing Site Graph pan-and-zoom interaction with responsive SVG
   coordinates, lost pointer-capture cleanup, and Escape dismissal for pointer-pinned
   graph selections.
@@ -59,6 +70,10 @@ the first stable release.
   seeded Site Graph pages.
 
 ### Added
+
+- Added opt-in, privacy-bounded route observations for GA4, Search Console, and Umami. The shared
+  route normalizer, bounded pagination/day limits, provider-specific fact catalog, and fixture tests
+  preserve aggregate behavior and never store raw queries, identifiers, full referrers, or event payloads.
 
 - Connection-ready V1 beta with Umami, Cloudflare traffic, GA4, Search Console, Cloudflare D1
   forms, read-only forms inbox, and sanitized fixture connectors.

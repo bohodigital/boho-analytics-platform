@@ -3,7 +3,8 @@
 ## Assets and boundaries
 
 Assets are provider credentials, client/site mappings, normalized analytics, form-delivery state,
-saved reports, exports, and authorization decisions. Trust boundaries are browser-to-web, web-to-
+saved reports, route observations, repository-derived graph evidence, exports, and authorization
+decisions. Trust boundaries are browser-to-web, web-to-
 SQLite, sync-to-credential-provider, sync-to-provider, analytics-to-read-only-mail-index, and
 public-package-to-private-deployment.
 
@@ -40,6 +41,9 @@ in the public example or logs.
 - CSP denies all resources except same-origin CSS, JavaScript, and API fetches; framing, sniffing, referrers, and caching are
   restricted; permissive CORS is absent.
 - Web routes are read-only. Provider sync, restore, and configuration mutation have no HTTP route.
+- Site Graph and route-observation requests cannot ingest, compile, build, crawl, or contact a
+  provider. Their errors are sanitized and their HTML/JSON/CSV responses inherit the same Host,
+  authentication, CSP, `no-store`, and no-permissive-CORS controls.
 - Basic authentication uses constant-time comparison and credential references.
 
 The built-in server does not provide TLS, tenant roles, brute-force protection, or an external
@@ -64,6 +68,12 @@ configuration write access as privileged and review changes before service resta
 - Catalog validation rejects unknown metric/source/unit combinations.
 - Ratios and positions use explicit non-additive aggregation; providers stay source-labeled.
 - Missing data and forms delivery gaps produce visible warnings rather than zero-filled success.
+- Core 2.1 resolution coverage is counted from complete persisted evidence, independently of SVG
+  caps. Corrected structural metrics are withheld when display layers do not match the compiled
+  projection; unsupported trap and bottleneck claims are absent.
+- Route-observation rows remain provider-separated and expose metric source, window, route,
+  coverage, freshness, date basis, and limitations. Allowlisted dimensions exclude raw queries,
+  query clusters, visitor/session identifiers, and full external referrer URLs.
 
 Provider sampling, delayed finalization, account-specific access, D1 retention, and mailbox-sync lag
 can still create discrepancies. Live connection testing must validate these assumptions.
