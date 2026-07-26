@@ -5,6 +5,12 @@ the first stable release.
 
 ## Unreleased
 
+### Documentation
+
+- Defined the Analytics Operations 1.0 program, immutable private-definition contracts,
+  schema-5 additive migration plan, provider compatibility rules, delivery boundary, and threat
+  controls for the staged `0.3.0` release. No runtime behavior or database schema changed.
+
 ## 0.2.0 - 2026-07-25
 
 ### Changed

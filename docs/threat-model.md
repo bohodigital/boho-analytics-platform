@@ -78,6 +78,60 @@ configuration write access as privileged and review changes before service resta
 Provider sampling, delayed finalization, account-specific access, D1 retention, and mailbox-sync lag
 can still create discrepancies. Live connection testing must validate these assumptions.
 
+## Analytics Operations threats and controls
+
+### Malicious or unbounded definitions
+
+- Goal, segment, alert, and subscription documents use strict schemas with unknown-field rejection.
+- Segment dimensions and operators are allowlisted; logical depth, node count, list size, string
+  length, and safe-pattern complexity are bounded.
+- Logical dimensions compile to catalog-approved provider fields. Unsupported predicates fail
+  before querying and are never silently omitted.
+- Canonical JSON and content hashes make activation deterministic; one transaction writes a new
+  version and retires the previous active version.
+- Stored JSON is bounded validated data, never arbitrary SQL, provider payloads, or executable
+  templates.
+
+### Recipient and delivery abuse
+
+- Recipient addresses and SMTP credentials remain in private configuration.
+- Header values, recipient sets, attachment names, attachment sizes, retry counts, and email sizes
+  are validated and bounded.
+- The database stores only recipient-set reference, hash, and count.
+- A deterministic idempotency key prevents duplicate successful sends across retries and restarts.
+- Preview and filesystem sinks are the default acceptance paths; external delivery requires a
+  separately configured scheduler and allowlisted recipients.
+- Error records use sanitized categories and never include recipient addresses, credentials, raw
+  messages, or provider responses.
+
+### Misleading incidents and causal claims
+
+- Rules disclose metric or goal version, comparison, maturity lag, baseline, coverage, and result.
+- Incomplete periods suppress evaluation unless a rule explicitly permits incomplete evidence.
+- Continuing evidence updates one stable incident; cooldown prevents repeated delivery.
+- Cross-provider comparisons are labeled divergence or tracking discrepancy and retain both
+  provider semantics.
+- An annotation can establish coincidence, not causation. Explanations remain hypotheses unless a
+  verified source record directly supports them.
+
+### Annotation and cross-site leakage
+
+- Annotation text and imported metadata are bounded and screened for secret-shaped and
+  private-source content.
+- Deployment import requires verified deployment evidence; a Git push is insufficient.
+- Every goal, annotation, rule, evaluation, incident, subscription, and query retains explicit site
+  scope.
+- Browser responses omit private recipient data, paths, raw exceptions, and unbounded evidence.
+
+### Browser mutation attempts
+
+- Analytics Operations routes are read-only and inherit Host validation, loopback defaults,
+  authentication, CSP, restrictive CORS, `no-store`, response bounds, and sanitized errors.
+- There are no HTTP handlers for definition activation, annotation changes, rule evaluation,
+  incident acknowledgement or suppression, subscription execution, recipient edits, or delivery.
+- State-changing operations remain validated CLI or scheduler actions under the existing writer
+  lease and transaction boundary.
+
 ## Future Internet deployment gate
 
 Before client access, add tenant-scoped authorization at the report engine, identity-aware HTTPS,
