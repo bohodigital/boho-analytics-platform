@@ -7,9 +7,10 @@ the first stable release.
 
 ### Documentation
 
-- Defined the Analytics Operations 1.0 program, immutable private-definition contracts,
-  schema-5 additive migration plan, provider compatibility rules, delivery boundary, and threat
-  controls for the staged `0.3.0` release. No runtime behavior or database schema changed.
+- Defined reusable Analytics Operations contracts, a two-table additive schema-5 foundation,
+  provider compatibility rules, trusted active-fact selection, recipient privacy, rollback, and
+  threat controls. Private sequencing and site-specific inventories remain outside the public
+  repository. No runtime behavior or database schema changed.
 
 ## 0.2.0 - 2026-07-25
 

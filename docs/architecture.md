@@ -86,20 +86,18 @@ The report engine accepts an explicit scope, window, timezone, grain, comparison
 and sections. Saved reports and sub-reports compile to the same request model; they are not separate
 query systems. See [`reporting-model.md`](reporting-model.md).
 
-### Analytics operations
+### Analytics operations foundation
 
-Version 0.3.0 adds goals, saved segments, annotations, deterministic alerts, scheduled reports, and
-an operations summary as separate service modules over the existing catalog, fact store, coverage,
-and reporting services. Private definitions activate as immutable snapshots; no system reinterprets
-historical results using a later definition version.
+Schema 5 is reserved for a generic immutable-definition registry. It does not itself add goals,
+segments, annotations, alerts, delivery, or browser features. Definition versions and activation
+history are separate so reactivation never rewrites history. Future consumers must select evidence
+through the existing active-fact/reporting layer; retained historical identities are not all active.
 
-Goal providers remain separate observations. Segment expressions compile through bounded
-provider-specific adapters and fail when a predicate cannot be honored. Alert evaluation and report
-delivery run only from CLI or scheduled writer processes under the global writer lease. The
-operations reader never synchronizes providers or sends reports.
+Goal providers remain separate observations. Future segment compilers must use bounded
+provider-specific mappings and fail when a predicate cannot be honored. Future writer processes
+remain CLI or scheduler operations under the global writer lease.
 
-See [`analytics-operations-v030-program.md`](analytics-operations-v030-program.md),
-[`analytics-operations-contracts.md`](analytics-operations-contracts.md), and
+See [`analytics-operations-contracts.md`](analytics-operations-contracts.md) and
 [`analytics-operations-migration-plan.md`](analytics-operations-migration-plan.md).
 
 ### Web and API
@@ -113,10 +111,9 @@ The web layer performs no state-changing operations. `/api/v1/report` and `/api/
 aggregate reports; `/api/v1/series` and `/api/v1/series.csv` expose a selected stored daily series and
 optional preceding-period comparison. Provider sync remains a CLI/timer operation.
 
-Analytics Operations HTML, JSON, and CSV routes inherit this boundary. They may inspect sanitized
-goals, segment compatibility, annotations, incidents, delivery history, and operations state, but
-activation, annotation changes, evaluation, acknowledgement, suppression, execution, and delivery
-remain absent from HTTP.
+Any future Analytics Operations HTML, JSON, or CSV route inherits this boundary. HTTP may inspect
+sanitized state but cannot activate definitions, add annotations, acknowledge or suppress alerts,
+trigger sync, send reports, modify recipients, or mutate the database.
 
 ### Forms monitoring
 

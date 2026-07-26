@@ -87,8 +87,9 @@ can still create discrepancies. Live connection testing must validate these assu
   length, and safe-pattern complexity are bounded.
 - Logical dimensions compile to catalog-approved provider fields. Unsupported predicates fail
   before querying and are never silently omitted.
-- Canonical JSON and content hashes make activation deterministic; one transaction writes a new
-  version and retires the previous active version.
+- Canonical JSON and content hashes make version reuse deterministic. Immutable version rows and
+  append-only activation rows are separate; one transaction retires the current activation and
+  adds its successor.
 - Stored JSON is bounded validated data, never arbitrary SQL, provider payloads, or executable
   templates.
 
@@ -97,7 +98,8 @@ can still create discrepancies. Live connection testing must validate these assu
 - Recipient addresses and SMTP credentials remain in private configuration.
 - Header values, recipient sets, attachment names, attachment sizes, retry counts, and email sizes
   are validated and bounded.
-- The database stores only recipient-set reference, hash, and count.
+- A future delivery store may retain only a non-reversible recipient-set identifier or bounded
+  count when operationally necessary.
 - A deterministic idempotency key prevents duplicate successful sends across retries and restarts.
 - Preview and filesystem sinks are the default acceptance paths; external delivery requires a
   separately configured scheduler and allowlisted recipients.

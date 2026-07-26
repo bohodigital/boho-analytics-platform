@@ -23,7 +23,7 @@ documented metric or observation scope can honor it. `Unsupported` means compila
 | country | Supported on country metrics | Supported on country metrics | Supported on country or route/country scope | Supported on country metrics | Unsupported |
 | region | Supported on region metrics | Supported on region metrics | Unsupported | Unsupported | Unsupported |
 | goal | Derived after a compatible goal exists | Derived after a compatible goal exists | Derived only for compatible goal evidence | Derived only for compatible goal evidence | Derived for compatible form goals |
-| event | Supported for configured event names | Supported for configured event names | Unsupported | Unsupported | Unsupported |
+| event | Unsupported in accepted aggregate facts | Unsupported in accepted aggregate facts | Unsupported | Unsupported | Unsupported |
 | date | Supported | Supported | Supported with provider date basis | Supported | Supported with site-local basis |
 | completeness | Supported | Supported | Supported; page scopes remain `UNKNOWN` | Supported | Supported |
 
@@ -42,11 +42,14 @@ Binding validation requires all of:
 4. aggregation behavior is compatible with the metric;
 5. observation scope is explicit for route facts;
 6. canonical coverage is sufficient for the requested acceptance fixture; and
-7. any denominator has compatible site, window, grain, and completeness semantics.
+7. date basis and maturity lag are explicit and compatible; and
+8. any denominator has compatible site, window, grain, coverage, and completeness semantics.
 
-The initial trustworthy canonical candidates are forms facts for confirmed form outcomes and
-explicitly configured site events for supported event goals. Page engagement, traffic, and search
-facts are proxies unless a goal definition explicitly and honestly makes them canonical.
+Confirmed form facts can be canonical only for the exact preserved form identity. Aggregate inbox
+delivery facts lacking form identity cannot corroborate a specific form. Aggregate analytics event
+or key-event totals lacking an event-name dimension cannot establish a named goal. Page
+engagement, traffic, and search facts are proxies unless a goal definition explicitly and honestly
+makes them canonical.
 
 ## Report compatibility
 

@@ -1,159 +1,100 @@
 # Schema-5 migration plan
 
-Status: implementation contract; no migration is included in this stage.
+Status: implementation contract; no migration is included in this documentation stage.
 
-## Invariants
+## Scope and consumers
 
-Schema 5 is one additive migration. It must not rewrite or replace `metric_facts`, sync history,
-watermarks, acquisition coverage, forms lineage, or graph evidence. Migration execution uses the
-existing ordered migration runner and one writer lease.
+Schema 5 is one additive migration providing only the immutable definition registry required by
+future goal, segment, alert-rule, and report-subscription implementations. Those consumers do not
+exist in this stage. Annotations, evaluations, incidents, delivery runs, and feature-specific
+tables are explicitly deferred until an immediate reviewed consumer exists.
 
-The application must refuse to run against a database newer than it supports. Version `0.2.0` must
-not be restarted on an upgraded live database. Rollback therefore restores both the `0.2.0`
-environment and the verified schema-4 backup.
+The migration must not rewrite or replace `metric_facts`, sync history, watermarks, acquisition
+coverage, forms lineage, or graph evidence. It runs through the ordered migration runner in one
+transaction. The application refuses databases newer than it supports.
 
-## Proposed tables
+## `analytics_definition_versions`
 
-### `analytics_definition_versions`
+Purpose: immutable, sanitized definition content available to future registry consumers.
 
-Primary immutable record for goals, segments, alert rules, and subscriptions:
+- Primary key: deterministic text `id`.
+- Natural identity: `(scope_key, definition_type, definition_key, version)`.
+- Reuse identity: `(scope_key, definition_type, definition_key, content_hash)`.
+- Columns: bounded `scope_key`, `definition_type`, `definition_key`, positive integer `version`,
+  64-character lowercase SHA-256 `content_hash`, bounded canonical `content_json`, bounded
+  sanitized `metadata_json`, and UTC `created_at`.
+- Uniqueness: both natural and reuse identities are unique.
+- State: versions have no mutable state and are never updated.
+- Foreign keys: none; this is the parent record.
+- Deletion: application APIs expose no delete. Future consumers use `ON DELETE RESTRICT`.
+- Indexes: reuse identity plus `(scope_key, definition_type, definition_key, version)`.
+- Limits: keys, JSON bytes, nesting, arrays, and strings are bounded before insertion and reinforced
+  by SQL length/check constraints; JSON must be valid.
+- Retention and backup: retained with the database for the lifetime of referenced history and
+  included in the supported online backup.
 
-- `id` primary key;
-- `definition_kind`, `definition_key`, and integer `version`;
-- `content_hash`, `canonical_json`, `source_config_hash`, and `validation_json`;
-- `activated_at`, optional `retired_at`, and `created_at`;
-- unique `(definition_kind, definition_key, version)`;
-- unique `(definition_kind, definition_key, content_hash)`;
-- partial unique active index on `(definition_kind, definition_key)` where `retired_at IS NULL`.
+Allowed definition types are the closed set `goal`, `segment`, `alert_rule`, and
+`report_subscription`. Expanding that set requires a schema and contract review.
 
-### `analytics_goals`
+## `analytics_definition_activations`
 
-- `definition_version_id` primary key and foreign key;
-- `site_id`, `display_name`, `description`, `goal_type`;
-- `canonical_source`, `canonical_metric`, `unit`, optional `currency`;
-- `active_from`, optional `active_through`;
-- `denominator_json`, `aggregation_behavior`, and `confidence`;
-- indexes on `(site_id, active_from, active_through)` and canonical metric.
+Purpose: append-only activation history and the current-version selector for future consumers.
 
-### `analytics_goal_bindings`
+- Primary key: deterministic text `id`.
+- Natural identity: activation event identity derived from version identity and activation time.
+- Columns: `definition_version_id`, repeated bounded scope/type/key for enforceable scoped
+  uniqueness, UTC `activated_at`, and nullable UTC `retired_at`.
+- Foreign key: version ID references `analytics_definition_versions(id)` with `ON DELETE RESTRICT`.
+- State: current when `retired_at IS NULL`, otherwise retired.
+- Uniqueness: a partial unique index permits exactly one current activation for each scoped key.
+- Checks: retirement follows activation; repeated scope/type/key must match the referenced version
+  through the storage API and migration fixtures.
+- Deletion: application APIs expose no delete.
+- Indexes: current scoped lookup, version history, and scoped activation chronology.
+- Retention and backup: append-only history retained and included in the supported online backup.
 
-- `id` primary key;
-- `goal_definition_version_id` foreign key;
-- `binding_role` constrained to `canonical` or `corroborating`;
-- `source`, `metric`, `unit`, `rules_json`, and `compatibility_json`;
-- unique `(goal_definition_version_id, binding_role, source, metric, rules_json)`;
-- a trigger or activation-time invariant enforcing exactly one canonical binding.
+Activation retires the prior current row and inserts the new row in one transaction. Identical
+active content is a no-op. Reactivating a retired version inserts a new activation row.
 
-### `analytics_segments`
+## Stored-data boundary
 
-- `definition_version_id` primary key and foreign key;
-- `display_name`, `description`, `expression_json`, and `limits_json`;
-- `compatibility_json`;
-- no arbitrary SQL or field-name column.
-
-### `analytics_annotations`
-
-- `id` primary key;
-- `site_id`, `category`, `start_at`, optional `end_at`;
-- `title`, `description`, `source`;
-- optional `commit_ref` and `deployment_ref`;
-- `definition_hash`, optional deterministic `import_key`, and `created_at`;
-- unique `(source, import_key)` when `import_key` is present;
-- indexes on `(site_id, start_at)` and `(site_id, category, start_at)`.
-
-### `analytics_alert_rules`
-
-- `definition_version_id` primary key and foreign key;
-- `site_id`, `rule_type`, `severity`, optional `goal_definition_version_id`,
-  optional `segment_definition_version_id`;
-- `rule_json`, `maturity_lag_seconds`, `minimum_baseline_periods`,
-  `cooldown_seconds`, and `incomplete_policy`;
-- indexes on `(site_id, rule_type)` and goal/segment references.
-
-### `analytics_alert_evaluations`
-
-- `id` primary key;
-- `rule_definition_version_id` foreign key;
-- `period_start`, `period_end`, `evaluated_at`, and `result`;
-- `current_value`, optional `comparison_value`, `unit`, `completeness`, `coverage_json`,
-  `evidence_json`, and `annotation_ids_json`;
-- deterministic unique evaluation key for rule version, affected scope, and period;
-- index on `(rule_definition_version_id, evaluated_at)`.
-
-### `analytics_alert_incidents`
-
-- `id` primary key and unique `incident_key`;
-- `rule_definition_version_id` foreign key;
-- `state`, `first_observed_at`, `latest_observed_at`, optional `resolved_at`;
-- `latest_evaluation_id` foreign key;
-- `affected_scope_json`, optional bounded `operator_note`, and `updated_at`;
-- indexes on `(state, latest_observed_at)` and rule version.
-
-### `analytics_report_subscriptions`
-
-- `definition_version_id` primary key and foreign key;
-- `site_scope_json`, `report_type`, `frequency`, `timezone`, `format_json`;
-- `recipient_set_ref`, `recipient_set_hash`, `recipient_count`;
-- `maturity_lag_seconds`, `incomplete_policy`, and `active`;
-- no recipient-address or credential column.
-
-### `analytics_delivery_runs`
-
-- `id` primary key;
-- `subscription_definition_version_id` foreign key;
-- `period_start`, `period_end`, `idempotency_key`, `attempt`, and `state`;
-- `recipient_set_hash`, `recipient_count`, optional `content_hash`,
-  `attachment_json`, `started_at`, optional `finished_at`, optional `error_category`;
-- unique successful `idempotency_key` and unique `(idempotency_key, attempt)`;
-- index on `(subscription_definition_version_id, started_at)`.
-
-All JSON columns contain canonical, bounded data validated before insertion. They are not extension
-points for raw provider payloads.
+Canonical JSON contains only fields recognized by the strict type schema. Metadata is a separate,
+bounded allowlist. The storage API rejects credentials, email addresses, raw TOML, comments,
+unknown private fields, full external URLs, raw queries, visitor/session identifiers, message
+content, form payloads, private filesystem paths, and secret-shaped values. Neither JSON column is
+an extension point for raw provider or private configuration data.
 
 ## Migration procedure
 
-1. Stop scheduled writers and delivery processes.
-2. Record the exact application commit, package version, database schema, database integrity, and
-   active writer state.
-3. Create an online schema-4 backup and verify it by opening the copy and running integrity checks.
-4. Preserve the `0.2.0` environment separately.
-5. Copy the production database to an acceptance location.
-6. Run the schema-5 migration against the copy.
-7. Verify schema version, foreign keys, indexes, prior table row counts, representative fact hashes,
-   sync/watermark continuity, forms lineage, and graph snapshot access.
-8. Re-run the migration against the same copy and prove idempotent no-op behavior.
-9. Exercise an injected interruption in a transaction and prove the database remains schema 4 or
-   completes schema 5 atomically.
-10. Run the complete suite, release verifier, package build, and bounded smoke queries.
-11. Cut over only the exact accepted package and migration after explicit deployment approval.
+1. Stop scheduled writers and services.
+2. Record exact application commit, package version, schema version, integrity, and writer state.
+3. Create an online schema-4 backup through the supported backup API; open the copy and verify it.
+4. Preserve the exact v0.2.0 environment separately.
+5. Copy production to a private acceptance location.
+6. Record counts and deterministic sampled hashes for every required pre-existing fact, sync,
+   watermark, forms-lineage, and graph table.
+7. Run migration 005 against the copy only.
+8. Require schema 5, integrity `ok`, no foreign-key errors, unchanged prior counts and hashes, and
+   two empty definition tables.
+9. Re-run the migration through the runner and prove an idempotent no-op.
+10. Inject interruption inside migration and activation transactions and prove atomic rollback.
+11. Prove the schema-5 candidate opens the copy and exact v0.2.0 refuses it.
+12. Restore the schema-4 backup to a separate disposable path and run integrity and known-report
+    checks.
 
-## Acceptance evidence
+The same migration must succeed on an empty database initialized through the supported runner.
 
-The storage stage must provide:
+## Production rollback
 
-- schema-4-to-5 fixture migration;
-- repeated and interrupted migration tests;
-- `PRAGMA integrity_check` and `PRAGMA foreign_key_check` results;
-- before/after counts and deterministic samples for every pre-existing table;
-- backup and restore evidence;
-- old-code/new-schema refusal evidence;
-- copied-production query and resource-use evidence; and
-- exact rollback commands that identify the backup and preserved environment without exposing
-  private paths.
+No production migration is authorized by this document. If a later, separately approved cutover
+fails:
 
-## Rollback
+1. stop every writer and service;
+2. preserve the failed schema-5 database for investigation;
+3. restore the verified online schema-4 backup;
+4. restore the exact v0.2.0 environment;
+5. run integrity, foreign-key, and known-report verification;
+6. enable timers last.
 
-Before production acceptance, rollback may discard only a disposable migrated copy.
-
-After cutover failure:
-
-1. stop every schema-5 writer;
-2. preserve the failed database for investigation;
-3. restore the verified schema-4 backup;
-4. restore the exact `0.2.0` environment;
-5. run integrity and known-report checks;
-6. resume provider schedules only after confirmation; and
-7. do not replay schema-5 alert or delivery jobs against schema 4.
-
-There is no in-place down migration. Deleting schema-5 tables is not an acceptable production
-rollback because it cannot prove that older state was untouched.
+There is no in-place down migration. Dropping schema-5 tables cannot prove that prior state remained
+unchanged and is not an acceptable primary rollback.

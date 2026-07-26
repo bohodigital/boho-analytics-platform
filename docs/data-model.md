@@ -17,11 +17,11 @@ SQLite runs with foreign keys, WAL, normal synchronous mode, and a busy timeout.
 single scheduled writer and multiple local readers. PostgreSQL is a measured future migration, not a
 V1 requirement.
 
-Database schema version 5 is reserved for the additive Analytics Operations tables defined in
+Database schema version 5 is reserved for the two additive Analytics Operations tables defined in
 [`analytics-operations-migration-plan.md`](analytics-operations-migration-plan.md). The migration
 must not rewrite schema-4 facts, acquisition coverage, sync history, watermarks, forms lineage, or
-graph evidence. Definitions are immutable and evaluations and deliveries retain the exact
-definition-version references used when they ran.
+graph evidence. Definition versions are immutable; activation and retirement history is stored
+separately, with one current activation per scoped key.
 
 ## Metric facts
 
@@ -84,7 +84,8 @@ The schema has no fields for credentials, form payloads, message bodies, email a
 agents, visitor/session IDs, or Turnstile tokens. Form ID is an optional operational dimension; avoid
 using IDs that themselves contain personal data.
 
-Analytics subscriptions do not add recipient addresses to the schema. They store a private
-recipient-set reference, hash, and count. Alert evidence, annotation descriptions, definition JSON,
-and delivery errors are bounded and sanitized; none may contain raw provider payloads or
-unconstrained custom-event data.
+Definition JSON and metadata are bounded, strictly allowlisted, and sanitized. They may not contain
+raw configuration, credentials, recipient addresses, full external URLs, raw queries, private
+paths, provider payloads, message content, form payloads, or visitor/session identifiers. A future
+delivery consumer may store only a non-reversible recipient-set identifier or bounded count when
+operationally necessary.
