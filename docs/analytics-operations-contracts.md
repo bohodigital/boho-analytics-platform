@@ -47,7 +47,9 @@ A version record contains:
 
 Version rows are immutable. Activation history is stored separately and records activation and
 retirement times. Exactly one activation may be current for a `(scope, type, key)`. Historical
-versions and activations are never rewritten or deleted merely because a later version activates.
+versions and activations are never deleted merely because a later version activates. An activation
+row permits exactly one mutation: its `retired_at` may move once from null to the transaction's UTC
+timestamp. Every other activation field is immutable.
 
 Activation has these exact behaviors:
 
@@ -56,10 +58,18 @@ Activation has these exact behaviors:
 2. Identical content previously retired reuses the immutable version row and creates a new
    activation record.
 3. Changed content creates the next version and a new activation record, retiring the prior
-   activation in the same transaction.
-4. A matching digest with unequal canonical bytes is a collision and fails without a write.
-5. Missing, invalid, unknown, private, or secret-shaped content fails without a write.
-6. Interruption before commit leaves the previous activation and all version history unchanged.
+   activation in the same transaction. One authoritative UTC transaction timestamp retires the old
+   activation and starts the new one. Active ranges are half-open `[activated_at, retired_at)`, so
+   the ranges meet at that timestamp without overlapping.
+4. Explicit retirement of an active scoped key sets only its current activation's `retired_at`;
+   the immutable version remains reusable.
+5. Retirement of an unknown scoped key or a scoped key with no current activation fails without a
+   write.
+6. A matching digest with unequal canonical bytes is a collision and fails without a write.
+7. Activation by a missing version identity, or activation from missing, invalid, unknown, private,
+   or secret-shaped definition content, fails without a write.
+8. Interruption before commit leaves the previous activation, retirement state, and all version
+   history unchanged. Interruption tests are required for activation, replacement, and retirement.
 
 Rollback of a definition is a new activation of a retained version, not an in-place edit or a
 timestamp reversal.
@@ -70,9 +80,11 @@ All goal, segment, alert, annotation-linked, and scheduled-report evaluation mus
 existing trusted active-fact/reporting selection layer. Feature implementations may not query raw
 `metric_facts` as though every retained identity version were active evidence.
 
-Implementations must test that historical form identities and other superseded identity versions
-cannot be selected or double-counted. The selector must preserve source, metric, unit, scope,
-window, date basis, coverage, completeness, and maturity metadata.
+This is a blocking implementation contract: no consumer may be accepted until tests prove that
+historical form identities and other superseded identity versions cannot be selected or
+double-counted, and that missing active evidence remains missing rather than falling back to a
+retained identity. The selector must preserve source, metric, unit, scope, window, date basis,
+coverage, completeness, and maturity metadata.
 
 ## Goal contract
 
@@ -117,6 +129,9 @@ Compilation is deterministic for the same definition, provider, catalog version,
 metric. Its result is `supported`, `partially_supported`, or `unsupported`, with bounded diagnostic
 codes and the segment version. Unknown dimensions, operators, predicates, or provider mappings
 fail. Unsupported predicates are never dropped. A report requiring one fails before querying.
+`partially_supported` may summarize a multi-metric request only: every required metric still
+receives its own compatibility result, and any unsupported required metric fails the entire request
+before querying. The compiler never queries or returns a supported subset silently.
 
 Segmented output discloses totals and coverage before and after filtering, compatibility state,
 diagnostics, and the exact segment version. HTML, JSON, and CSV compile through the same request.
@@ -158,9 +173,11 @@ site scope, optional goal and segment versions, timezone, frequency, maturity la
 incomplete-data policy, formats, and a non-reversible recipient-set identifier.
 
 Recipient addresses and delivery credentials remain in private configuration and are resolved
-only at execution. SQLite may store only a non-reversible recipient-set identifier or bounded
-recipient count when operationally necessary. It stores no recipient list or message body. Public
-reports and exports contain neither addresses nor private delivery identifiers.
+only at execution. The recipient-set identifier is a keyed digest over a canonicalized recipient
+set; its secret key remains outside SQLite and the public repository so an address dictionary
+cannot reproduce it. SQLite may store only that identifier or a bounded recipient count when
+operationally necessary. It stores no recipient list or message body. Public reports, browser
+responses, and exports contain neither addresses nor private delivery identifiers.
 
 Delivery idempotency covers subscription version, intended period, formats, and recipient-set
 identifier. A successful key cannot send twice. Retries are bounded and reuse the key. Materially
@@ -193,6 +210,7 @@ authentication, CSP, `no-store`, restrictive CORS, bounded responses, and saniti
 ## Database rollback boundary
 
 Production rollback from schema 5 requires a verified pre-migration online schema-4 backup, the
-exact v0.2.0 environment, all writers and services stopped, backup restoration, integrity and
-foreign-key verification, known-report verification, and timers enabled last. Older code must
-refuse schema 5. A destructive down migration is not the primary rollback.
+exact v0.2.0 environment at commit `4a3bfa9e8a4346578263ee74dd227e6230ccc7c3`,
+all writers and services stopped, backup restoration, integrity and foreign-key verification,
+known-report verification, and timers enabled last. Older code must refuse schema 5. A destructive
+down migration is not the primary rollback.

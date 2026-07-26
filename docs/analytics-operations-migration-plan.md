@@ -23,7 +23,8 @@ Purpose: immutable, sanitized definition content available to future registry co
 - Columns: bounded `scope_key`, `definition_type`, `definition_key`, positive integer `version`,
   64-character lowercase SHA-256 `content_hash`, bounded canonical `content_json`, bounded
   sanitized `metadata_json`, and UTC `created_at`.
-- Uniqueness: both natural and reuse identities are unique.
+- Uniqueness: both natural and reuse identities are unique; the parent also has a referenced-key
+  uniqueness constraint on `(id, scope_key, definition_type, definition_key)`.
 - State: versions have no mutable state and are never updated.
 - Foreign keys: none; this is the parent record.
 - Deletion: application APIs expose no delete. Future consumers use `ON DELETE RESTRICT`.
@@ -38,23 +39,30 @@ Allowed definition types are the closed set `goal`, `segment`, `alert_rule`, and
 
 ## `analytics_definition_activations`
 
-Purpose: append-only activation history and the current-version selector for future consumers.
+Purpose: retained activation history and the current-version selector for future consumers.
 
 - Primary key: deterministic text `id`.
 - Natural identity: activation event identity derived from version identity and activation time.
 - Columns: `definition_version_id`, repeated bounded scope/type/key for enforceable scoped
   uniqueness, UTC `activated_at`, and nullable UTC `retired_at`.
-- Foreign key: version ID references `analytics_definition_versions(id)` with `ON DELETE RESTRICT`.
+- Foreign key: the composite `(definition_version_id, scope_key, definition_type, definition_key)`
+  references the matching version tuple `(id, scope_key, definition_type, definition_key)` with
+  `ON DELETE RESTRICT`, so repeated scoped identity cannot drift from its version.
 - State: current when `retired_at IS NULL`, otherwise retired.
+- Mutability: every field is immutable except one permitted monotonic transition of `retired_at`
+  from null to a UTC timestamp.
 - Uniqueness: a partial unique index permits exactly one current activation for each scoped key.
-- Checks: retirement follows activation; repeated scope/type/key must match the referenced version
-  through the storage API and migration fixtures.
+- Checks: retirement follows activation; storage and migration tests reject any update other than
+  the permitted retirement transition.
 - Deletion: application APIs expose no delete.
 - Indexes: current scoped lookup, version history, and scoped activation chronology.
-- Retention and backup: append-only history retained and included in the supported online backup.
+- Retention and backup: retained history is included in the supported online backup.
 
 Activation retires the prior current row and inserts the new row in one transaction. Identical
-active content is a no-op. Reactivating a retired version inserts a new activation row.
+active content is a no-op. Reactivating a retired version inserts a new activation row. Explicit
+retirement changes only the current row's `retired_at`. Missing version identities, unknown scoped
+keys, already inactive keys, version/content collisions, invalid input, and transaction
+interruptions fail without changing either table.
 
 ## Stored-data boundary
 
@@ -69,7 +77,8 @@ an extension point for raw provider or private configuration data.
 1. Stop scheduled writers and services.
 2. Record exact application commit, package version, schema version, integrity, and writer state.
 3. Create an online schema-4 backup through the supported backup API; open the copy and verify it.
-4. Preserve the exact v0.2.0 environment separately.
+4. Preserve the exact v0.2.0 environment at commit
+   `4a3bfa9e8a4346578263ee74dd227e6230ccc7c3` separately.
 5. Copy production to a private acceptance location.
 6. Record counts and deterministic sampled hashes for every required pre-existing fact, sync,
    watermark, forms-lineage, and graph table.
@@ -92,7 +101,8 @@ fails:
 1. stop every writer and service;
 2. preserve the failed schema-5 database for investigation;
 3. restore the verified online schema-4 backup;
-4. restore the exact v0.2.0 environment;
+4. restore the exact v0.2.0 environment at commit
+   `4a3bfa9e8a4346578263ee74dd227e6230ccc7c3`;
 5. run integrity, foreign-key, and known-report verification;
 6. enable timers last.
 

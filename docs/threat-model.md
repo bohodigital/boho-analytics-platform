@@ -88,8 +88,9 @@ can still create discrepancies. Live connection testing must validate these assu
 - Logical dimensions compile to catalog-approved provider fields. Unsupported predicates fail
   before querying and are never silently omitted.
 - Canonical JSON and content hashes make version reuse deterministic. Immutable version rows and
-  append-only activation rows are separate; one transaction retires the current activation and
-  adds its successor.
+  retained activation-history rows are separate; the only permitted activation-row mutation is
+  one monotonic retirement transition. One transaction retires the current activation and adds its
+  successor.
 - Stored JSON is bounded validated data, never arbitrary SQL, provider payloads, or executable
   templates.
 
@@ -98,8 +99,9 @@ can still create discrepancies. Live connection testing must validate these assu
 - Recipient addresses and SMTP credentials remain in private configuration.
 - Header values, recipient sets, attachment names, attachment sizes, retry counts, and email sizes
   are validated and bounded.
-- A future delivery store may retain only a non-reversible recipient-set identifier or bounded
-  count when operationally necessary.
+- A future delivery store may retain only a keyed, non-reversible recipient-set digest or bounded
+  count when operationally necessary. The digest key and recipient addresses remain outside SQLite
+  and the public repository.
 - A deterministic idempotency key prevents duplicate successful sends across retries and restarts.
 - Preview and filesystem sinks are the default acceptance paths; external delivery requires a
   separately configured scheduler and allowlisted recipients.

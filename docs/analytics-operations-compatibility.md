@@ -8,6 +8,9 @@ catalog dimension set, coverage semantics, fixtures, and query compiler all supp
 
 `Supported` means the current evidence model can honor the logical filter. `Partial` means only a
 documented metric or observation scope can honor it. `Unsupported` means compilation must fail.
+For a multi-metric request, `Partial` is a summary only: every required metric is compiled
+independently, and one unsupported required metric fails the whole request before any query. A
+supported subset is never queried or returned silently.
 
 | Logical dimension | GA4 | Umami | Search Console | Cloudflare | Forms |
 | --- | --- | --- | --- | --- | --- |
@@ -28,7 +31,7 @@ documented metric or observation scope can honor it. `Unsupported` means compila
 | completeness | Supported | Supported | Supported; page scopes remain `UNKNOWN` | Supported | Supported |
 
 This matrix intentionally marks `source`, `medium`, `campaign`, and GA4 `device` unsupported where
-the accepted schema-4 facts do not preserve those dimensions. A later connector tranche may add
+the accepted schema-4 facts do not preserve those dimensions. A later connector version may add
 bounded facts and then revise the matrix through tests. The compiler must not pretend provider API
 capability is stored evidence.
 

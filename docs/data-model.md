@@ -87,5 +87,6 @@ using IDs that themselves contain personal data.
 Definition JSON and metadata are bounded, strictly allowlisted, and sanitized. They may not contain
 raw configuration, credentials, recipient addresses, full external URLs, raw queries, private
 paths, provider payloads, message content, form payloads, or visitor/session identifiers. A future
-delivery consumer may store only a non-reversible recipient-set identifier or bounded count when
-operationally necessary.
+delivery consumer may store only a keyed, non-reversible digest of the canonical recipient set or
+a bounded count when operationally necessary; the digest key and recipient addresses remain
+outside SQLite and the public repository.
