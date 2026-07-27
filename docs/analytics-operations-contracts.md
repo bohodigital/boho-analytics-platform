@@ -71,6 +71,16 @@ Activation has these exact behaviors:
 8. Interruption before commit leaves the previous activation, retirement state, and all version
    history unchanged. Interruption tests are required for activation, replacement, and retirement.
 
+Package application validates every definition and cross-reference before opening its write
+transaction. Omission is not retirement: an active definition absent from a later package remains
+active until an explicit, valid retirement operation names it. After validation, all new version
+rows, explicit retirements, reactivations, and replacement activations for one package commit in one
+transaction. Identical active definitions remain no-ops within that transaction. A collision,
+missing reference, invalid definition, or interruption aborts the entire package, exposes no new
+version row or partial activation set, and leaves the previously active package state unchanged.
+Implementation tests must interrupt multi-definition packages after version insertion, retirement,
+and activation steps and prove all-or-nothing visibility.
+
 Rollback of a definition is a new activation of a retained version, not an in-place edit or a
 timestamp reversal.
 
@@ -80,11 +90,18 @@ All goal, segment, alert, annotation-linked, and scheduled-report evaluation mus
 existing trusted active-fact/reporting selection layer. Feature implementations may not query raw
 `metric_facts` as though every retained identity version were active evidence.
 
-This is a blocking implementation contract: no consumer may be accepted until tests prove that
-historical form identities and other superseded identity versions cannot be selected or
-double-counted, and that missing active evidence remains missing rather than falling back to a
-retained identity. The selector must preserve source, metric, unit, scope, window, date basis,
-coverage, completeness, and maturity metadata.
+This is a blocking implementation contract: no consumer may be accepted until tests prove all of
+the following:
+
+- forms identity versions 1 and 2 remain excluded;
+- the active forms identity version 3 remains included;
+- retained lineage cannot be selected, double-counted, or inflate an outcome;
+- successful-empty acquisition coverage cannot fabricate a goal observation; and
+- unrelated provider facts and their selection behavior remain unchanged.
+
+Missing active evidence remains missing rather than falling back to a retained identity. The
+selector must preserve source, metric, unit, scope, window, date basis, coverage, completeness, and
+maturity metadata.
 
 ## Goal contract
 
