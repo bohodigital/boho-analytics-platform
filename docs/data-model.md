@@ -1,6 +1,6 @@
 # Data model
 
-Configuration schema and SQLite schema evolve independently. Database schema version 4 contains:
+Configuration schema and SQLite schema evolve independently. Database schema version 5 contains:
 
 - `metric_facts`: source-labeled aggregate facts with client/site scope, interval, grain, unit,
   canonical dimensions, completeness, observation time, identity version, and a deterministic
@@ -12,16 +12,39 @@ Configuration schema and SQLite schema evolve independently. Database schema ver
 - `watermarks`: binding progress. Non-empty reads retain their observed data-through instant;
   successful empty reads advance through the completed requested window.
 - `schema_meta`: installed database version.
+- `analytics_definition_versions`: immutable, sanitized, canonical definition versions with
+  deterministic content, natural-identity, and full-record hashes.
+- `analytics_definition_activations`: retained activation history with a composite reference to its
+  version. Activation rows are fully immutable.
+- `analytics_definition_retirements`: one immutable, hash-bound terminal event per retired
+  activation. An activation is current only while no retirement event references it; insertion
+  guards permit exactly one current activation per scoped key.
 
 SQLite runs with foreign keys, WAL, normal synchronous mode, and a busy timeout. The design assumes a
 single scheduled writer and multiple local readers. PostgreSQL is a measured future migration, not a
 V1 requirement.
 
-Database schema version 5 is reserved for the two additive Analytics Operations tables defined in
-[`analytics-operations-migration-plan.md`](analytics-operations-migration-plan.md). The migration
-must not rewrite schema-4 facts, acquisition coverage, sync history, watermarks, forms lineage, or
-graph evidence. Definition versions are immutable; activation and retirement history is stored
-separately, with one current activation per scoped key.
+Migration 005 adds only those three registry tables and does not rewrite schema-4 facts, acquisition
+coverage, sync history, watermarks, forms lineage, or graph evidence. Application validation
+accepts only the closed `goal`, `segment`, `alert_rule`, and `report_subscription` types and
+constructs canonical JSON from recognized fields before opening a write transaction. Identical
+active content is a no-op; retired content is reactivated without duplicating its version; changed
+content receives the next version while the prior activation is retired at the same transaction
+timestamp. If the same version and public transaction timestamp recur, the activation identity uses
+the first unused deterministic collision ordinal, so reactivation remains append-only and
+restore-verifiable. A successor activation cannot precede the retirement that makes room for it;
+all authority reads and integrity checks reject overlapping or non-monotonic activation intervals.
+Omission is not retirement.
+
+SQL checks, composite foreign keys, current-state insertion guards, and update/delete triggers
+reinforce the application contract. Text primary keys are explicitly non-null, and canonical
+`T`-separated UTC timestamps are compared both as normalized instants and canonical text so
+sub-millisecond backwards retirement cannot pass. Definition integrity pins the exact tables,
+indexes, and triggers installed by migration 005, recursively resolves every embedded typed version
+reference, and validates the current version before any retirement or successor activation.
+Restore holds one read snapshot while validating and copying, validates the copied destination,
+and only then atomically makes it authoritative. No browser or feature-specific consumer is
+included in the schema foundation.
 
 ## Metric facts
 
@@ -89,4 +112,14 @@ raw configuration, credentials, recipient addresses, full external URLs, raw que
 paths, provider payloads, message content, form payloads, or visitor/session identifiers. A future
 delivery consumer may store only a keyed, non-reversible digest of the canonical recipient set or
 a bounded count when operationally necessary; the digest key and recipient addresses remain
-outside SQLite and the public repository.
+outside SQLite and the public repository. The public `AnalyticsDefinition` model never holds those
+private values: a report-subscription supplies them only as call-scoped validation/package keyword
+inputs. Construction privacy-screens and deep-freezes a detached copy of public content and
+metadata, so caller mutation cannot add private material afterward. Consequently dataclass
+conversion, copying, pickling, slots inspection, and the definition representation cannot serialize
+recipient material. Only omitted metadata becomes `{}`; falsey lists, scalars, and every other
+non-mapping value fail rather than being normalized. Validation rejects any caller-supplied
+`recipient_set_id`, requires an ordinary bounded list or tuple of addresses matching the supported
+ASCII dot-atom mailbox and per-label domain grammar, derives the HMAC-SHA-256 identifier, and
+contributes only that identifier to canonical JSON. Python object secrecy is not treated as an
+authorization boundary.

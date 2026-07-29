@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from .config import BindingConfig, ConnectionConfig
-from .models import CapabilitySnapshot, MetricPoint, QueryWindow
+from .models import (
+    AnalyticsDefinition,
+    CapabilitySnapshot,
+    DefinitionActivation,
+    DefinitionChange,
+    DefinitionIdentity,
+    DefinitionPackageResult,
+    DefinitionVersion,
+    MetricPoint,
+    QueryWindow,
+)
 
 
 @runtime_checkable
@@ -66,3 +77,38 @@ class MetricStore(Protocol):
         window: QueryWindow,
     ) -> Iterable[MetricPoint]:
         """Read tenant-authorized normalized points for a resolved report request."""
+
+
+@runtime_checkable
+class DefinitionStore(Protocol):
+    """Transactional immutable-definition registry boundary."""
+
+    def apply_definition_package(
+        self,
+        definitions: Iterable[AnalyticsDefinition],
+        *,
+        recipient_inputs: Mapping[
+            DefinitionIdentity, tuple[Sequence[str], bytes]
+        ] | None = None,
+        retirements: Iterable[DefinitionIdentity] = (),
+        transaction_time: datetime | None = None,
+    ) -> DefinitionPackageResult:
+        """Validate fully, then atomically version, activate, and retire a package."""
+
+    def activate_definition_version(
+        self, version_id: str, *, transaction_time: datetime | None = None
+    ) -> DefinitionChange:
+        """Reactivate a retained version without editing its immutable row."""
+
+    def retire_definition(
+        self,
+        identity: DefinitionIdentity,
+        *,
+        transaction_time: datetime | None = None,
+    ) -> DefinitionActivation:
+        """Retire exactly one current activation."""
+
+    def get_current_definition(
+        self, identity: DefinitionIdentity
+    ) -> tuple[DefinitionVersion, DefinitionActivation] | None:
+        """Return sanitized current state for one bounded scoped key."""

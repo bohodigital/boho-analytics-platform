@@ -5,9 +5,42 @@ the first stable release.
 
 ## Unreleased
 
+### Added
+
+- Added the schema-5 immutable Analytics Operations definition registry: three additive tables,
+  closed type-specific validation, canonical content and record hashes, retained activation and
+  append-only retirement history, explicit retirement/reactivation, package-wide transactions,
+  and restore-time integrity verification. No goal, segment, alert, subscription delivery,
+  connector, report, or browser consumer is activated by this storage foundation.
+- Hardened the schema-5 candidate against embedded private paths, raw configuration/comment text,
+  sensitive field aliases, Unicode address and scheme-relative URL forms, unsafe nested regex
+  repetition, caller-supplied recipient digests, same-timestamp reactivation collisions, nullable text
+  primary keys, and lexical timestamp-order bypasses. The final privacy boundary also rejects
+  quoted-key TOML, delimiter-adjacent comments, combining-mark email forms, base64url JWT endings,
+  recipient identifiers not freshly derived from validated private inputs, serializable private
+  input state, hostile sequence subclasses, raw stripped non-ASCII recipient forms before
+  normalization or case-folding, semantically invalid
+  restored definitions, foreign-key-invalid backups, and semantically valid metadata tampering
+  before retained-row activation, reuse, reference resolution, or current-definition reads.
+  Current activation use also recomputes immutable activation and retirement-event hashes before
+  returning, reusing, replacing, reactivating, or retiring the record. Recipient parsing now
+  enforces an explicit ASCII dot-atom mailbox and per-label domain grammar. Semantic validation
+  also enforces canonical goal date bounds, a real 24-hour clock for alert quiet periods, and every
+  scalar or list member of internal-route segment predicates. Public definition mappings are now
+  construction-screened and deeply immutable; ratio/denominator and every alert-rule conditional
+  field relationship fail closed. Current versions and recursive embedded references are validated
+  before every authority mutation. Integrity pins the complete migration-005 schema object set, and
+  restore validates and copies one protected snapshot into a post-validated temporary database
+  before atomic replacement. Reactivation chronology cannot overlap prior intervals, internal-route
+  values reject backslashes and controls, falsey non-mapping metadata is no longer defaulted away,
+  and restore refuses schemas outside the running package's supported range.
+- Bound release verification to the exact reviewed Git tree. Clean checkouts are verified against
+  `HEAD`, exported trees require an independently supplied tree ID, and modified, staged, deleted,
+  or additional allowlisted content now fails closed.
+
 ### Documentation
 
-- Defined reusable Analytics Operations contracts, a two-table additive schema-5 foundation,
+- Defined reusable Analytics Operations contracts, a three-table additive schema-5 foundation,
   provider compatibility rules, trusted active-fact selection, recipient privacy, rollback, and
   threat controls. Private sequencing and site-specific inventories remain outside the public
   repository. No runtime behavior or database schema changed.

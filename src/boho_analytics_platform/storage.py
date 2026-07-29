@@ -4,24 +4,48 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import sqlite3
+import tempfile
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
+from typing import Callable
 
-from .models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
+from .models import (
+    AnalyticsDefinition,
+    CapabilitySnapshot,
+    Completeness,
+    DefinitionActivation,
+    DefinitionChange,
+    DefinitionIdentity,
+    DefinitionPackageResult,
+    DefinitionType,
+    DefinitionValidationError,
+    DefinitionVersion,
+    MetricPoint,
+    QueryWindow,
+    TimeGrain,
+    ValidatedDefinition,
+    _validate_persisted_analytics_definition,
+    validate_analytics_definition,
+    validate_definition_identity,
+)
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 MIGRATIONS = {
     1: "001_initial.sql",
     2: "002_site_graph.sql",
     3: "003_sync_coverage.sql",
     4: "004_forms_evidence_v3.sql",
+    5: "005_analytics_definitions.sql",
 }
 CURRENT_IDENTITY_VERSIONS = {"cloudflare-forms": 3, "forms-inbox": 3}
 
@@ -65,6 +89,81 @@ def _key(point: MetricPoint) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
+def _digest_fields(fields: Sequence[object]) -> str:
+    """Hash an unambiguous, runtime-stable sequence of persisted fields."""
+
+    digest = hashlib.sha256()
+    for field in fields:
+        if field is None:
+            encoded = b"n"
+        elif isinstance(field, bool):
+            encoded = b"b1" if field else b"b0"
+        elif isinstance(field, int):
+            encoded = b"i" + str(field).encode("ascii")
+        elif isinstance(field, str):
+            encoded = b"s" + field.encode("utf-8")
+        elif isinstance(field, bytes):
+            encoded = b"y" + field
+        else:
+            raise TypeError(
+                f"unsupported persisted hash field type: {type(field).__name__}"
+            )
+        digest.update(len(encoded).to_bytes(8, byteorder="big", signed=False))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _definition_schema_rows(
+    db: sqlite3.Connection,
+) -> tuple[tuple[str, str, str, str], ...]:
+    return tuple(
+        tuple(row)
+        for row in db.execute(
+            """SELECT type,name,tbl_name,sql
+                 FROM sqlite_master
+                WHERE name GLOB 'analytics_definition_*'
+                  AND sql IS NOT NULL
+                ORDER BY type,name"""
+        ).fetchall()
+    )
+
+
+@lru_cache(maxsize=1)
+def _canonical_definition_schema_rows(
+) -> tuple[tuple[str, str, str, str], ...]:
+    migration = (
+        files("boho_analytics_platform.migrations")
+        .joinpath(MIGRATIONS[5])
+        .read_text(encoding="utf-8")
+    )
+    with closing(sqlite3.connect(":memory:")) as canonical:
+        canonical.executescript(migration)
+        return _definition_schema_rows(canonical)
+
+
+def _transaction_time(value: datetime | None = None) -> datetime:
+    instant = value or datetime.now(UTC)
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("definition transaction timestamp must be timezone-aware")
+    return instant.astimezone(UTC)
+
+
+class DefinitionCollisionError(RuntimeError):
+    pass
+
+
+class DefinitionNotFoundError(LookupError):
+    pass
+
+
+class DefinitionNotActiveError(LookupError):
+    pass
+
+
+class DefinitionIntegrityError(RuntimeError):
+    pass
+
+
 class LockBusy(RuntimeError):
     pass
 
@@ -106,6 +205,884 @@ class SQLiteMetricStore:
             for version in range(current + 1, SCHEMA_VERSION + 1):
                 migration = files("boho_analytics_platform.migrations").joinpath(MIGRATIONS[version]).read_text(encoding="utf-8")
                 _apply_migration(db, migration, version)
+
+    @staticmethod
+    def _version_from_row(row: sqlite3.Row) -> DefinitionVersion:
+        return DefinitionVersion(
+            id=row["id"],
+            scope_key=row["scope_key"],
+            definition_type=DefinitionType(row["definition_type"]),
+            definition_key=row["definition_key"],
+            version=int(row["version"]),
+            content_hash=row["content_hash"],
+            content_json=row["content_json"],
+            metadata_json=row["metadata_json"],
+            created_at=_parse(row["created_at"]),
+            record_hash=row["record_hash"],
+        )
+
+    @staticmethod
+    def _activation_from_row(row: sqlite3.Row) -> DefinitionActivation:
+        return DefinitionActivation(
+            id=row["id"],
+            definition_version_id=row["definition_version_id"],
+            scope_key=row["scope_key"],
+            definition_type=DefinitionType(row["definition_type"]),
+            definition_key=row["definition_key"],
+            activated_at=_parse(row["activated_at"]),
+            retired_at=_parse(row["retired_at"]) if row["retired_at"] else None,
+            record_hash=row["record_hash"],
+        )
+
+    @staticmethod
+    def _validate_version_integrity(
+        row: Mapping[str, object],
+    ) -> ValidatedDefinition:
+        try:
+            validated = _validate_persisted_analytics_definition(
+                definition_type=row["definition_type"],
+                definition_key=row["definition_key"],
+                scope_key=row["scope_key"],
+                content_json=row["content_json"],
+                metadata_json=row["metadata_json"],
+            )
+        except DefinitionValidationError as exc:
+            raise DefinitionIntegrityError(
+                f"definition version semantic validation failed: {row['id']}"
+            ) from exc
+        if validated.content_hash != row["content_hash"]:
+            raise DefinitionIntegrityError(
+                f"definition version content hash failed: {row['id']}"
+            )
+        expected_id = _digest_fields(
+            (
+                row["definition_type"],
+                row["scope_key"],
+                row["definition_key"],
+                row["version"],
+                row["content_hash"],
+            )
+        )
+        expected_record_hash = _digest_fields(
+            (
+                row["id"],
+                row["scope_key"],
+                row["definition_type"],
+                row["definition_key"],
+                row["version"],
+                row["content_hash"],
+                row["content_json"],
+                row["metadata_json"],
+                row["created_at"],
+            )
+        )
+        if expected_id != row["id"] or expected_record_hash != row["record_hash"]:
+            raise DefinitionIntegrityError(
+                f"definition version immutable integrity failed: {row['id']}"
+            )
+        return validated
+
+    @staticmethod
+    def _validate_activation_integrity(row: Mapping[str, object]) -> None:
+        expected_record_hash = _digest_fields(
+            (
+                row["id"],
+                row["definition_version_id"],
+                row["scope_key"],
+                row["definition_type"],
+                row["definition_key"],
+                row["activated_at"],
+            )
+        )
+        if expected_record_hash != row["record_hash"]:
+            raise DefinitionIntegrityError(
+                f"definition activation integrity failed: {row['id']}"
+            )
+
+    @staticmethod
+    def _validate_retirement_integrity(row: Mapping[str, object]) -> None:
+        expected_id = _digest_fields((row["activation_id"], row["retired_at"]))
+        expected_record_hash = _digest_fields(
+            (
+                row["id"],
+                row["activation_id"],
+                row["scope_key"],
+                row["definition_type"],
+                row["definition_key"],
+                row["activated_at"],
+                row["retired_at"],
+            )
+        )
+        if expected_id != row["id"] or expected_record_hash != row["record_hash"]:
+            raise DefinitionIntegrityError(
+                f"definition retirement integrity failed: {row['id']}"
+            )
+
+    @staticmethod
+    def _activation_row(
+        db: sqlite3.Connection, activation_id: str
+    ) -> sqlite3.Row | None:
+        return db.execute(
+            """SELECT
+                 activation.*,
+                 retirement.id AS retirement_id,
+                 retirement.activation_id AS retirement_activation_id,
+                 retirement.scope_key AS retirement_scope_key,
+                 retirement.definition_type AS retirement_definition_type,
+                 retirement.definition_key AS retirement_definition_key,
+                 retirement.activated_at AS retirement_activated_at,
+                 retirement.retired_at AS retired_at,
+                 retirement.record_hash AS retirement_record_hash
+               FROM analytics_definition_activations AS activation
+               LEFT JOIN analytics_definition_retirements AS retirement
+                 ON retirement.activation_id=activation.id
+              WHERE activation.id=?""",
+            (activation_id,),
+        ).fetchone()
+
+    @staticmethod
+    def _validate_activation_history_row(row: Mapping[str, object]) -> None:
+        SQLiteMetricStore._validate_activation_integrity(row)
+        if row["retirement_id"] is None:
+            return
+        SQLiteMetricStore._validate_retirement_integrity(
+            {
+                "id": row["retirement_id"],
+                "activation_id": row["retirement_activation_id"],
+                "scope_key": row["retirement_scope_key"],
+                "definition_type": row["retirement_definition_type"],
+                "definition_key": row["retirement_definition_key"],
+                "activated_at": row["retirement_activated_at"],
+                "retired_at": row["retired_at"],
+                "record_hash": row["retirement_record_hash"],
+            }
+        )
+
+    @staticmethod
+    def _validate_activation_chronology(
+        rows: Sequence[Mapping[str, object]],
+    ) -> None:
+        grouped: dict[
+            tuple[object, object, object],
+            list[tuple[str, str | None, object]],
+        ] = {}
+        for row in rows:
+            activated_at = row["activated_at"]
+            retired_at = row["retired_at"]
+            if not isinstance(activated_at, str) or (
+                retired_at is not None and not isinstance(retired_at, str)
+            ):
+                raise DefinitionIntegrityError(
+                    "definition activation chronology is invalid"
+                )
+            if retired_at is not None and retired_at < activated_at:
+                raise DefinitionIntegrityError(
+                    "definition activation chronology is invalid"
+                )
+            identity = (
+                row["scope_key"],
+                row["definition_type"],
+                row["definition_key"],
+            )
+            grouped.setdefault(identity, []).append(
+                (activated_at, retired_at, row["id"])
+            )
+        for intervals in grouped.values():
+            intervals.sort(
+                key=lambda interval: (
+                    interval[0],
+                    interval[1] is None,
+                    interval[1] or "",
+                    str(interval[2]),
+                )
+            )
+            first = True
+            prior_end: str | None = None
+            for activated_at, retired_at, _ in intervals:
+                if not first and (
+                    prior_end is None or activated_at < prior_end
+                ):
+                    raise DefinitionIntegrityError(
+                        "definition activation history overlaps or is non-monotonic"
+                    )
+                first = False
+                prior_end = retired_at
+
+    @staticmethod
+    def _current_activation(
+        db: sqlite3.Connection, identity: DefinitionIdentity
+    ) -> sqlite3.Row | None:
+        rows = db.execute(
+            """SELECT
+                 activation.*,
+                 retirement.id AS retirement_id,
+                 retirement.activation_id AS retirement_activation_id,
+                 retirement.scope_key AS retirement_scope_key,
+                 retirement.definition_type AS retirement_definition_type,
+                 retirement.definition_key AS retirement_definition_key,
+                 retirement.activated_at AS retirement_activated_at,
+                 retirement.retired_at AS retired_at,
+                 retirement.record_hash AS retirement_record_hash
+               FROM analytics_definition_activations AS activation
+               LEFT JOIN analytics_definition_retirements AS retirement
+                 ON retirement.activation_id=activation.id
+              WHERE activation.scope_key=?
+                AND activation.definition_type=?
+                AND activation.definition_key=?
+              ORDER BY activation.activated_at,activation.id""",
+            (
+                identity.scope_key,
+                identity.definition_type.value,
+                identity.definition_key,
+            ),
+        ).fetchall()
+        SQLiteMetricStore._validate_activation_chronology(rows)
+        current: sqlite3.Row | None = None
+        for row in rows:
+            SQLiteMetricStore._validate_activation_history_row(row)
+            if row["retirement_id"] is None:
+                if current is not None:
+                    raise DefinitionIntegrityError(
+                        "multiple current definition activations exist"
+                    )
+                current = row
+        if current is not None:
+            version = db.execute(
+                "SELECT * FROM analytics_definition_versions WHERE id=?",
+                (current["definition_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise DefinitionIntegrityError(
+                    "current activation references a missing definition version"
+                )
+            SQLiteMetricStore._validate_authoritative_version(db, version)
+        return current
+
+    @staticmethod
+    def _validate_definition_references(
+        db: sqlite3.Connection,
+        definitions: Sequence[ValidatedDefinition],
+        *,
+        integrity_context: bool = False,
+    ) -> None:
+        pending = list(definitions)
+        expected: dict[str, DefinitionType] = {}
+        validated_reference_ids: set[str] = set()
+        while pending:
+            definition = pending.pop()
+            content = json.loads(definition.content_json)
+            references: list[tuple[str, DefinitionType]] = []
+            if definition.definition_type is DefinitionType.GOAL:
+                references.extend(
+                    (version_id, DefinitionType.GOAL)
+                    for version_id in content.get("goal_version_ids", ())
+                )
+            elif definition.definition_type is DefinitionType.ALERT_RULE:
+                if "goal_version_id" in content:
+                    references.append(
+                        (content["goal_version_id"], DefinitionType.GOAL)
+                    )
+                if "segment_version_id" in content:
+                    references.append(
+                        (content["segment_version_id"], DefinitionType.SEGMENT)
+                    )
+            elif definition.definition_type is DefinitionType.REPORT_SUBSCRIPTION:
+                references.extend(
+                    (version_id, DefinitionType.GOAL)
+                    for version_id in content.get("goal_version_ids", ())
+                )
+                if "segment_version_id" in content:
+                    references.append(
+                        (content["segment_version_id"], DefinitionType.SEGMENT)
+                    )
+            for version_id, definition_type in references:
+                prior = expected.setdefault(version_id, definition_type)
+                if prior is not definition_type:
+                    if integrity_context:
+                        raise DefinitionIntegrityError(
+                            "definition version reference has conflicting expected types"
+                        )
+                    raise DefinitionNotFoundError(
+                        "definition version reference has conflicting expected types"
+                    )
+                if version_id in validated_reference_ids:
+                    continue
+                row = db.execute(
+                    """SELECT *
+                         FROM analytics_definition_versions
+                        WHERE id=?""",
+                    (version_id,),
+                ).fetchone()
+                if row is None or row["definition_type"] != definition_type.value:
+                    if integrity_context:
+                        raise DefinitionIntegrityError(
+                            f"referenced {definition_type.value} version does not exist"
+                        )
+                    raise DefinitionNotFoundError(
+                        f"referenced {definition_type.value} version does not exist"
+                    )
+                validated_reference_ids.add(version_id)
+                pending.append(SQLiteMetricStore._validate_version_integrity(row))
+
+    @staticmethod
+    def _validate_authoritative_version(
+        db: sqlite3.Connection, row: Mapping[str, object]
+    ) -> ValidatedDefinition:
+        validated = SQLiteMetricStore._validate_version_integrity(row)
+        SQLiteMetricStore._validate_definition_references(
+            db,
+            (validated,),
+            integrity_context=True,
+        )
+        return validated
+
+    @staticmethod
+    def _validate_definition_schema(db: sqlite3.Connection) -> None:
+        if _definition_schema_rows(db) != _canonical_definition_schema_rows():
+            raise DefinitionIntegrityError(
+                "definition schema enforcement verification failed"
+            )
+
+    @staticmethod
+    def _retire_activation(
+        db: sqlite3.Connection, activation: sqlite3.Row, retired_at: str
+    ) -> DefinitionActivation:
+        if activation["retirement_id"] is not None:
+            raise DefinitionNotActiveError("definition activation is no longer current")
+        retirement_id = _digest_fields((activation["id"], retired_at))
+        record_hash = _digest_fields(
+            (
+                retirement_id,
+                activation["id"],
+                activation["scope_key"],
+                activation["definition_type"],
+                activation["definition_key"],
+                activation["activated_at"],
+                retired_at,
+            )
+        )
+        try:
+            db.execute(
+                """INSERT INTO analytics_definition_retirements(
+                     id,activation_id,scope_key,definition_type,definition_key,
+                     activated_at,retired_at,record_hash
+                   ) VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    retirement_id,
+                    activation["id"],
+                    activation["scope_key"],
+                    activation["definition_type"],
+                    activation["definition_key"],
+                    activation["activated_at"],
+                    retired_at,
+                    record_hash,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DefinitionNotActiveError(
+                "definition activation is no longer current"
+            ) from exc
+        row = SQLiteMetricStore._activation_row(db, activation["id"])
+        if row is None:
+            raise DefinitionIntegrityError("retired activation disappeared")
+        SQLiteMetricStore._validate_activation_history_row(row)
+        return SQLiteMetricStore._activation_from_row(row)
+
+    @staticmethod
+    def _insert_activation(
+        db: sqlite3.Connection, version: sqlite3.Row, activated_at: str
+    ) -> DefinitionActivation:
+        history = db.execute(
+            """SELECT
+                 activation.id,
+                 activation.scope_key,
+                 activation.definition_type,
+                 activation.definition_key,
+                 activation.activated_at,
+                 retirement.retired_at
+               FROM analytics_definition_activations AS activation
+               LEFT JOIN analytics_definition_retirements AS retirement
+                 ON retirement.activation_id=activation.id
+              WHERE activation.scope_key=?
+                AND activation.definition_type=?
+                AND activation.definition_key=?""",
+            (
+                version["scope_key"],
+                version["definition_type"],
+                version["definition_key"],
+            ),
+        ).fetchall()
+        SQLiteMetricStore._validate_activation_chronology(
+            (
+                *history,
+                {
+                    "id": "<pending>",
+                    "scope_key": version["scope_key"],
+                    "definition_type": version["definition_type"],
+                    "definition_key": version["definition_key"],
+                    "activated_at": activated_at,
+                    "retired_at": None,
+                },
+            )
+        )
+        collision_ordinal = 0
+        while True:
+            identity_fields: tuple[object, ...] = (version["id"], activated_at)
+            if collision_ordinal:
+                identity_fields += (collision_ordinal,)
+            activation_id = _digest_fields(identity_fields)
+            occupied = db.execute(
+                """SELECT definition_version_id,activated_at
+                     FROM analytics_definition_activations
+                    WHERE id=?""",
+                (activation_id,),
+            ).fetchone()
+            if occupied is None:
+                break
+            if (
+                occupied["definition_version_id"] != version["id"]
+                or occupied["activated_at"] != activated_at
+            ):
+                raise DefinitionCollisionError(
+                    "activation identity digest collides with unequal immutable fields"
+                )
+            collision_ordinal += 1
+        record_hash = _digest_fields(
+            (
+                activation_id,
+                version["id"],
+                version["scope_key"],
+                version["definition_type"],
+                version["definition_key"],
+                activated_at,
+            )
+        )
+        db.execute(
+            """INSERT INTO analytics_definition_activations(
+                 id,definition_version_id,scope_key,definition_type,definition_key,
+                 activated_at,record_hash
+               ) VALUES (?,?,?,?,?,?,?)""",
+            (
+                activation_id,
+                version["id"],
+                version["scope_key"],
+                version["definition_type"],
+                version["definition_key"],
+                activated_at,
+                record_hash,
+            ),
+        )
+        row = SQLiteMetricStore._activation_row(db, activation_id)
+        if row is None:
+            raise DefinitionIntegrityError("inserted activation disappeared")
+        SQLiteMetricStore._validate_activation_history_row(row)
+        return SQLiteMetricStore._activation_from_row(row)
+
+    @staticmethod
+    def _apply_validated_definition(
+        db: sqlite3.Connection,
+        definition: ValidatedDefinition,
+        *,
+        transaction_time: str,
+        step_hook: Callable[[str], None] | None,
+    ) -> DefinitionChange:
+        identity = DefinitionIdentity(
+            definition.scope_key,
+            definition.definition_type,
+            definition.definition_key,
+        )
+        existing = db.execute(
+            """SELECT *
+                 FROM analytics_definition_versions
+                WHERE scope_key=? AND definition_type=? AND definition_key=?
+                  AND content_hash=?""",
+            (
+                identity.scope_key,
+                identity.definition_type.value,
+                identity.definition_key,
+                definition.content_hash,
+            ),
+        ).fetchone()
+        current = SQLiteMetricStore._current_activation(db, identity)
+        if existing is not None:
+            SQLiteMetricStore._validate_version_integrity(existing)
+            if existing["content_json"].encode("utf-8") != definition.content_json.encode(
+                "utf-8"
+            ):
+                raise DefinitionCollisionError(
+                    "matching definition digest has unequal canonical bytes"
+                )
+            if current is not None and current["definition_version_id"] == existing["id"]:
+                return DefinitionChange(
+                    SQLiteMetricStore._version_from_row(existing),
+                    SQLiteMetricStore._activation_from_row(current),
+                    "unchanged",
+                )
+            if current is not None:
+                SQLiteMetricStore._retire_activation(db, current, transaction_time)
+                if step_hook:
+                    step_hook("after_retirement")
+            activation = SQLiteMetricStore._insert_activation(
+                db, existing, transaction_time
+            )
+            if step_hook:
+                step_hook("after_activation")
+            return DefinitionChange(
+                SQLiteMetricStore._version_from_row(existing),
+                activation,
+                "reactivated",
+            )
+
+        row = db.execute(
+            """SELECT COALESCE(MAX(version), 0)
+                 FROM analytics_definition_versions
+                WHERE scope_key=? AND definition_type=? AND definition_key=?""",
+            (
+                identity.scope_key,
+                identity.definition_type.value,
+                identity.definition_key,
+            ),
+        ).fetchone()
+        version_number = int(row[0]) + 1
+        version_id = _digest_fields(
+            (
+                identity.definition_type.value,
+                identity.scope_key,
+                identity.definition_key,
+                version_number,
+                definition.content_hash,
+            )
+        )
+        record_hash = _digest_fields(
+            (
+                version_id,
+                identity.scope_key,
+                identity.definition_type.value,
+                identity.definition_key,
+                version_number,
+                definition.content_hash,
+                definition.content_json,
+                definition.metadata_json,
+                transaction_time,
+            )
+        )
+        db.execute(
+            """INSERT INTO analytics_definition_versions(
+                 id,scope_key,definition_type,definition_key,version,content_hash,
+                 content_json,metadata_json,created_at,record_hash
+               ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                version_id,
+                identity.scope_key,
+                identity.definition_type.value,
+                identity.definition_key,
+                version_number,
+                definition.content_hash,
+                definition.content_json,
+                definition.metadata_json,
+                transaction_time,
+                record_hash,
+            ),
+        )
+        if step_hook:
+            step_hook("after_version")
+        version_row = db.execute(
+            "SELECT * FROM analytics_definition_versions WHERE id=?", (version_id,)
+        ).fetchone()
+        if current is not None:
+            SQLiteMetricStore._retire_activation(db, current, transaction_time)
+            if step_hook:
+                step_hook("after_retirement")
+        activation = SQLiteMetricStore._insert_activation(
+            db, version_row, transaction_time
+        )
+        if step_hook:
+            step_hook("after_activation")
+        return DefinitionChange(
+            SQLiteMetricStore._version_from_row(version_row),
+            activation,
+            "created",
+        )
+
+    def apply_definition_package(
+        self,
+        definitions: Iterable[AnalyticsDefinition],
+        *,
+        recipient_inputs: Mapping[
+            DefinitionIdentity, tuple[Sequence[str], bytes]
+        ] | None = None,
+        retirements: Iterable[DefinitionIdentity] = (),
+        transaction_time: datetime | None = None,
+        _step_hook: Callable[[str], None] | None = None,
+    ) -> DefinitionPackageResult:
+        """Validate then atomically apply one definition package.
+
+        An omitted definition remains active. Explicit retirements are required.
+        The private hook exists only for deterministic transaction-interruption
+        verification and runs after writes but before commit.
+        """
+
+        private_inputs: dict[
+            DefinitionIdentity, tuple[Sequence[str], bytes]
+        ] = {}
+        if recipient_inputs is not None:
+            if not isinstance(recipient_inputs, Mapping):
+                raise ValueError("recipient_inputs must be a mapping")
+            for raw_identity, values in recipient_inputs.items():
+                identity = validate_definition_identity(raw_identity)
+                if identity.definition_type is not DefinitionType.REPORT_SUBSCRIPTION:
+                    raise ValueError(
+                        "recipient inputs are valid only for report_subscription"
+                    )
+                if type(values) is not tuple or len(values) != 2:
+                    raise ValueError(
+                        "recipient inputs must contain recipient and digest-key pairs"
+                    )
+                if identity in private_inputs:
+                    raise ValueError("recipient_inputs contains duplicate scoped keys")
+                private_inputs[identity] = values
+        prepared_items: list[ValidatedDefinition] = []
+        for item in definitions:
+            try:
+                identity = validate_definition_identity(
+                    DefinitionIdentity(
+                        item.scope_key,
+                        DefinitionType(item.definition_type),
+                        item.definition_key,
+                    )
+                )
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise DefinitionValidationError(
+                    "definition identity is invalid"
+                ) from exc
+            private = private_inputs.pop(identity, None)
+            if private is None:
+                prepared_items.append(validate_analytics_definition(item))
+            else:
+                prepared_items.append(
+                    validate_analytics_definition(
+                        item,
+                        recipient_set=private[0],
+                        recipient_digest_key=private[1],
+                    )
+                )
+        if private_inputs:
+            raise ValueError(
+                "recipient_inputs contains an identity absent from the package"
+            )
+        prepared = tuple(prepared_items)
+        retirement_identities = tuple(
+            validate_definition_identity(item) for item in retirements
+        )
+        definition_keys = [
+            (item.scope_key, item.definition_type, item.definition_key)
+            for item in prepared
+        ]
+        retirement_keys = [
+            (item.scope_key, item.definition_type, item.definition_key)
+            for item in retirement_identities
+        ]
+        if len(definition_keys) != len(set(definition_keys)):
+            raise ValueError("definition package contains duplicate scoped keys")
+        if len(retirement_keys) != len(set(retirement_keys)):
+            raise ValueError("definition package contains duplicate retirements")
+        if set(definition_keys) & set(retirement_keys):
+            raise ValueError(
+                "definition package cannot activate and explicitly retire the same scoped key"
+            )
+        with self.connect(readonly=True) as db:
+            self._validate_definition_references(db, prepared)
+        instant = _iso(_transaction_time(transaction_time))
+        changes: list[DefinitionChange] = []
+        retired: list[DefinitionActivation] = []
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._validate_definition_references(db, prepared)
+            for definition in prepared:
+                changes.append(
+                    self._apply_validated_definition(
+                        db,
+                        definition,
+                        transaction_time=instant,
+                        step_hook=_step_hook,
+                    )
+                )
+            for identity in retirement_identities:
+                current = self._current_activation(db, identity)
+                if current is None:
+                    raise DefinitionNotActiveError(
+                        "definition is unknown or has no current activation"
+                    )
+                retired.append(self._retire_activation(db, current, instant))
+                if _step_hook:
+                    _step_hook("after_retirement")
+        return DefinitionPackageResult(tuple(changes), tuple(retired))
+
+    def activate_definition_version(
+        self,
+        version_id: str,
+        *,
+        transaction_time: datetime | None = None,
+        _step_hook: Callable[[str], None] | None = None,
+    ) -> DefinitionChange:
+        """Activate a retained version as an explicit, auditable rollback."""
+
+        if not isinstance(version_id, str) or not re.fullmatch(r"[0-9a-f]{64}", version_id):
+            raise ValueError("version_id must be a lowercase SHA-256 identity")
+        instant = _iso(_transaction_time(transaction_time))
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute(
+                "SELECT * FROM analytics_definition_versions WHERE id=?", (version_id,)
+            ).fetchone()
+            if version is None:
+                raise DefinitionNotFoundError("definition version does not exist")
+            self._validate_authoritative_version(db, version)
+            identity = DefinitionIdentity(
+                version["scope_key"],
+                DefinitionType(version["definition_type"]),
+                version["definition_key"],
+            )
+            current = self._current_activation(db, identity)
+            if current is not None and current["definition_version_id"] == version_id:
+                return DefinitionChange(
+                    self._version_from_row(version),
+                    self._activation_from_row(current),
+                    "unchanged",
+                )
+            if current is not None:
+                self._retire_activation(db, current, instant)
+                if _step_hook:
+                    _step_hook("after_retirement")
+            activation = self._insert_activation(db, version, instant)
+            if _step_hook:
+                _step_hook("after_activation")
+            return DefinitionChange(
+                self._version_from_row(version), activation, "reactivated"
+            )
+
+    def retire_definition(
+        self,
+        identity: DefinitionIdentity,
+        *,
+        transaction_time: datetime | None = None,
+        _step_hook: Callable[[str], None] | None = None,
+    ) -> DefinitionActivation:
+        result = self.apply_definition_package(
+            (),
+            retirements=(identity,),
+            transaction_time=transaction_time,
+            _step_hook=_step_hook,
+        )
+        return result.retired[0]
+
+    def get_current_definition(
+        self, identity: DefinitionIdentity
+    ) -> tuple[DefinitionVersion, DefinitionActivation] | None:
+        identity = validate_definition_identity(identity)
+        with self.connect(readonly=True) as db:
+            activation = self._current_activation(db, identity)
+            if activation is None:
+                return None
+            version = db.execute(
+                "SELECT * FROM analytics_definition_versions WHERE id=?",
+                (activation["definition_version_id"],),
+            ).fetchone()
+            if version is None:
+                raise DefinitionIntegrityError(
+                    "current activation references a missing definition version"
+                )
+            self._validate_authoritative_version(db, version)
+            return (
+                self._version_from_row(version),
+                self._activation_from_row(activation),
+            )
+
+    @staticmethod
+    def _verify_definition_integrity_connection(
+        db: sqlite3.Connection,
+    ) -> dict[str, int]:
+        SQLiteMetricStore._validate_definition_schema(db)
+        foreign_key_errors = db.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_key_errors:
+            raise DefinitionIntegrityError("definition foreign-key verification failed")
+        versions = db.execute(
+            "SELECT * FROM analytics_definition_versions ORDER BY id"
+        ).fetchall()
+        activations = db.execute(
+            "SELECT * FROM analytics_definition_activations ORDER BY id"
+        ).fetchall()
+        retirements = db.execute(
+            "SELECT * FROM analytics_definition_retirements ORDER BY id"
+        ).fetchall()
+        validated_versions: list[ValidatedDefinition] = []
+        for row in versions:
+            validated_versions.append(
+                SQLiteMetricStore._validate_version_integrity(row)
+            )
+        SQLiteMetricStore._validate_definition_references(
+            db,
+            validated_versions,
+            integrity_context=True,
+        )
+        activation_identity_groups: dict[tuple[str, str], set[str]] = {}
+        for row in activations:
+            identity_fields = (row["definition_version_id"], row["activated_at"])
+            activation_identity_groups.setdefault(identity_fields, set()).add(row["id"])
+            SQLiteMetricStore._validate_activation_integrity(row)
+        for row in retirements:
+            SQLiteMetricStore._validate_retirement_integrity(row)
+        retirement_by_activation = {
+            row["activation_id"]: row["retired_at"] for row in retirements
+        }
+        SQLiteMetricStore._validate_activation_chronology(
+            tuple(
+                {
+                    "id": row["id"],
+                    "scope_key": row["scope_key"],
+                    "definition_type": row["definition_type"],
+                    "definition_key": row["definition_key"],
+                    "activated_at": row["activated_at"],
+                    "retired_at": retirement_by_activation.get(row["id"]),
+                }
+                for row in activations
+            )
+        )
+        for identity_fields, actual_ids in activation_identity_groups.items():
+            expected_ids = {_digest_fields(identity_fields)}
+            for collision_ordinal in range(1, len(actual_ids)):
+                expected_ids.add(_digest_fields((*identity_fields, collision_ordinal)))
+            if actual_ids != expected_ids:
+                raise DefinitionIntegrityError(
+                    "definition activation identity sequence is not canonical"
+                )
+        current_counts: dict[tuple[str, str, str], int] = {}
+        retired_ids = {row["activation_id"] for row in retirements}
+        for row in activations:
+            if row["id"] in retired_ids:
+                continue
+            identity = (
+                row["scope_key"],
+                row["definition_type"],
+                row["definition_key"],
+            )
+            current_counts[identity] = current_counts.get(identity, 0) + 1
+        if any(count != 1 for count in current_counts.values()):
+            raise DefinitionIntegrityError(
+                "multiple current definition activations exist"
+            )
+        return {
+            "versions": len(versions),
+            "activations": len(activations),
+            "retirements": len(retirements),
+        }
+
+    def verify_definition_integrity(self) -> dict[str, int]:
+        """Verify schema enforcement, immutable hashes, semantics, and references."""
+
+        with self.connect(readonly=True) as db:
+            db.execute("BEGIN")
+            return self._verify_definition_integrity_connection(db)
 
     def upsert(self, points: Iterable[MetricPoint]) -> int:
         now = _iso(datetime.now(UTC)); rows = []
@@ -389,17 +1366,82 @@ class SQLiteMetricStore:
             source.backup(output)
         return target
 
+    @staticmethod
+    def _validate_restore_connection(db: sqlite3.Connection) -> int:
+        db.execute("PRAGMA foreign_keys=ON")
+        if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise ValueError("backup integrity check failed")
+        if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise ValueError("backup foreign-key check failed")
+        schema_row = db.execute(
+            "SELECT version FROM schema_meta LIMIT 1"
+        ).fetchone()
+        if schema_row is None:
+            raise ValueError("backup schema marker is missing")
+        source_schema = int(schema_row[0])
+        if source_schema not in MIGRATIONS:
+            raise ValueError(
+                f"backup schema {source_schema} is outside supported range "
+                f"1-{SCHEMA_VERSION}"
+            )
+        if source_schema >= 5:
+            try:
+                SQLiteMetricStore._verify_definition_integrity_connection(db)
+            except DefinitionIntegrityError as exc:
+                raise ValueError("backup definition integrity check failed") from exc
+        return source_schema
+
+    @staticmethod
+    def _validate_restored_path(path: Path, expected_schema: int) -> None:
+        uri = f"file:{path.as_posix()}?mode=ro&immutable=1"
+        with closing(sqlite3.connect(uri, uri=True)) as restored:
+            restored.row_factory = sqlite3.Row
+            restored.execute("BEGIN")
+            actual_schema = SQLiteMetricStore._validate_restore_connection(restored)
+            if actual_schema != expected_schema:
+                raise ValueError("restored schema marker changed during copy")
+
     def restore(self, source: str | Path, *, confirmed: bool = False) -> None:
         if not confirmed: raise ValueError("restore requires explicit confirmation")
         source_path = Path(source)
-        with closing(sqlite3.connect(f"file:{source_path.as_posix()}?mode=ro", uri=True)) as check:
-            if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok": raise ValueError("backup integrity check failed")
+        if source_path.resolve() == self.path.resolve():
+            raise ValueError("restore source and target must be different paths")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.path.exists():
-            with self.connect() as current: current.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            self.backup(self.path.with_suffix(self.path.suffix + ".pre-restore"))
-        with closing(sqlite3.connect(source_path)) as input_db, closing(sqlite3.connect(self.path)) as output_db:
-            input_db.backup(output_db)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.restore-",
+            suffix=".db",
+            dir=self.path.parent,
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        source_uri = f"file:{source_path.as_posix()}?mode=ro"
+        try:
+            with closing(sqlite3.connect(source_uri, uri=True)) as input_db:
+                input_db.row_factory = sqlite3.Row
+                input_db.execute("BEGIN")
+                source_schema = self._validate_restore_connection(input_db)
+                if self.path.exists():
+                    with self.connect() as current:
+                        current.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    self.backup(
+                        self.path.with_suffix(self.path.suffix + ".pre-restore")
+                    )
+                with closing(sqlite3.connect(temporary_path)) as output_db:
+                    input_db.backup(output_db)
+                    output_db.commit()
+            self._validate_restored_path(temporary_path, source_schema)
+            for suffix in ("-wal", "-shm"):
+                sidecar = Path(f"{self.path}{suffix}")
+                if sidecar.exists():
+                    sidecar.unlink()
+            os.replace(temporary_path, self.path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+            for suffix in ("-wal", "-shm"):
+                temporary_sidecar = Path(f"{temporary_path}{suffix}")
+                if temporary_sidecar.exists():
+                    temporary_sidecar.unlink()
 
     def enforce_retention(self, *, hourly_days: int, daily_days: int) -> int:
         now = datetime.now(UTC); hourly = _iso(now - timedelta(days=hourly_days)); daily = _iso(now - timedelta(days=daily_days))

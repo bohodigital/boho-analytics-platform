@@ -34,8 +34,26 @@ class StorageTests(unittest.TestCase):
     def test_initialize_enables_wal_and_integrity(self):
         with self.store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
-            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 4)
+            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 5)
             self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM analytics_definition_versions"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM analytics_definition_activations"
+                ).fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM analytics_definition_retirements"
+                ).fetchone()[0],
+                0,
+            )
         self.assertEqual(self.store.integrity_check(), "ok")
 
     def test_sync_run_records_binding_window_and_result_metadata(self):
@@ -210,7 +228,7 @@ class StorageTests(unittest.TestCase):
 
     def test_forms_v3_schema_marker_blocks_schema_v3_runtime_rollback(self):
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 3):
-            with self.assertRaisesRegex(RuntimeError, "database schema 4 is newer than supported 3"):
+            with self.assertRaisesRegex(RuntimeError, "database schema 5 is newer than supported 3"):
                 SQLiteMetricStore(self.store.path).initialize()
 
     def test_active_lock_fails_and_stale_lock_is_recovered(self):

@@ -19,14 +19,14 @@ credentials, addresses, and private identifiers are not stored.
 Schema 5 separates:
 
 - immutable version rows, deduplicated by scoped key and normalized-content hash; and
-- retained activation-history rows, with one current activation per scoped key. An activation row
-  permits only one monotonic retirement transition from a null retirement time to a UTC timestamp;
-  no other field may change.
+- retained immutable activation-history rows, with one current activation per scoped key; and
+- immutable, append-only retirement events that close activation ranges without rewriting them.
 
 Identical active content is a no-op. Identical retired content reuses its version and adds a new
-activation. Changed content adds a version and activation while retiring the prior activation in
-one transaction. Explicit retirement closes the current activation without changing or deleting
-its version. Retirement of an unknown or already inactive scoped key fails without a write.
+activation. Changed content adds a version and activation while appending a retirement event for the
+prior activation in one transaction. Explicit retirement appends a terminal event without changing
+or deleting its activation or version. Retirement of an unknown or already inactive scoped key
+fails without a write.
 Activation of a missing version, a content-hash collision, invalid input, and an interrupted
 transaction also fail without changing history. Historical consumers retain the exact version
 they used.
@@ -39,7 +39,7 @@ acknowledge, suppress, synchronize, send, or modify recipients.
 
 ## Consequences
 
-Definition rollback is auditable reactivation rather than an invisible edit. The schema gains two
-generic tables and no consumer-specific tables. Operators use validated CLI or private
-configuration workflows. Recipient addresses and credentials remain outside both the repository
-and SQLite.
+Definition rollback is auditable reactivation rather than an invisible edit. The schema gains
+three generic tables—versions, activations, and retirements—and no consumer-specific tables.
+Operators use validated CLI or private configuration workflows. Recipient addresses and
+credentials remain outside both the repository and SQLite.

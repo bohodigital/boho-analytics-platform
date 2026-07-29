@@ -55,6 +55,25 @@ only across the established observation horizon. Verify current identity counts,
 coverage, and raw lineage before re-enabling the timer. Never derive identity-v3 replacement rows
 from identity-v2 zeroes.
 
+The schema-5 definition-registry upgrade is a separately reviewed additive migration. Before an
+authorized cutover, stop every writer and reader service, create and verify an online schema-4
+backup, retain the exact v0.2.0 environment at commit
+`4a3bfa9e8a4346578263ee74dd227e6230ccc7c3`, and test the ordered migration on a truly empty
+database, a fresh schema-4 database, and an exact online-backup copy of production. For every
+legacy table, compare deterministic full-table fingerprints and row counts before and after; the
+three new definition tables (`analytics_definition_versions`, `analytics_definition_activations`,
+and `analytics_definition_retirements`) must initially be empty. Re-run initialization to prove an
+idempotent no-op, verify integrity and foreign keys, and prove the older runtime refuses schema 5.
+This repository change does not authorize a production migration.
+
+Before any package build or release handoff, run `python scripts/verify_release.py` from the exact
+reviewed Git checkout. The verifier requires a clean tracked and untracked status and independently
+recomputes the filesystem Git tree. For a Git archive or another export without `.git`, preserve the
+reviewed 40-character tree ID outside the export and run
+`python scripts/verify_release.py --expected-tree <reviewed-tree-id>`; an export without that
+independent identity fails closed. Modified, staged, deleted, or additional content cannot be
+accepted merely because its path and file type are allowlisted.
+
 Inject the exact reviewed Git identities into every web, sync, and backup unit so `--version` and
 `/healthz` expose the running build rather than only a package label:
 
@@ -75,8 +94,20 @@ The bundled scheduled-backup wrapper writes only beneath a `scheduled/` child di
 retention only there. Keep pre-migration, preview, rollback, and manual evidence outside that child so
 scheduled pruning cannot match it.
 
-Test restores away from the live state path. A live restore requires `--confirm`, validates source
-integrity, checkpoints the current WAL, and creates a `.pre-restore` backup before replacement:
+Test restores away from the live state path. A live restore requires `--confirm`; before copying it
+validates source integrity, foreign keys, the schema marker, and every schema-5 definition's
+canonical type-specific privacy contract and immutable hashes. It also requires the exact migration
+005 table, index, and trigger definitions and recursively resolves every embedded typed version
+reference. A source schema outside the running package's supported range is rejected before any
+copy, and the destination schema marker must still match the source after copying.
+Retained-version activation,
+reuse, reference resolution, and current-definition reads repeat semantic, content-hash,
+version-identity, and immutable version-record validation; current
+activation use validates its referenced version before any retirement or successor activation and
+also repeats immutable activation-record and append-only retirement-event validation. Restore holds
+the validated source read snapshot through SQLite backup, checkpoints the current WAL, creates a
+`.pre-restore` backup, validates the copied temporary destination, and only then atomically replaces
+the target:
 
 ```bash
 boho-analytics --config /private/platform.toml db restore /private/backups/analytics.db --confirm
@@ -100,13 +131,15 @@ origin-side identity validation, audit events, rate limits, export controls, and
 
 ## Rollback
 
-1. Stop the web service and sync timer.
-2. Restore the matching pre-schema-v4 database backup before starting prior code. Schema-v3 code
-   intentionally refuses a post-cutover schema-v4 database so it cannot reactivate quarantined
-   identity-v2 forms zeroes.
-3. Reinstall the prior package or switch to the prior verified commit.
-4. Validate `db check`, start the web service, check `/healthz`, and run a known report.
-5. Re-enable the timer only after a bounded fixture or provider sync succeeds.
+1. Stop the web service, sync timer, and every other writer.
+2. Preserve the failed database for investigation.
+3. Restore the matching verified pre-migration backup; do not use an in-place destructive down
+   migration.
+4. Restore the exact prior package or verified commit. Schema-4 and schema-3 runtimes
+   intentionally refuse newer database schemas.
+5. Validate integrity, foreign keys, deterministic legacy-table fingerprints, `db check`, the
+   health endpoint, and a known report.
+6. Re-enable timers last, only after a bounded fixture or provider sync succeeds.
 
 Rollback never requires modifying trackers, provider data, form routing, or mailbox state. Treat the
 prior package's long-range forms coverage as a known data-trust limitation.

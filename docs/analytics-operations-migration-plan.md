@@ -48,32 +48,40 @@ Purpose: retained activation history and the current-version selector for future
 - Primary key: deterministic text `id`.
 - Natural identity: activation event identity derived from version identity and activation time.
 - Columns: `definition_version_id`, repeated bounded scope/type/key for enforceable scoped
-  uniqueness, UTC `activated_at`, nullable UTC `retired_at`, and a 64-character lowercase SHA-256
-  `record_hash`.
+  identity, UTC `activated_at`, and a 64-character lowercase SHA-256 `record_hash`.
 - Record hash: SHA-256 over the canonical, length-delimited encoding of the immutable activation
-  identity fields, excluding `retired_at` and `record_hash`; retirement therefore cannot rewrite
-  activation identity.
+  identity fields, excluding `record_hash`.
 - Foreign key: the composite `(definition_version_id, scope_key, definition_type, definition_key)`
   references the matching version tuple `(id, scope_key, definition_type, definition_key)` with
   `ON DELETE RESTRICT`, so repeated scoped identity cannot drift from its version.
-- State: current when `retired_at IS NULL`, otherwise retired.
-- Mutability: every field is immutable except one permitted monotonic transition of `retired_at`
-  from null to a UTC timestamp.
-- Uniqueness: a partial unique index permits exactly one current activation for each scoped key.
-- Checks: retirement follows activation; storage and migration tests reject any update other than
-  the permitted retirement transition.
+- State: current when no `analytics_definition_retirements` row references the activation.
+- Mutability: every field is immutable.
+- Uniqueness: an insertion guard permits exactly one unretired activation for each scoped key.
+- Checks: storage and migration tests reject every activation update.
 - Deletion: application APIs expose no delete.
 - Indexes: current scoped lookup, version history, and scoped activation chronology.
 - Retention, backup, and restore: retained history is included in the supported online backup and
   restored only with its referenced version rows as part of a complete database restore. Restore
   verification recomputes activation `record_hash` values, validates the composite foreign key,
-  and rejects a partial activation/version restore.
+  and rejects a partial activation/version/retirement restore.
 
-Activation retires the prior current row and inserts the new row in one transaction. Identical
+## `analytics_definition_retirements`
+
+Purpose: immutable, append-only terminal history for activation ranges.
+
+- Primary key: deterministic identity derived from activation identity and retirement time.
+- Columns: referenced activation identity, repeated scope/type/key and activation time, UTC
+  `retired_at`, and a full immutable `record_hash`.
+- Integrity: a composite foreign key binds every repeated field to the exact activation; the
+  retirement record hash covers the complete event.
+- Mutability and deletion: update and delete triggers reject every change.
+- Uniqueness: at most one retirement event may reference an activation.
+
+Activation appends a retirement event for the prior current row and inserts the new row in one transaction. Identical
 active content is a no-op. Reactivating a retired version inserts a new activation row. Explicit
-retirement changes only the current row's `retired_at`. Missing version identities, unknown scoped
-keys, already inactive keys, version/content collisions, invalid input, and transaction
-interruptions fail without changing either table.
+retirement appends only a terminal event. Missing version identities, unknown scoped keys, already
+inactive keys, version/content collisions, invalid input, and transaction interruptions fail
+without changing any registry table.
 
 ## Stored-data boundary
 
@@ -98,17 +106,18 @@ an extension point for raw provider or private configuration data.
 7. Run the full ordered migration runner from no schema through schema 5 against the truly empty
    case. Run migration 005 through that runner against the fresh schema-4 case and the exact
    production copy.
-8. Require schema 5, integrity `ok`, no foreign-key errors, and two empty definition tables in all
-   three cases. In both schema-4 cases, additionally require exactly unchanged legacy counts and
-   full-table fingerprints.
+8. Require schema 5, integrity `ok`, no foreign-key errors, and all three empty definition tables
+   (versions, activations, and retirements) in all three cases. In both schema-4 cases,
+   additionally require exactly unchanged legacy counts and full-table fingerprints.
 9. Re-run the ordered runner in every case and prove an idempotent no-op.
 10. Interrupt migration 005 inside its transaction for each schema-4 case. The transaction must
     roll back completely, schema 4 must remain authoritative, every legacy count and full-table
-    fingerprint must remain unchanged, and both new definition tables must remain absent.
+    fingerprint must remain unchanged, and all three new definition tables must remain absent.
 11. In migrated schema-5 copies, seed bounded definition/version and activation fixtures, then
     interrupt multi-definition creation, replacement, retirement, and reactivation packages after
-    each write step. Both definition tables must remain byte-for-byte equivalent to their respective
-    pre-transaction contents; interruption must not require that pre-existing tables be empty.
+    each write step. All three definition tables must remain byte-for-byte equivalent to their
+    respective pre-transaction contents; interruption must not require that pre-existing tables be
+    empty.
 12. Prove the schema-5 candidate opens every migrated case and exact v0.2.0 refuses each schema-5
     database.
 13. Restore the schema-4 backup to a separate disposable path and run integrity, foreign-key,

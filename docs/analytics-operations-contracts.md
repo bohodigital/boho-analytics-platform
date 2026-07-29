@@ -47,9 +47,9 @@ A version record contains:
 
 Version rows are immutable. Activation history is stored separately and records activation and
 retirement times. Exactly one activation may be current for a `(scope, type, key)`. Historical
-versions and activations are never deleted merely because a later version activates. An activation
-row permits exactly one mutation: its `retired_at` may move once from null to the transaction's UTC
-timestamp. Every other activation field is immutable.
+versions, activations, and retirements are never deleted merely because a later version activates.
+Activation rows are immutable. Retirement is a separate immutable event with a natural identity and
+full-record hash bound to the referenced activation and the transaction's UTC timestamp.
 
 Activation has these exact behaviors:
 
@@ -61,8 +61,8 @@ Activation has these exact behaviors:
    activation in the same transaction. One authoritative UTC transaction timestamp retires the old
    activation and starts the new one. Active ranges are half-open `[activated_at, retired_at)`, so
    the ranges meet at that timestamp without overlapping.
-4. Explicit retirement of an active scoped key sets only its current activation's `retired_at`;
-   the immutable version remains reusable.
+4. Explicit retirement of an active scoped key appends one retirement event for its current
+   activation; the immutable activation and version remain reusable history.
 5. Retirement of an unknown scoped key or a scoped key with no current activation fails without a
    write.
 6. A matching digest with unequal canonical bytes is a collision and fails without a write.
@@ -110,6 +110,9 @@ Supported goal types are `page`, `event`, `form`, `download`, `outbound_action`,
 aggregation, date basis, active date bounds, maturity lag, denominator, coverage requirement,
 confidence, and optional provider bindings.
 
+Active date bounds, when present, are canonical `YYYY-MM-DD` calendar dates. An end bound cannot
+precede its start bound.
+
 Exactly one binding is canonical. Zero or more bindings may corroborate it. Outputs show the
 canonical observation and each corroborating observation separately; they never blend or sum
 providers into one hidden count. A provider may not substitute for an unavailable canonical
@@ -120,7 +123,8 @@ Every denominator identifies its metric, unit, scope, grain, window, date basis,
 policy, and zero-denominator behavior. Percentages are `unknown` when the canonical denominator is
 missing or zero. The evaluation period must end at or before the source's disclosed mature-through
 date; otherwise the result is `incomplete`. Coverage is disclosed for both numerator and
-denominator and must satisfy the goal version's threshold.
+denominator and must satisfy the goal version's threshold. `ratio` aggregation requires exactly
+one complete denominator object; every other aggregation forbids a denominator.
 
 Canonical-source, metric, unit, denominator, date-basis, maturity, aggregation, filter, or
 reconciliation changes require a new definition version. Historical outputs keep the version that
@@ -141,6 +145,11 @@ operators are `equals`, `not_equals`, `in`, `not_in`, `starts_with`, `ends_with`
 Depth, node count, list size, string length, and pattern complexity have fixed limits. Dimensions
 are logical names mapped to catalog-approved fields, never arbitrary SQL or stored-field access.
 Raw identity joins and cross-provider visitor/session joins are prohibited.
+
+Every scalar or list-valued `route` and `landing_route` predicate is validated as an internal
+pathname. Literal values cannot contain a query or fragment, and every member of `in` and `not_in`
+is checked independently. Literals and patterns reject backslashes and control characters so no
+consumer can reinterpret a stored pathname as a host-like or multi-line value.
 
 Compilation is deterministic for the same definition, provider, catalog version, and requested
 metric. Its result is `supported`, `partially_supported`, or `unsupported`, with bounded diagnostic
@@ -174,6 +183,22 @@ Initial rule types are `sync_failure`, `stale_data`, `missing_binding`, `coverag
 Each version fixes site and evidence scope, optional goal and segment versions, evaluation grain,
 threshold or comparison, maturity lag, minimum baseline, quiet periods, incomplete-data policy,
 cooldown, and severity. Evaluation consumes only the trusted active-fact selector.
+Quiet-period boundaries use a canonical 24-hour `HH:MM` clock from `00:00` through `23:59`.
+
+Conditional fields are closed by rule type. Fields not listed as required or forbidden remain
+optional evidence selectors:
+
+| Rule type | Required conditional fields | Forbidden conditional fields |
+| --- | --- | --- |
+| `sync_failure` | `source`, `threshold` | `comparison` |
+| `stale_data` | `source`, `threshold` | `comparison` |
+| `missing_binding` | `source`, `threshold` | `comparison` |
+| `coverage_drop` | `threshold` | `comparison` |
+| `absolute_threshold` | `threshold` | `comparison` |
+| `relative_change` | `comparison` | `threshold` |
+| `zero_after_nonzero` | `comparison` | `threshold` |
+| `cross_provider_divergence` | `threshold` | `comparison`, `source` |
+| `goal_change` | `goal_version_id`, `comparison` | `threshold`, `source` |
 
 Evaluation results are `triggered`, `clear`, `suppressed_incomplete`, `suppressed_quiet`,
 `insufficient_baseline`, or `error`. Immutable evidence records retain rule version, period,
@@ -191,10 +216,13 @@ incomplete-data policy, formats, and a non-reversible recipient-set identifier.
 
 Recipient addresses and delivery credentials remain in private configuration and are resolved
 only at execution. The recipient-set identifier is a keyed digest over a canonicalized recipient
-set; its secret key remains outside SQLite and the public repository so an address dictionary
-cannot reproduce it. SQLite may store only that identifier or a bounded recipient count when
-operationally necessary. It stores no recipient list or message body. Public reports, browser
-responses, and exports contain neither addresses nor private delivery identifiers.
+set. Canonicalization accepts only an explicit ASCII dot-atom local part and domain labels that
+begin and end with an alphanumeric character; empty atoms or labels, consecutive dots, boundary
+hyphens, and overlong parts fail closed. The digest secret key remains outside SQLite and the
+public repository so an address dictionary cannot reproduce it. SQLite may store only that
+identifier or a bounded recipient count when operationally necessary. It stores no recipient list
+or message body. Public reports, browser responses, and exports contain neither addresses nor
+private delivery identifiers.
 
 Delivery idempotency covers subscription version, intended period, formats, and recipient-set
 identifier. A successful key cannot send twice. Retries are bounded and reuse the key. Materially
