@@ -6,7 +6,9 @@ All adapters are read-only and emit cataloged aggregates. `probe` verifies crede
 ## Umami
 
 V1 targets the current self-hosted API routes under `/api`. It supports API-key, bearer-token, and
-username/password login credentials. Daily pageviews/sessions come from `pageviews`; exact-window
+username/password login credentials. Daily pageviews/sessions come from `pageviews`; the adapter
+requires an explicit pageview series, including an explicit empty series for a quiet window. It
+queries and labels only exact whole-day windows in the configured site timezone. Exact-window
 visitors, visits, bounces, and total time come from `stats`. Exact-window metrics are never summed
 across overlapping sync intervals.
 Country and region visit aggregates come from `metrics/expanded`. They keep the exact requested
@@ -22,14 +24,30 @@ Umami Cloud and differently versioned self-hosted installations may use differen
 authentication behavior. Confirm live version compatibility during connection testing.
 
 Route observations are disabled unless a binding explicitly opts in. The connector then issues
-bounded, paginated daily aggregate requests for paths, entries, and exits. Title, channel, domain,
-device, country, and configured event facts remain individually disabled unless named in the
-binding. It never reads event payloads, event properties, distinct IDs, sessions, IPs, user agents,
-or city records. The connector checks the provider-reported available date range before collection
-and rejects a request that predates it rather than treating pre-instrumentation silence as zero. A
-request exceeding `max_days`, `max_pages`, or `page_size` fails with a sanitized diagnostic rather
-than silently collecting a partial route slice. Provider contract:
+bounded, paginated daily aggregate requests to `metrics/expanded`. `umami.route-pageviews` is a
+distinct metric fetched with `type=path&field=pageviews`; `umami.route-visits` is fetched separately
+with `type=path&field=visits` and is never relabeled or substituted. Every request includes explicit
+`limit` and `offset` values. A short page proves exhaustion only when every raw `name` identity is
+unique across and within all pages. Repeated or overlapping identities stop pagination, discard the
+overlapping page, retain prior privacy-safe rows as `UNKNOWN`, and never double-count. Reaching
+`max_pages` with a full page retains only privacy-safe returned facts, marks them `UNKNOWN`, and
+cannot establish complete route coverage or headline reconciliation. Title, channel, domain,
+device, country, and configured event
+facts remain individually disabled unless named in the binding. It never reads event payloads,
+event properties, distinct IDs, sessions, IPs, user agents, or city records. The connector checks
+the provider-reported available date range before collection and rejects a request that predates it
+rather than treating pre-instrumentation silence as zero. A request exceeding `max_days` or
+`page_size` fails with a sanitized diagnostic. Provider contract:
 <https://docs.umami.is/docs/api/website-stats>.
+
+The exact requested half-open interval must be contained in the provider's availability timestamps;
+matching only the site-local start and end dates is insufficient. The sync engine projects the
+requested calendar dates onto each binding's configured site timezone, so one invocation can safely
+serve sites in different zones while every provider still receives exact local-midnight boundaries.
+Reporting projects the same requested calendar dates per site for fact queries, coverage cells,
+series labels, and provider comparison. Headline and route pageviews accept only non-negative
+integral counts. Invalid headline pageviews
+fail the sync, while an invalid route row is omitted and makes retained privacy-safe rows `UNKNOWN`.
 
 ## Cloudflare traffic
 
@@ -45,8 +63,12 @@ provider-labeled layer and is never blended with browser-analytics visits.
 ## Google Analytics
 
 V1 calls GA4 Data API `properties/{property}:runReport` with a date dimension and daily active users,
-sessions, pageviews, event count, and key events. Google API end dates are inclusive, so the adapter
-subtracts one day from the platform's exclusive report end.
+sessions, pageviews, event count, and key events. The adapter requires the `screenPageViews`
+series explicitly, including its header on a valid empty response. Google API end dates are
+inclusive, so the adapter converts the exact whole-day request to the configured site timezone and
+subtracts one day from the platform's exclusive local end. Returned headline rows must have one
+value for every declared metric and a date inside that interval; malformed or out-of-window rows
+fail the acquisition.
 
 Credentials may be a short-lived access token, OAuth refresh-token fields, or service-account JSON.
 The GA4 property must grant the chosen identity sufficient viewer access.
@@ -57,13 +79,42 @@ The geography query groups sessions by date, ISO country ID, and provider-report
 and region values remain GA4 sessions and are not deduplicated against Umami or Cloudflare.
 
 Opt-in route observations use GA4 `runReport` pagination and property metadata validation. They
-collect landing-page sessions, page-path views, engagement, and key events. Title, channel, and
-referrer families remain off unless individually selected in `ga4_dimensions`; event counts require
-individually configured names. Internal referrers retain a normalized route; external referrers
-retain an allowlisted domain only. Full referrer URLs, event parameters, client IDs, session IDs,
-and raw events are never facts or diagnostics. Contracts:
+collect landing-page sessions, engagement, and key events. `google.page-path-views` uses the
+`pagePath` dimension and `screenPageViews` metric. Its dimension must be an internal normalized
+pathname with no query or fragment. Pagination returns complete facts only when provider exhaustion
+is proven; a configured page cap retains safe rows as `UNKNOWN` rather than claiming complete
+coverage. Every page, including an empty page, must return dimension header names exactly matching
+`date` plus the requested dimension and one metric header name exactly matching the requested
+metric. Every row must then have exactly two dimension values and one bounded metric value.
+`rowCount` must be present, bounded, and consistent on every page; neither a short page nor a count
+remembered from an earlier page can replace missing metadata. Repeated raw dimension identities
+across pages also fail exhaustion closed. Returned route dates must fall inside the requested
+calendar window. Pageview values must be non-negative integral counts, and rejected
+dates, counts, or privacy dimensions downgrade retained safe rows to `UNKNOWN`. Title, channel, and
+referrer families remain off unless individually selected in
+`ga4_dimensions`; event counts require individually configured names. Internal referrers retain a
+normalized route; external referrers retain an allowlisted domain only. Full referrer URLs, event
+parameters, client IDs, session IDs, and raw events are never facts or diagnostics. Contracts:
 <https://developers.google.com/analytics/devguides/reporting/data/v1/basics> and
 <https://developers.google.com/analytics/devguides/reporting/data/v1>.
+
+GA4 and Umami headline and route facts remain provider-labeled. Reporting compares pageviews only
+on mature calendar dates with complete evidence from both providers. After this acquisition-contract
+upgrade, a fresh successful GA4 and Umami sync is mandatory before provider pageview coverage or
+quiet zeroes can become authoritative. Fresh runs carry an explicit-pageviews marker in the existing
+ledger result-kind field; legacy `data`/`empty` rows remain untouched and fail closed, with no schema
+bump or migration. Retained facts are revalidated as finite, non-negative, integral, bounded counts
+at report time. Series and plot requests still enforce explicit-run acquisition authorization for
+requested native headline facts, but skip provider comparison construction and route-fact
+materialization; dedicated reports retain comparison behavior. Session-, token-, reset-, and
+resource-labelled opaque identities and encoded path separators are rejected by the route privacy
+boundary without entering facts or diagnostics. A conservative vocabulary permits clearly lexical
+lowercase hyphenated content slugs such as `appointment-booking` and `article-alpha`;
+arbitrary base64url-shaped hyphenated strings remain rejected.
+Provider headline and route dates, including Search Console route dates, outside their
+requested provider interval are rejected before fact construction. See
+[ADR 0005](adr/0005-provider-pageview-comparability.md) for the comparison and reconciliation
+decision.
 
 ## Google Search Console
 

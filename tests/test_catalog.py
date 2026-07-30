@@ -52,6 +52,14 @@ class CatalogTests(unittest.TestCase):
                 dimensions=(("route", "/about"),),
             )])
 
+    def test_umami_route_pageviews_are_a_distinct_non_reportable_metric(self):
+        definition = METRICS["umami.route-pageviews"]
+        self.assertEqual(definition.source, "umami")
+        self.assertEqual(definition.unit, "count")
+        self.assertEqual(definition.dimension_sets, (("route",),))
+        self.assertFalse(definition.reportable)
+        self.assertNotEqual(definition.id, METRICS["umami.route-visits"].id)
+
     def test_source_semantics_do_not_claim_unknown_provider_details(self):
         self.assertEqual(
             SOURCE_SEMANTICS["search-console"].time_basis,

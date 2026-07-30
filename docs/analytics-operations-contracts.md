@@ -103,6 +103,113 @@ Missing active evidence remains missing rather than falling back to a retained i
 selector must preserve source, metric, unit, scope, window, date basis, coverage, completeness, and
 maturity metadata.
 
+## Provider pageview comparison contract
+
+The pageview comparison is diagnostic evidence, not a canonical source selector. It retains two
+independent measures:
+
+- GA4 `google.pageviews`, with route control `google.page-path-views` sourced from
+  `screenPageViews` grouped by normalized `pagePath`; and
+- Umami `umami.pageviews`, with route control `umami.route-pageviews` sourced from
+  `metrics/expanded?type=path&field=pageviews`.
+
+Umami visits are never used as pageviews. A fixture, stale binding, alternate provider, or one
+provider's value cannot substitute for the other. The service never combines, averages, rescales,
+or silently prefers the two values.
+
+A provider date is complete only when one current-binding sync-ledger run contains the exact whole
+configured-site-local day; adjacent partial runs cannot be combined. One sync invocation may cover
+multiple site timezones: the engine projects the requested calendar dates independently onto each
+binding's configured local-midnight interval before acquisition and ledger recording. Reporting uses
+that same per-site projection for bounded fact and ledger queries, coverage, series, and comparison.
+The cell must already be
+closed, and the provider must have returned its explicit pageview series, including an explicit
+empty series for a quiet window. For GA4 and Umami, only fresh post-upgrade runs carrying the
+existing-ledger `data:explicit-pageviews-v1` or `empty:explicit-pageviews-v1` result marker can prove
+that contract. Legacy `data` and `empty` rows remain stored but cannot authorize coverage, fact
+attribution, or quiet zeroes. Upgrades therefore require a fresh successful sync; there is no schema
+bump, migration, or historical rewrite. Operational status continues to project the public
+`data`/`empty` vocabulary. A retained final headline fact contributes a value only when its
+observation timestamp falls inside exactly one successful data run, that run belongs to the current
+binding, it contains the exact fact interval, and it is the latest successful snapshot for that
+cell. Concurrent or otherwise ambiguous runs fail closed. Routes absent from a later complete
+snapshot therefore cannot be mixed back in from an older retained fact. A successful empty
+current-binding run may prove a quiet zero day, but it never makes a
+retained fact from a replaced resource eligible. Historical fact bytes remain unchanged.
+Observation boundaries and provider data-through limits still apply. A mature paired date is the
+intersection of the two providers' complete dates inside the exact requested half-open report
+window. Provider-only dates remain visible but do not enter paired totals.
+
+Each site comparison exposes:
+
+- each provider's earliest retained final headline date, data-through date, and compact complete-date
+  ranges;
+- paired, GA4-only, and Umami-only date ranges and counts, with first and last paired dates;
+- separate provider totals over paired dates only, absolute difference, and GA4-to-Umami ratio;
+- a low-volume warning when the two paired totals combine to fewer than 100 pageviews, evidence
+  state, provider semantics, and explicit coverage limits; and
+- route-to-headline reconciliation state and a bounded reason when reconciliation is withheld.
+
+When there is no paired date, the evidence state is `non_comparable` and every paired numeric
+total, difference, and ratio is null. Zero is never used to represent unavailable comparison
+evidence. If Umami's paired total is genuinely zero, the provider totals and absolute difference
+remain observations but the ratio is null.
+
+The evidence states are:
+
+- `aligned`: every paired daily value is equal;
+- `within_expected_variation`: every non-aligned paired daily ratio remains within the disclosed band;
+- `low_volume`: the paired totals combine to fewer than 100 pageviews;
+- `isolated_divergence`: divergence is limited to a minority or the only paired date;
+- `persistent_divergence`: divergence spans a majority of multiple paired dates;
+- `unknown`: exactly half of multiple paired dates diverge, or another declared interpretation rule
+  cannot classify the arithmetic safely;
+- `coverage_mismatch`: at least one paired date exists but complete source-only dates also exist;
+- `non_comparable`: no complete paired date exists.
+
+These states describe evidence only. They never declare either provider correct and never prove a
+cause for unusual traffic. Stored facts remain unchanged; suspected automated or synthetic traffic
+is not silently removed.
+
+Route reconciliation uses the same provider's headline and route pageview facts over exactly the
+provider's complete dates. It is `reconciled` only when every date has final normalized route
+facts, each fact starts and ends at that configured site's exact local calendar-day boundaries
+inside the requested half-open window, independent of the report timezone, and every daily route
+sum equals that date's headline pageviews.
+Incomplete pagination,
+rejected unsafe dimensions, absent route facts, disabled route acquisition, or a sum mismatch
+withholds reconciliation with a reason. Safe rows returned before an unproven pagination boundary
+remain facts with `UNKNOWN` completeness and cannot satisfy reconciliation.
+
+GA4 and Umami pageview values must be non-negative integral counts. Boolean, negative, fractional,
+malformed, NaN, or infinite values are rejected. Parsing bounds raw text at 128 characters,
+significant digits at 38, absolute adjusted exponent at 37, and direct integer input at 127 bits;
+ordinary scientific notation such as `1e3` remains valid. Rejected route rows make retained safe
+rows `UNKNOWN`; invalid headline pageviews fail the acquisition run. Reporting independently
+revalidates retained headline and route facts against the same finite, non-negative, integral,
+bounded domain. Daily normalized collisions are summed with exact integers and revalidated before
+persistence; an out-of-domain sum is omitted and makes the acquisition non-final. Reporting uses
+exact integer accumulation for daily cells and paired arithmetic, and separately caps downstream
+multi-date totals at 64 digits. An invalid retained fact or daily sum makes its cell incomplete and
+cannot be converted to zero. The 0.8 and 1.25 evidence thresholds use exact integer cross-products,
+not rounded Decimal division.
+
+Rows that normalize to the same route are summed before persistence so normalization cannot discard
+pageviews through fact-identity collisions. Reserved identity labels reject opaque UUID, long-hex,
+JWT/dotted, padded or unpadded base64, and encoded-separator tokens. A conservative lexical
+vocabulary retains clear lowercase content slugs such as `appointment-booking` and
+`article-alpha` without admitting arbitrary base64url-shaped hyphenated strings.
+High-cardinality route facts are queried only for the exact current reconciliation window. Series
+and plot requests neither query nor materialize provider route metrics and do not execute comparison
+construction; they still enforce the post-cutover acquisition marker for requested native headline
+facts. Dedicated report and comparison paths retain the bounded current-window route query and
+headline-only history query.
+
+HTML, JSON, and report CSV are projections of this one model. Every surface preserves compact
+discontinuous ranges; a first and last date never imply that intervening dates are present. CSV
+comparison rows use
+`record_type=provider_comparison`; metric rows remain `record_type=metric`.
+
 ## Goal contract
 
 Supported goal types are `page`, `event`, `form`, `download`, `outbound_action`, `revenue`, and

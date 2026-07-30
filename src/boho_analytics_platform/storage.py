@@ -18,6 +18,14 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Callable
 
+from .contracts import (
+    PAGEVIEW_ACQUISITION_SOURCES,
+    PAGEVIEW_DATA_RESULT_KIND,
+    PAGEVIEW_EMPTY_RESULT_KIND,
+    explicit_pageview_result_kind,
+    mark_pageview_result_kind,
+    public_result_kind,
+)
 from .models import (
     AnalyticsDefinition,
     CapabilitySnapshot,
@@ -1173,6 +1181,13 @@ class SQLiteMetricStore:
     ) -> None:
         safe_message = message[:300] if message else None
         with self.connect() as db:
+            source_row = db.execute(
+                "SELECT source FROM sync_runs WHERE id=?", (run_id,)
+            ).fetchone()
+            stored_result_kind = mark_pageview_result_kind(
+                source_row["source"] if source_row is not None else None,
+                result_kind,
+            ) if status == "success" else result_kind
             db.execute(
                 """UPDATE sync_runs SET finished_at=?,status=?,points_written=?,error_category=?,
                   error_message=?,result_kind=?,data_through=? WHERE id=?""",
@@ -1182,7 +1197,7 @@ class SQLiteMetricStore:
                     points,
                     category,
                     safe_message,
-                    result_kind,
+                    stored_result_kind,
                     _iso(data_through) if data_through else None,
                     run_id,
                 ),
@@ -1193,41 +1208,45 @@ class SQLiteMetricStore:
         *,
         site_ids: Sequence[str],
         sources: Sequence[str],
-        binding_keys: Sequence[str],
+        binding_keys: Sequence[str] | None,
         window: QueryWindow,
     ) -> list[dict[str, object]]:
-        """Return successful acquisition intervals for currently configured bindings.
+        """Return successful acquisition intervals, optionally across all bindings.
 
         A successful provider query is distinct from the presence of events. The
         interval ledger lets reporting represent query-proven quiet dates without
         manufacturing metric facts or accepting stale runs from removed bindings.
         """
 
-        if not site_ids or not sources or not binding_keys:
+        if not site_ids or not sources or binding_keys == ():
             return []
         sites = ",".join("?" for _ in site_ids)
         provider_sources = ",".join("?" for _ in sources)
-        bindings = ",".join("?" for _ in binding_keys)
+        binding_clause = ""
+        params = [
+            PAGEVIEW_DATA_RESULT_KIND,
+            PAGEVIEW_EMPTY_RESULT_KIND,
+            *site_ids,
+            *sources,
+        ]
+        if binding_keys is not None:
+            bindings = ",".join("?" for _ in binding_keys)
+            binding_clause = f" AND binding_key IN ({bindings})"
+            params.extend(binding_keys)
         sql = f"""SELECT site_id,source,binding_key,window_start,window_end,
-                         result_kind,data_through,finished_at
+                         result_kind,data_through,started_at,finished_at
                     FROM sync_runs
                    WHERE status='success'
-                     AND result_kind IN ('data','empty')
+                     AND result_kind IN ('data','empty',?,?)
                      AND site_id IN ({sites})
                      AND source IN ({provider_sources})
-                     AND binding_key IN ({bindings})
+                     {binding_clause}
                      AND window_start IS NOT NULL
                      AND window_end IS NOT NULL
                      AND window_start < ?
                      AND window_end > ?
                 ORDER BY window_start,window_end"""
-        params = [
-            *site_ids,
-            *sources,
-            *binding_keys,
-            _iso(window.end),
-            _iso(window.start),
-        ]
+        params.extend((_iso(window.end), _iso(window.start)))
         with self.connect(readonly=True) as db:
             rows = db.execute(sql, params).fetchall()
         return [
@@ -1239,9 +1258,17 @@ class SQLiteMetricStore:
                 "window_end": _parse(row["window_end"]),
                 "result_kind": row["result_kind"],
                 "data_through": _parse(row["data_through"]) if row["data_through"] else None,
+                "started_at": _parse(row["started_at"]),
                 "finished_at": _parse(row["finished_at"]) if row["finished_at"] else None,
             }
             for row in rows
+            if (
+                explicit_pageview_result_kind(row["source"], row["result_kind"])
+                or (
+                    row["source"] not in PAGEVIEW_ACQUISITION_SOURCES
+                    and row["result_kind"] in {"data", "empty"}
+                )
+            )
         ]
 
     def query_latest_sync_status(
@@ -1287,7 +1314,7 @@ class SQLiteMetricStore:
                 "status": row["status"],
                 "points_written": int(row["points_written"]),
                 "error_category": row["error_category"],
-                "result_kind": row["result_kind"],
+                "result_kind": public_result_kind(row["result_kind"]),
                 "data_through": row["data_through"],
             }
             for row in rows

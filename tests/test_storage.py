@@ -10,6 +10,7 @@ from importlib.resources import files
 from pathlib import Path
 from unittest.mock import patch
 
+from boho_analytics_platform.contracts import PAGEVIEW_DATA_RESULT_KIND
 from boho_analytics_platform.models import (
     CapabilitySnapshot,
     Completeness,
@@ -75,6 +76,51 @@ class StorageTests(unittest.TestCase):
             "site:connection:website:demo", "fixture", window.start.isoformat(),
             window.end.isoformat(), "data", data_through.isoformat(),
         ))
+
+    def test_pageview_ledger_cutover_requires_fresh_explicit_contract_proof(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 3, tzinfo=UTC),
+            "UTC",
+        )
+        key = "site:connection:website:demo"
+        legacy = self.store.start_run(
+            "connection", "site", binding_key=key,
+            source="umami", window=window,
+        )
+        with self.store.connect() as db:
+            db.execute(
+                """UPDATE sync_runs
+                      SET finished_at=?,status='success',result_kind='data'
+                    WHERE id=?""",
+                (datetime.now(UTC).isoformat(), legacy),
+            )
+        fresh = self.store.start_run(
+            "connection", "site", binding_key=key,
+            source="umami", window=window,
+        )
+        self.store.finish_run(fresh, "success", points=1, result_kind="data")
+
+        with self.store.connect(readonly=True) as db:
+            raw_kinds = {
+                row["id"]: row["result_kind"]
+                for row in db.execute(
+                    "SELECT id,result_kind FROM sync_runs WHERE id IN (?,?)",
+                    (legacy, fresh),
+                )
+            }
+        coverage = self.store.query_sync_coverage(
+            site_ids=["site"], sources=["umami"], binding_keys=[key],
+            window=window,
+        )
+        latest = self.store.query_latest_sync_status(binding_keys=[key])
+
+        self.assertEqual(raw_kinds[legacy], "data")
+        self.assertEqual(raw_kinds[fresh], PAGEVIEW_DATA_RESULT_KIND)
+        self.assertEqual([row["result_kind"] for row in coverage], [
+            PAGEVIEW_DATA_RESULT_KIND,
+        ])
+        self.assertEqual(latest[0]["result_kind"], "data")
 
     def test_query_sync_coverage_returns_only_successful_current_bindings(self):
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 4, tzinfo=UTC), "UTC")

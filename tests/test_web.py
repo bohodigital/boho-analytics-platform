@@ -16,6 +16,7 @@ from boho_analytics_platform.config import load_config
 from boho_analytics_platform.connectors.common import total_point
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
+from boho_analytics_platform.reporting import ReportService
 from boho_analytics_platform.storage import SQLiteMetricStore
 from boho_analytics_platform.web import (
     PORTFOLIO_SUMMARY,
@@ -23,6 +24,7 @@ from boho_analytics_platform.web import (
     _chart_html,
     _decision_badge,
     _forms_html,
+    _provider_comparisons_html,
     _summary_cards,
     handler_factory,
 )
@@ -53,6 +55,65 @@ class WebTests(unittest.TestCase):
         })
         self.assertIn("evidence agree for the complete selected scope", complete)
 
+    def test_provider_comparison_html_discloses_discontinuous_date_ranges(self):
+        dates = {
+            "count": 2,
+            "first": "2026-07-01",
+            "last": "2026-07-03",
+            "ranges": [
+                {"start": "2026-07-01", "end": "2026-07-01"},
+                {"start": "2026-07-03", "end": "2026-07-03"},
+            ],
+        }
+        route = {
+            "status": "withheld",
+            "reason": "route_analytics_not_enabled",
+        }
+        semantics = {
+            "pageview_definition": "pageviews",
+            "time_basis": "UTC",
+            "sampling": "none",
+            "data_state": "final",
+        }
+        provider = {
+            "complete_dates": dates,
+            "first_available_date": "2026-07-01",
+            "data_through": "2026-07-03",
+            "route_reconciliation": route,
+            "semantics": semantics,
+        }
+        comparison = {
+            "site_id": "example-site",
+            "evidence_state": "aligned",
+            "low_volume_warning": False,
+            "google_only_dates": {"count": 0, "first": None, "last": None, "ranges": []},
+            "umami_only_dates": {"count": 0, "first": None, "last": None, "ranges": []},
+            "paired_dates": dates,
+            "first_paired_date": "2026-07-01",
+            "last_paired_date": "2026-07-03",
+            "totals": {
+                "google_pageviews": 20,
+                "umami_pageviews": 20,
+                "absolute_difference": 0,
+                "google_to_umami_ratio": 1,
+            },
+            "providers": {
+                "google-analytics": provider,
+                "umami": provider,
+            },
+            "semantics": [],
+            "coverage_limits": [],
+        }
+
+        html = _provider_comparisons_html(
+            {"provider_comparisons": [comparison]},
+            {"example-site": "Example Site"},
+        )
+
+        self.assertNotIn("2 (2026-07-01 to 2026-07-03)", html)
+        self.assertIn("2026-07-01 to 2026-07-01", html)
+        self.assertIn("2026-07-03 to 2026-07-03", html)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup); root = Path(self.temporary.name)
         fixture = root / "fixture.json"; write_fixture(fixture); path = root / "platform.toml"; path.write_text(config_text(root / "state.db", fixture), encoding="utf-8")
@@ -81,6 +142,10 @@ class WebTests(unittest.TestCase):
         self.assertIn('id="geography-map"', body)
         self.assertIn("World visitor geography", body)
         self.assertIn("County boundaries are orientation only", body)
+        self.assertIn("Provider pageview comparison", body)
+        self.assertIn('aria-label="GA4 and Umami pageview comparability"', body)
+        self.assertIn("Non comparable", body)
+        self.assertNotIn(">0 paired dates<", body)
 
     def test_geography_api_and_local_map_assets_are_privacy_bounded(self):
         self.store.upsert([total_point(
@@ -142,6 +207,14 @@ class WebTests(unittest.TestCase):
         )[2])
         self.assertIn("decision_support", payload)
         self.assertTrue(payload["decision_support"]["measurement_gaps"])
+        self.assertEqual(
+            payload["provider_comparisons"][0]["evidence_state"],
+            "non_comparable",
+        )
+        csv_body = self.request(
+            "/api/v1/report.csv?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2]
+        self.assertIn("provider_comparison", csv_body)
 
     def test_report_api_projects_safe_operational_capabilities(self):
         self.store.save_capability(CapabilitySnapshot(
@@ -246,6 +319,41 @@ class WebTests(unittest.TestCase):
         self.assertIn('class="panel control-panel" open', body)
         self.assertNotIn('class="dashboard-primary"', body)
         self.assertIn('style=line', body)
+
+    def test_series_and_plot_requests_skip_provider_route_comparison_work(self):
+        route_metrics = {"google.page-path-views", "umami.route-pageviews"}
+        paths = (
+            "/api/v1/series?report=summary&source=umami&metric=umami.pageviews"
+            "&start=2026-07-01&end=2026-07-02",
+            "/?report=summary&view=plot&source=umami&metric=umami.pageviews"
+            "&start=2026-07-01&end=2026-07-02",
+        )
+        for path in paths:
+            calls = []
+            original_query = self.store.query
+
+            def query_spy(**kwargs):
+                calls.append(tuple(kwargs["metric_ids"]))
+                return original_query(**kwargs)
+
+            with self.subTest(path=path), patch.object(
+                self.store, "query", side_effect=query_spy
+            ), patch.object(
+                ReportService,
+                "_provider_comparisons",
+                side_effect=AssertionError("provider comparison executed"),
+            ):
+                self.assertEqual(self.request(path)[0], 200)
+            self.assertFalse(
+                route_metrics.intersection(
+                    metric for call in calls for metric in call
+                )
+            )
+
+        report_payload = json.loads(self.request(
+            "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2])
+        self.assertEqual(len(report_payload["provider_comparisons"]), 1)
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 

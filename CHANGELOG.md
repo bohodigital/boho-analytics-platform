@@ -7,6 +7,15 @@ the first stable release.
 
 ### Added
 
+- Added provider-correct route pageview acquisition: GA4 uses `pagePath` with
+  `screenPageViews`, while Umami uses paginated `metrics/expanded` requests with
+  `type=path` and `field=pageviews`. Safe rows from an unproven pagination boundary remain
+  `UNKNOWN`; route visits are never relabeled as pageviews.
+- Added GA4/Umami pageview comparisons over mature complete overlapping dates only, with separate
+  provider coverage, source-only dates, paired totals, difference, ratio, low-volume and evidence
+  states, exact route-to-headline reconciliation, and explicit withholding reasons. HTML, JSON,
+  and CSV use the same non-blended model; no paired period is non-comparable with null totals.
+
 - Added the schema-5 immutable Analytics Operations definition registry: three additive tables,
   closed type-specific validation, canonical content and record hashes, retained activation and
   append-only retirement history, explicit retirement/reactivation, package-wide transactions,
@@ -38,7 +47,40 @@ the first stable release.
   `HEAD`, exported trees require an independently supplied tree ID, and modified, staged, deleted,
   or additional allowlisted content now fails closed.
 
+### Fixed
+
+- Closed the provider-comparability acceptance findings: exact-half multi-date divergence is
+  `unknown`; GA4 pagination requires exact requested headers, row arity, and bounded values; Umami
+  detects overlapping raw page identities without double-counting; and retained invalid pageview
+  facts make report cells incomplete instead of zero.
+- Added a fail-closed, no-schema-bump pageview acquisition cutover. Fresh GA4 and Umami syncs mark the
+  existing ledger result-kind field, while untouched legacy `data`/`empty` rows cannot authorize
+  coverage, attribution, or quiet zeroes. Series and plot paths skip route materialization and
+  provider-comparison attribution.
+- Bounded provider count parsing by raw length, significant digits, exponent, and integer size;
+  made normalized collision, daily, paired, and ratio arithmetic exact and revalidated; and refined
+  reserved-label privacy filtering with a conservative lexical vocabulary that admits clear content
+  slugs while rejecting opaque UUID, hex, JWT/dotted, base64, and encoded-separator tokens.
+- Projected requested calendar dates into each binding's configured timezone across sync and
+  reporting, so mixed-timezone sites retain exact local-midnight provider/ledger intervals and
+  matching bounded fact queries, coverage cells, series labels, and comparisons.
+- Failed provider acquisition closed when GA4 omits `rowCount`, when Umami availability does not
+  contain the exact requested interval, or when a provider returns an out-of-window date or an
+  invalid pageview count. Retained safe route rows remain `UNKNOWN` whenever completeness is not
+  proven.
+- Rejected opaque identity-bearing route segments and encoded separators without retaining them,
+  required explicit pageview series and exact site-local acquisition windows, rejected ambiguous or
+  adjacent-partial binding-run evidence, rejected out-of-window headline and Search Console route
+  dates, excluded facts that cannot be attributed to the latest current-binding snapshot, prevented
+  retained stale routes from entering a later snapshot, and required mature exact site-local daily cells for comparison and route
+  reconciliation without rewriting historical facts or changing the schema.
+- Preserved discontinuous provider comparison ranges in HTML so its date disclosures remain aligned
+  with the JSON, CSV, and CLI comparison model.
+
 ### Documentation
+
+- Recorded the provider pageview acquisition, mature-overlap comparison, evidence vocabulary,
+  and reconciliation rules in the provider guide, operations contract, and ADR 0005.
 
 - Defined reusable Analytics Operations contracts, a three-table additive schema-5 foundation,
   provider compatibility rules, trusted active-fact selection, recipient privacy, rollback, and

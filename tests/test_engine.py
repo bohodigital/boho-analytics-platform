@@ -68,6 +68,77 @@ metric_groups = ["traffic"]
                 "success", "empty", window.start.isoformat(), window.end.isoformat(), None,
             ))
 
+    def test_sync_projects_requested_dates_into_each_site_timezone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "fixture.json"
+            fixture.write_text(
+                '{"points":['
+                '{"resource_id":"demo","date":"2026-07-01",'
+                '"metric":"umami.pageviews","value":1},'
+                '{"resource_id":"tokyo","date":"2026-07-01",'
+                '"metric":"umami.pageviews","value":2}]}',
+                encoding="utf-8",
+            )
+            text = config_text(root / "state.db", fixture)
+            second_site = '''[[sites]]
+id = "tokyo-site"
+client_id = "example-client"
+name = "Tokyo Site"
+canonical_url = "https://tokyo.example.com"
+timezone = "Asia/Tokyo"
+'''
+            second_binding = '''[[bindings]]
+site_id = "tokyo-site"
+connection_id = "example-connection"
+resource_type = "website"
+resource_id = "tokyo"
+metric_groups = ["traffic"]
+'''
+            text = text.replace(
+                "[[connections]]", second_site + "[[connections]]", 1
+            )
+            text = text.replace(
+                "[[reports]]", second_binding + "[[reports]]", 1
+            )
+            path = root / "platform.toml"
+            path.write_text(text, encoding="utf-8")
+            config = load_config(path)
+            store = SQLiteMetricStore(root / "state.db")
+            store.initialize()
+            window = QueryWindow(
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                "UTC",
+            )
+
+            results = SyncEngine(config, store).sync(window)
+
+            self.assertEqual(
+                [result.status for result in results], ["success", "success"]
+            )
+            with store.connect(readonly=True) as db:
+                runs = db.execute(
+                    "SELECT site_id,window_start,window_end "
+                    "FROM sync_runs ORDER BY site_id"
+                ).fetchall()
+            self.assertEqual(
+                tuple(runs[0]),
+                (
+                    "example-site",
+                    "2026-07-01T00:00:00+00:00",
+                    "2026-07-02T00:00:00+00:00",
+                ),
+            )
+            self.assertEqual(
+                tuple(runs[1]),
+                (
+                    "tokyo-site",
+                    "2026-06-30T15:00:00+00:00",
+                    "2026-07-01T15:00:00+00:00",
+                ),
+            )
+
     def test_unknown_or_unbound_connection_selection_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); fixture = root / "fixture.json"; write_fixture(fixture)

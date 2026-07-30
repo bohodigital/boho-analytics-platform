@@ -21,6 +21,44 @@ from .models import (
 )
 
 
+PAGEVIEW_ACQUISITION_SOURCES = frozenset({"google-analytics", "umami"})
+PAGEVIEW_DATA_RESULT_KIND = "data:explicit-pageviews-v1"
+PAGEVIEW_EMPTY_RESULT_KIND = "empty:explicit-pageviews-v1"
+PAGEVIEW_RESULT_KINDS = frozenset({
+    PAGEVIEW_DATA_RESULT_KIND,
+    PAGEVIEW_EMPTY_RESULT_KIND,
+})
+
+
+def explicit_pageview_result_kind(source: object, result_kind: object) -> bool:
+    """Return whether a provider run proves the post-upgrade pageview contract."""
+
+    return (
+        source in PAGEVIEW_ACQUISITION_SOURCES
+        and result_kind in PAGEVIEW_RESULT_KINDS
+    )
+
+
+def mark_pageview_result_kind(source: object, result_kind: str | None) -> str | None:
+    """Mark only fresh successful pageview-provider acquisitions."""
+
+    if source not in PAGEVIEW_ACQUISITION_SOURCES:
+        return result_kind
+    return {
+        "data": PAGEVIEW_DATA_RESULT_KIND,
+        "empty": PAGEVIEW_EMPTY_RESULT_KIND,
+    }.get(result_kind, result_kind)
+
+
+def public_result_kind(result_kind: object) -> object:
+    """Keep operational status output stable while the ledger carries proof."""
+
+    return {
+        PAGEVIEW_DATA_RESULT_KIND: "data",
+        PAGEVIEW_EMPTY_RESULT_KIND: "empty",
+    }.get(result_kind, result_kind)
+
+
 @runtime_checkable
 class CredentialLease(Protocol):
     """Opaque, bounded access to provider credential fields."""

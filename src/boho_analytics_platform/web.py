@@ -1705,6 +1705,135 @@ def _metrics_table(result, site_names):
     return "".join(rows)
 
 
+def _provider_comparisons_html(result, site_names):
+    comparisons = result.get("provider_comparisons", [])
+    if not comparisons:
+        return ""
+
+    rows = []
+    for comparison in comparisons:
+        google = comparison["providers"]["google-analytics"]
+        umami = comparison["providers"]["umami"]
+        paired = comparison["paired_dates"]["count"]
+        paired_label = (
+            f"{paired} paired date" if paired == 1
+            else f"{paired} paired dates" if paired
+            else "No paired dates"
+        )
+        state = comparison["evidence_state"].replace("_", " ").capitalize()
+        totals = comparison["totals"]
+        if totals["google_pageviews"] is None:
+            totals_label = "Withheld"
+        else:
+            ratio = totals["google_to_umami_ratio"]
+            ratio_label = "undefined" if ratio is None else f"{ratio:g}×"
+            totals_label = (
+                f"GA4 {totals['google_pageviews']:,}; "
+                f"Umami {totals['umami_pageviews']:,}; "
+                f"absolute difference {totals['absolute_difference']:,}; "
+                f"GA4-to-Umami ratio {ratio_label}"
+            )
+        low_volume = (
+            '<span class="source-chip">Low volume</span>'
+            if comparison["low_volume_warning"] else ""
+        )
+
+        def range_span(summary):
+            return "; ".join(
+                f"{item['start']} to {item['end']}"
+                for item in summary.get("ranges", [])
+            ) or "none"
+
+        def date_span(summary):
+            if not summary["count"]:
+                return "none"
+            return f"{summary['count']} ({range_span(summary)})"
+
+        def provider_dates(provider):
+            complete = provider["complete_dates"]
+            return (
+                f"{date_span(complete)} complete dates; "
+                f"first available {provider['first_available_date'] or 'unknown'}; "
+                f"data through {provider['data_through'] or 'unknown'}"
+            )
+
+        def route_status(provider):
+            reconciliation = provider["route_reconciliation"]
+            label = reconciliation["status"].replace("_", " ").capitalize()
+            if reconciliation["reason"]:
+                label += f" ({reconciliation['reason'].replace('_', ' ')})"
+            return label
+
+        rows.append(
+            "<tr>"
+            f'<th scope="row" class="metric-name">{_e(site_names.get(comparison["site_id"], comparison["site_id"]))}</th>'
+            f"<td><b>{_e(state)}</b>{low_volume}<br>"
+            f"GA4-only {date_span(comparison['google_only_dates'])}; "
+            f"Umami-only {date_span(comparison['umami_only_dates'])}</td>"
+            f"<td>{_e(provider_dates(google))}</td>"
+            f"<td>{_e(provider_dates(umami))}</td>"
+            f"<td>{_e(paired_label)}<br>"
+            f"{_e(range_span(comparison['paired_dates']))}</td>"
+            f"<td>{_e(totals_label)}</td>"
+            f"<td>GA4: {_e(route_status(google))}<br>"
+            f"Umami: {_e(route_status(umami))}</td>"
+            "</tr>"
+        )
+
+    semantics = next(
+        (
+            comparison.get("semantics", [])
+            for comparison in comparisons
+            if comparison.get("semantics")
+        ),
+        [],
+    )
+    provider_semantics = []
+    first_providers = comparisons[0]["providers"]
+    for label, key in (
+        ("GA4", "google-analytics"),
+        ("Umami", "umami"),
+    ):
+        semantics_record = first_providers[key]["semantics"]
+        provider_semantics.append(
+            f"{label}: {semantics_record['pageview_definition']} "
+            f"{semantics_record['time_basis']}; {semantics_record['sampling']}; "
+            f"{semantics_record['data_state']}."
+        )
+    limits = next(
+        (
+            comparison.get("coverage_limits", [])
+            for comparison in comparisons
+            if comparison.get("coverage_limits")
+        ),
+        [],
+    )
+    disclosure_items = "".join(
+        f"<li>{_e(item)}</li>" for item in (*semantics, *provider_semantics, *limits)
+    )
+    return (
+        '<section class="panel table-panel" '
+        'aria-label="GA4 and Umami pageview comparability">'
+        '<div class="panel-heading"><div><h2>Provider pageview comparison</h2>'
+        '<p>Mature complete overlapping dates only. Providers remain separate '
+        'and neither is declared correct.</p></div></div>'
+        '<div class="table-scroll"><table>'
+        '<caption class="sr-only">GA4 and Umami pageview comparison by site</caption>'
+        '<thead><tr><th scope="col">Site</th><th scope="col">Evidence</th>'
+        '<th scope="col">GA4 coverage</th><th scope="col">Umami coverage</th>'
+        '<th scope="col">Overlap</th><th scope="col">Paired totals</th>'
+        '<th scope="col">Route reconciliation</th></tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table></div>"
+        + (
+            "<details><summary>Semantics and coverage limits</summary><ul>"
+            + disclosure_items + "</ul></details>"
+            if disclosure_items else ""
+        )
+        + "</section>"
+    )
+
+
 def _available_sites_by_source(config, report) -> dict[str, set[str]]:
     connection_sources = {item.id: item.provider for item in config.connections}
     report_sources = {METRICS[metric].source for metric in report.metric_ids}
@@ -3268,6 +3397,7 @@ def handler_factory(config, store, credentials=None):
         def _request(
             self, query, *, force_overview=False,
             include_decision_support=True,
+            include_provider_comparisons=True,
         ):
             report_id = query.get("report", [config.reports[0].id])[0]
             report = next((item for item in config.reports if item.id == report_id), None)
@@ -3294,6 +3424,7 @@ def handler_factory(config, store, credentials=None):
             return reports.render(
                 report_id, window, subreport_id, site_id,
                 include_decision_support=include_decision_support,
+                include_provider_comparisons=include_provider_comparisons,
             ), report
 
         def _geography_payload(self, query):
@@ -3326,6 +3457,7 @@ def handler_factory(config, store, credentials=None):
                 query,
                 force_overview=is_plot,
                 include_decision_support=False,
+                include_provider_comparisons=False,
             )
             candidates = tuple(
                 metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
@@ -3504,6 +3636,7 @@ def handler_factory(config, store, credentials=None):
                 query,
                 force_overview=is_plot,
                 include_decision_support=not is_plot,
+                include_provider_comparisons=not is_plot,
             )
             start = result["window"]["start"][:10]
             end = result["window"]["end"][:10]
@@ -3724,6 +3857,9 @@ def handler_factory(config, store, credentials=None):
                 series_params["compare"] = "1"
             series_url = "/api/v1/series?" + urlencode(series_params)
             summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            provider_comparison_html = (
+                "" if is_plot else _provider_comparisons_html(result, site_names)
+            )
             attention_html = (
                 "" if is_plot
                 else _decision_overview_html(result.get("decision_support"))
@@ -3783,7 +3919,7 @@ def handler_factory(config, store, credentials=None):
 {source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{geography_html}{decision_html}{supporting_html}
+{_warnings_html(result['warnings'])}{summary_html}{primary_content}{provider_comparison_html}{geography_html}{decision_html}{supporting_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

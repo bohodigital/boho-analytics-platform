@@ -3,13 +3,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from types import SimpleNamespace
 
-from boho_analytics_platform.config import load_config
+from boho_analytics_platform.config import load_config, route_analytics_options
 from boho_analytics_platform.connectors.cloudflare import CloudflareAnalyticsConnector
-from boho_analytics_platform.connectors.common import normalize_route, sanitize_referrer
+from boho_analytics_platform.connectors.common import (
+    aggregate_dimension_values,
+    nonnegative_integral_count,
+    normalize_route,
+    sanitize_referrer,
+    site_local_daily_bounds,
+)
 from boho_analytics_platform.connectors.google import GoogleAnalyticsConnector, SearchConsoleConnector
 from boho_analytics_platform.connectors.umami import UmamiConnector
 from boho_analytics_platform.contracts import SyncRequest
@@ -23,7 +31,25 @@ from support import config_text, write_fixture
 class QueueHttp:
     def __init__(self, responses): self.responses = list(responses); self.calls = []
     def request(self, method, url, *, headers=None, body=None):
-        self.calls.append((method, url, headers, body)); return self.responses.pop(0)
+        self.calls.append((method, url, headers, body))
+        response = self.responses.pop(0)
+        if (
+            isinstance(response, dict)
+            and isinstance(body, dict)
+            and body.get("returnPropertyQuota") is True
+            and "dimensionHeaders" not in response
+            and "metricHeaders" not in response
+        ):
+            response = {
+                **response,
+                "dimensionHeaders": [
+                    {"name": item["name"]} for item in body["dimensions"]
+                ],
+                "metricHeaders": [
+                    {"name": item["name"]} for item in body["metrics"]
+                ],
+            }
+        return response
 
 
 class ProviderConnectorTests(unittest.TestCase):
@@ -72,6 +98,277 @@ class ProviderConnectorTests(unittest.TestCase):
             sanitize_referrer("https://outside.example/form?email=a@example.com", "https://example.com", approved_domains=("outside.example",)),
             {"referrer_domain": "outside.example"},
         )
+        for unsafe_dimension in (
+            "/products?campaign=test",
+            "/products#details",
+            "https://example.com/products",
+            "relative/path",
+            "/bad\u0085route",
+            "/bad%C2%85route",
+        ):
+            with self.subTest(path_only=unsafe_dimension):
+                self.assertIsNone(
+                    normalize_route(
+                        unsafe_dimension,
+                        "https://example.com",
+                        path_only=True,
+                    )
+                )
+        self.assertEqual(
+            normalize_route("/products", "https://example.com", path_only=True),
+            "/products",
+        )
+
+        for unsafe_identity_route in (
+            "/session/abcdefghijklmnop",
+            "/session/abcdefghijkl.mnop",
+            "/session/abc.def.ghi.jkl",
+            "/sessions/0123456789abcdef",
+            "/resource/550e8400e29b41d4a716446655440000",
+            "/token/abcdefghijklmnop==",
+            "/token/abcd%2Fefghijklmnopq==",
+        ):
+            with self.subTest(unsafe_identity_route=unsafe_identity_route):
+                self.assertIsNone(
+                    normalize_route(
+                        unsafe_identity_route,
+                        "https://example.com",
+                        path_only=True,
+                    )
+                )
+        self.assertEqual(
+            normalize_route(
+                "/guides/abcdefghijklmnop",
+                "https://example.com",
+                path_only=True,
+            ),
+            "/guides/abcdefghijklmnop",
+        )
+        self.assertEqual(
+            normalize_route(
+                "/resources/article-alpha",
+                "https://example.com",
+                path_only=True,
+            ),
+            "/resources/article-alpha",
+        )
+        for lexical_route in (
+            "/session/appointment-booking",
+            "/resource/article-alpha",
+        ):
+            with self.subTest(lexical_route=lexical_route):
+                self.assertEqual(
+                    normalize_route(
+                        lexical_route,
+                        "https://example.com",
+                        path_only=True,
+                    ),
+                    lexical_route,
+                )
+        for opaque_route in (
+            "/session/550e8400-e29b-41d4-a716-446655440000",
+            "/session/0123456789abcdef",
+            "/session/deadbeef-deadbeef",
+            "/token/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.signature",
+            "/token/YWJjZGVmZ2hpamtsbW5vcA==",
+            "/token/YWJjZGVmZ2hpamtsbW5vcA",
+            "/token/abcdefghijk-lmnopqrs",
+        ):
+            with self.subTest(opaque_route=opaque_route):
+                self.assertIsNone(
+                    normalize_route(
+                        opaque_route,
+                        "https://example.com",
+                        path_only=True,
+                    )
+                )
+
+    def test_pageview_count_domain_is_nonnegative_and_integral(self):
+        accepted = (
+            (0, "0"),
+            (1, "1"),
+            (1.0, "1.0"),
+            ("2", "2"),
+            ("1e3", "1E+3"),
+        )
+        for value, expected in accepted:
+            with self.subTest(accepted=value):
+                self.assertEqual(str(nonnegative_integral_count(value)), expected)
+        for value in (
+            True,
+            False,
+            -1,
+            -0.5,
+            1.5,
+            "-1",
+            "1.5",
+            "malformed",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            None,
+        ):
+            with self.subTest(rejected=value):
+                self.assertIsNone(nonnegative_integral_count(value))
+        for amplified in (
+            "1e1000000",
+            "9" * 5000,
+            "1." + "0" * 5000,
+            10 ** 1000,
+        ):
+            with self.subTest(amplified=type(amplified).__name__):
+                self.assertIsNone(nonnegative_integral_count(amplified))
+
+    def test_normalized_count_collisions_are_exact_and_rebounded(self):
+        maximum = Decimal("9" * 38)
+        rows, rejected = aggregate_dimension_values(
+            [(date(2026, 7, 1), {"route": "/pricing"}, maximum)],
+            integral=True,
+        )
+        self.assertFalse(rejected)
+        self.assertEqual(rows[0][2], maximum)
+
+        rows, rejected = aggregate_dimension_values(
+            [
+                (date(2026, 7, 1), {"route": "/pricing"}, Decimal("9e37")),
+                (date(2026, 7, 1), {"route": "/pricing"}, Decimal("9e37")),
+            ],
+            integral=True,
+        )
+        self.assertEqual(rows, [])
+        self.assertTrue(rejected)
+
+    def test_headline_pageview_series_must_be_explicit(self):
+        ga_config = self.config("google-analytics")
+        with self.assertRaisesRegex(ValueError, "pageview series"):
+            list(GoogleAnalyticsConnector(
+                ga_config,
+                QueueHttp([{
+                    "metadata": {"timeZone": "UTC"},
+                    "metricHeaders": [{"name": "sessions"}],
+                    "rows": [],
+                }]),
+            ).collect(
+                ga_config.connections[0],
+                MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(ga_config.bindings[0], self.window, ()),
+            ))
+
+        umami_config = self.config(
+            "umami", 'base_url = "https://analytics.example.invalid"'
+        )
+        with self.assertRaisesRegex(ValueError, "pageview series"):
+            list(UmamiConnector(
+                umami_config, QueueHttp([{"sessions": []}])
+            ).collect(
+                umami_config.connections[0],
+                MemoryCredentialLease({"token": b"test"}),
+                SyncRequest(umami_config.bindings[0], self.window, ()),
+            ))
+
+    def test_site_local_daily_bounds_reject_ambiguous_midnight_fold(self):
+        timezone = "America/Havana"
+        exact = QueryWindow(
+            datetime(2026, 11, 1, 4, tzinfo=UTC),
+            datetime(2026, 11, 2, 5, tzinfo=UTC),
+            "UTC",
+        )
+        start, end = site_local_daily_bounds(exact, timezone)
+        self.assertEqual(end.astimezone(UTC) - start.astimezone(UTC), timedelta(hours=25))
+        self.assertEqual(start.fold, 0)
+
+        clipped = QueryWindow(
+            datetime(2026, 11, 1, 5, tzinfo=UTC),
+            datetime(2026, 11, 2, 5, tzinfo=UTC),
+            "UTC",
+        )
+        with self.assertRaisesRegex(ValueError, "whole site-local days"):
+            site_local_daily_bounds(clipped, timezone)
+
+        search_config = self.config("search-console", timezone=timezone)
+        object.__setattr__(search_config.bindings[0], "options", {
+            "route_analytics": {"enabled": True}
+        })
+        with self.assertRaisesRegex(ValueError, "whole site-local days"):
+            list(SearchConsoleConnector(
+                search_config, QueueHttp([])
+            ).collect(
+                search_config.connections[0],
+                MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(search_config.bindings[0], clipped, ()),
+            ))
+
+    def test_provider_headlines_use_exact_site_local_daily_window(self):
+        timezone = "Asia/Tokyo"
+        window = QueryWindow(
+            datetime(2026, 6, 30, 15, tzinfo=UTC),
+            datetime(2026, 7, 1, 15, tzinfo=UTC),
+            "UTC",
+        )
+        ga_config = self.config("google-analytics", timezone=timezone)
+        ga_http = QueueHttp([
+            {
+                "metadata": {"timeZone": timezone},
+                "metricHeaders": [{"name": "screenPageViews"}],
+                "rows": [],
+            },
+            {
+                "metadata": {"timeZone": timezone},
+                "metricHeaders": [{"name": "sessions"}],
+                "rows": [],
+            },
+        ])
+        list(GoogleAnalyticsConnector(ga_config, ga_http).collect(
+            ga_config.connections[0],
+            MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(ga_config.bindings[0], window, ()),
+        ))
+        self.assertEqual(
+            ga_http.calls[0][3]["dateRanges"],
+            [{"startDate": "2026-07-01", "endDate": "2026-07-01"}],
+        )
+        self.assertEqual(
+            ga_http.calls[1][3]["dateRanges"],
+            [{"startDate": "2026-07-01", "endDate": "2026-07-01"}],
+        )
+
+        umami_config = self.config(
+            "umami", 'base_url = "https://analytics.example.invalid"',
+            timezone=timezone,
+        )
+        umami_http = QueueHttp([
+            {"pageviews": [{"x": "2026-06-30T15:00:00Z", "y": 1}], "sessions": []},
+            {},
+            [],
+            [],
+        ])
+        points = list(UmamiConnector(umami_config, umami_http).collect(
+            umami_config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(umami_config.bindings[0], window, ()),
+        ))
+        self.assertIn("timezone=Asia%2FTokyo", umami_http.calls[0][1])
+        pageview = next(point for point in points if point.metric == "umami.pageviews")
+        self.assertEqual(pageview.start.date().isoformat(), "2026-07-01")
+        self.assertEqual(getattr(pageview.start.tzinfo, "key", None), timezone)
+
+        partial = QueryWindow(
+            window.start + timedelta(hours=1),
+            window.end + timedelta(hours=1),
+            "UTC",
+        )
+        for connector, config, credential in (
+            (GoogleAnalyticsConnector(ga_config, QueueHttp([])), ga_config,
+             MemoryCredentialLease({"access_token": b"test"})),
+            (UmamiConnector(umami_config, QueueHttp([])), umami_config,
+             MemoryCredentialLease({"token": b"test"})),
+        ):
+            with self.subTest(provider=connector.provider):
+                with self.assertRaisesRegex(ValueError, "whole site-local days"):
+                    list(connector.collect(
+                        config.connections[0], credential,
+                        SyncRequest(config.bindings[0], partial, ()),
+                    ))
 
     @staticmethod
     def cloudflare_settings(*, enabled=True, max_duration=86400, not_older_than=691200):
@@ -200,7 +497,7 @@ class ProviderConnectorTests(unittest.TestCase):
 
     def test_ga4_uses_exclusive_window_as_inclusive_api_end(self):
         config = self.config("google-analytics")
-        response = {"metricHeaders": [{"name": "sessions"}], "rows": [{"dimensionValues": [{"value": "20260701"}], "metricValues": [{"value": "9"}]}]}
+        response = {"metricHeaders": [{"name": "sessions"}, {"name": "screenPageViews"}], "rows": [{"dimensionValues": [{"value": "20260701"}], "metricValues": [{"value": "9"}, {"value": "11"}]}]}
         geography = {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "sessions"}], "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "US"}, {"value": "California"}], "metricValues": [{"value": "7"}]}]}
         http = QueueHttp([response, geography]); points = list(GoogleAnalyticsConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(config.bindings[0], self.window, ())))
         self.assertEqual(points[0].metric, "google.sessions"); self.assertEqual(http.calls[0][3]["dateRanges"][0]["endDate"], "2026-07-02")
@@ -219,11 +516,17 @@ class ProviderConnectorTests(unittest.TestCase):
 
     def test_ga4_fails_closed_on_reported_property_timezone_mismatch(self):
         config = self.config("google-analytics", timezone="America/Chicago")
+        zone = ZoneInfo("America/Chicago")
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=zone),
+            datetime(2026, 7, 3, tzinfo=zone),
+            "America/Chicago",
+        )
         response = {"metadata": {"timeZone": "America/Los_Angeles"}, "rows": []}
         connector = GoogleAnalyticsConnector(config, QueueHttp([response]))
         with self.assertRaisesRegex(ValueError, "property timezone"):
             list(connector.collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
-                SyncRequest(config.bindings[0], self.window, ())))
+                SyncRequest(config.bindings[0], window, ())))
 
     def test_ga4_probe_warns_when_property_timezone_is_not_disclosed(self):
         config = self.config("google-analytics")
@@ -235,7 +538,7 @@ class ProviderConnectorTests(unittest.TestCase):
         config = self.config("google-analytics")
         object.__setattr__(config.bindings[0], "options", {"route_analytics": {"enabled": True}})
         dimensions = (
-            "date", "landingPagePlusQueryString", "pagePathPlusQueryString", "pageTitle",
+            "date", "landingPagePlusQueryString", "pagePath", "pageTitle",
             "sessionDefaultChannelGroup", "fullReferrer", "eventName",
         )
         metrics = (
@@ -260,7 +563,7 @@ class ProviderConnectorTests(unittest.TestCase):
             "approved_referrer_domains": ["search.example"],
             "ga4_dimensions": ["title", "channel", "referrer"],
         }})
-        aggregate = {"rows": []}
+        aggregate = {"metricHeaders": [{"name": "screenPageViews"}], "rows": []}
         geography = {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "sessions"}], "rows": []}
         route_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "/about/?email=a@example.com"}], "metricValues": [{"value": "2"}]}]}
         title_row = {"rowCount": "1", "rows": [{"dimensionValues": [{"value": "20260701"}, {"value": "About us"}], "metricValues": [{"value": "2"}]}]}
@@ -281,6 +584,542 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertTrue(all("email=a@example.com" not in str(point.dimensions) for point in points))
         self.assertEqual(http.calls[2][3]["dimensions"][1]["name"], "landingPagePlusQueryString")
         self.assertEqual(http.calls[2][3]["offset"], "0")
+
+    def test_ga4_page_path_views_use_path_only_and_expose_incomplete_pagination(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "page_size": 1, "max_pages": 1,
+        }})
+        aggregate = {
+            "metadata": {"timeZone": "UTC"},
+            "metricHeaders": [{"name": "screenPageViews"}],
+            "rows": [{
+                "dimensionValues": [{"value": "20260701"}],
+                "metricValues": [{"value": "7"}],
+            }],
+        }
+        geography = {
+            "metadata": {"timeZone": "UTC"},
+            "metricHeaders": [{"name": "sessions"}],
+            "rows": [],
+        }
+        route_row = {
+            "rowCount": "2",
+            "rows": [{
+                "dimensionValues": [
+                    {"value": "20260701"},
+                    {"value": "/safe"},
+                ],
+                "metricValues": [{"value": "7"}],
+            }],
+        }
+        http = QueueHttp([
+            aggregate,
+            geography,
+            {"rowCount": 0, "rows": []},
+            route_row,
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+        ])
+
+        points = list(GoogleAnalyticsConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ()),
+        ))
+
+        route = next(
+            point for point in points
+            if point.metric == "google.page-path-views"
+        )
+        page_path_call = http.calls[3]
+        self.assertEqual(
+            page_path_call[3]["dimensions"][1]["name"],
+            "pagePath",
+        )
+        self.assertEqual(
+            page_path_call[3]["metrics"][0]["name"],
+            "screenPageViews",
+        )
+        self.assertEqual(dict(route.dimensions), {"route": "/safe"})
+        self.assertIs(route.completeness, Completeness.UNKNOWN)
+
+    def test_ga4_short_nonterminal_page_never_skips_to_final_coverage(self):
+        config = self.config("google-analytics")
+        http = QueueHttp([{
+            "rowCount": 3,
+            "rows": [{
+                "dimensionValues": [
+                    {"value": "20260701"},
+                    {"value": "/first"},
+                ],
+                "metricValues": [{"value": "1"}],
+            }],
+        }])
+        connector = GoogleAnalyticsConnector(config, http)
+
+        rows, exhaustive = connector._ga_rows(
+            "test",
+            "demo",
+            self.window.start.date(),
+            self.window.end.date(),
+            "pagePath",
+            "screenPageViews",
+            SimpleNamespace(page_size=2, max_pages=3),
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(exhaustive)
+        self.assertEqual(len(http.calls), 1)
+        self.assertEqual(http.calls[0][3]["offset"], "0")
+
+    def test_ga4_missing_initial_row_count_never_proves_exhaustion(self):
+        config = self.config("google-analytics")
+        http = QueueHttp([{
+            "rows": [{
+                "dimensionValues": [
+                    {"value": "20260701"},
+                    {"value": "/safe"},
+                ],
+                "metricValues": [{"value": "1"}],
+            }],
+        }])
+        connector = GoogleAnalyticsConnector(config, http)
+
+        rows, exhaustive = connector._ga_rows(
+            "test",
+            "demo",
+            self.window.start.date(),
+            self.window.end.date(),
+            "pagePath",
+            "screenPageViews",
+            SimpleNamespace(page_size=10, max_pages=2),
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(exhaustive)
+        self.assertEqual(len(http.calls), 1)
+
+    def test_ga4_page_contract_mismatches_never_prove_exhaustion(self):
+        valid_row = {
+            "dimensionValues": [
+                {"value": "20260701"},
+                {"value": "/safe"},
+            ],
+            "metricValues": [{"value": "1"}],
+        }
+        valid_headers = {
+            "dimensionHeaders": [{"name": "date"}, {"name": "pagePath"}],
+            "metricHeaders": [{"name": "screenPageViews"}],
+        }
+        mismatches = (
+            {
+                **valid_headers,
+                "metricHeaders": [{"name": "sessions"}],
+                "rowCount": 1,
+                "rows": [valid_row],
+            },
+            {
+                **valid_headers,
+                "dimensionHeaders": [{"name": "date"}, {"name": "pageTitle"}],
+                "rowCount": 1,
+                "rows": [valid_row],
+            },
+            {
+                **valid_headers,
+                "rowCount": 1,
+                "rows": [{
+                    **valid_row,
+                    "dimensionValues": [{"value": "20260701"}],
+                }],
+            },
+            {
+                **valid_headers,
+                "rowCount": 1,
+                "rows": [{
+                    **valid_row,
+                    "metricValues": [{"value": "1"}, {"value": "2"}],
+                }],
+            },
+            {
+                **valid_headers,
+                "rowCount": 1,
+                "rows": [{
+                    **valid_row,
+                    "metricValues": [{"value": "1e1000000"}],
+                }],
+            },
+        )
+        for response in mismatches:
+            with self.subTest(response=response):
+                rows, exhaustive = GoogleAnalyticsConnector(
+                    self.config("google-analytics"),
+                    QueueHttp([response]),
+                )._ga_rows(
+                    "test",
+                    "demo",
+                    self.window.start.date(),
+                    self.window.end.date(),
+                    "pagePath",
+                    "screenPageViews",
+                    SimpleNamespace(page_size=10, max_pages=1),
+                )
+                self.assertEqual(rows, [])
+                self.assertFalse(exhaustive)
+
+
+    def test_ga4_established_row_count_cannot_disappear_into_final_coverage(self):
+        config = self.config("google-analytics")
+        http = QueueHttp([{
+            "rowCount": 3,
+            "rows": [
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/first"},
+                    ],
+                    "metricValues": [{"value": "1"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/second"},
+                    ],
+                    "metricValues": [{"value": "1"}],
+                },
+            ],
+        }, {
+            "rows": [],
+        }])
+        connector = GoogleAnalyticsConnector(config, http)
+
+        rows, exhaustive = connector._ga_rows(
+            "test",
+            "demo",
+            self.window.start.date(),
+            self.window.end.date(),
+            "pagePath",
+            "screenPageViews",
+            SimpleNamespace(page_size=2, max_pages=3),
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(exhaustive)
+        self.assertEqual(
+            [call[3]["offset"] for call in http.calls],
+            ["0", "2"],
+        )
+
+    def test_ga4_repeated_page_dimensions_never_prove_exhaustion(self):
+        config = self.config("google-analytics")
+        repeated_rows = [
+            {
+                "dimensionValues": [
+                    {"value": "20260701"},
+                    {"value": "/first"},
+                ],
+                "metricValues": [{"value": "1"}],
+            },
+            {
+                "dimensionValues": [
+                    {"value": "20260701"},
+                    {"value": "/second"},
+                ],
+                "metricValues": [{"value": "1"}],
+            },
+        ]
+        http = QueueHttp([
+            {"rowCount": 4, "rows": repeated_rows},
+            {"rowCount": 4, "rows": repeated_rows},
+        ])
+
+        rows, exhaustive = GoogleAnalyticsConnector(
+            config, http
+        )._ga_rows(
+            "test",
+            "demo",
+            self.window.start.date(),
+            self.window.end.date(),
+            "pagePath",
+            "screenPageViews",
+            SimpleNamespace(page_size=2, max_pages=2),
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(exhaustive)
+        self.assertEqual(
+            [call[3]["offset"] for call in http.calls],
+            ["0", "2"],
+        )
+
+
+    def test_ga4_page_path_rejections_make_returned_safe_facts_incomplete(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "page_size": 20, "max_pages": 1,
+        }})
+        route_rows = {
+            "rowCount": 8,
+            "rows": [
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/safe"},
+                    ],
+                    "metricValues": [{"value": "2"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/safe/"},
+                    ],
+                    "metricValues": [{"value": "3"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/query?campaign=test"},
+                    ],
+                    "metricValues": [{"value": "3"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/fragment#details"},
+                    ],
+                    "metricValues": [{"value": "4"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "https://outside.example/path"},
+                    ],
+                    "metricValues": [{"value": "5"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "relative/path"},
+                    ],
+                    "metricValues": [{"value": "6"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/bad\u0085route"},
+                    ],
+                    "metricValues": [{"value": "7"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/bad%C2%85route"},
+                    ],
+                    "metricValues": [{"value": "8"}],
+                },
+            ],
+        }
+        http = QueueHttp([
+            {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "screenPageViews"}], "rows": []},
+            {"metadata": {"timeZone": "UTC"}, "metricHeaders": [], "rows": []},
+            {"rowCount": 0, "rows": []},
+            route_rows,
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+        ])
+
+        points = list(GoogleAnalyticsConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ()),
+        ))
+
+        routes = [
+            point for point in points
+            if point.metric == "google.page-path-views"
+        ]
+        self.assertEqual(
+            [dict(point.dimensions)["route"] for point in routes],
+            ["/safe"],
+        )
+        self.assertTrue(
+            all(point.completeness is Completeness.UNKNOWN for point in routes)
+        )
+        self.assertEqual(routes[0].value, 5)
+
+    def test_ga4_page_paths_reject_out_of_window_counts_and_opaque_identity(self):
+        config = self.config("google-analytics")
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "page_size": 20, "max_pages": 1,
+        }})
+        route_rows = {
+            "rowCount": 5,
+            "rows": [
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/safe"},
+                    ],
+                    "metricValues": [{"value": "2"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260703"},
+                        {"value": "/outside"},
+                    ],
+                    "metricValues": [{"value": "9"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/negative"},
+                    ],
+                    "metricValues": [{"value": "-1"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/fractional"},
+                    ],
+                    "metricValues": [{"value": "1.5"}],
+                },
+                {
+                    "dimensionValues": [
+                        {"value": "20260701"},
+                        {"value": "/session/abcdefghijklmnop"},
+                    ],
+                    "metricValues": [{"value": "4"}],
+                },
+            ],
+        }
+        http = QueueHttp([
+            {"metadata": {"timeZone": "UTC"}, "metricHeaders": [{"name": "screenPageViews"}], "rows": []},
+            {"metadata": {"timeZone": "UTC"}, "metricHeaders": [], "rows": []},
+            {"rowCount": 0, "rows": []},
+            route_rows,
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+            {"rowCount": 0, "rows": []},
+        ])
+
+        points = list(GoogleAnalyticsConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"access_token": b"test"}),
+            SyncRequest(config.bindings[0], self.window, ()),
+        ))
+        routes = [
+            point for point in points
+            if point.metric == "google.page-path-views"
+        ]
+
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(dict(routes[0].dimensions), {"route": "/safe"})
+        self.assertEqual(routes[0].value, 2)
+        self.assertIs(routes[0].completeness, Completeness.UNKNOWN)
+        self.assertNotIn("abcdefghijklmnop", repr(points))
+
+    def test_provider_headline_rows_must_be_complete_and_in_window(self):
+        ga_config = self.config("google-analytics")
+        malformed = {
+            "metadata": {"timeZone": "UTC"},
+            "metricHeaders": [
+                {"name": "activeUsers"}, {"name": "screenPageViews"},
+            ],
+            "rows": [{
+                "dimensionValues": [{"value": "20260701"}],
+                "metricValues": [{"value": "7"}],
+            }],
+        }
+        with self.assertRaisesRegex(ValueError, "headline row"):
+            list(GoogleAnalyticsConnector(
+                ga_config, QueueHttp([malformed])
+            ).collect(
+                ga_config.connections[0],
+                MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(ga_config.bindings[0], self.window, ()),
+            ))
+
+        out_of_window = {
+            "metadata": {"timeZone": "UTC"},
+            "metricHeaders": [{"name": "screenPageViews"}],
+            "rows": [{
+                "dimensionValues": [{"value": "20260703"}],
+                "metricValues": [{"value": "1"}],
+            }],
+        }
+        with self.assertRaisesRegex(ValueError, "outside the request"):
+            list(GoogleAnalyticsConnector(
+                ga_config, QueueHttp([out_of_window])
+            ).collect(
+                ga_config.connections[0],
+                MemoryCredentialLease({"access_token": b"test"}),
+                SyncRequest(ga_config.bindings[0], self.window, ()),
+            ))
+
+        umami_config = self.config(
+            "umami", 'base_url = "https://analytics.example.invalid"'
+        )
+        with self.assertRaisesRegex(ValueError, "outside the request"):
+            list(UmamiConnector(
+                umami_config,
+                QueueHttp([{
+                    "pageviews": [{"x": "2026-07-03T00:00:00Z", "y": 1}],
+                    "sessions": [],
+                }]),
+            ).collect(
+                umami_config.connections[0],
+                MemoryCredentialLease({"token": b"test"}),
+                SyncRequest(umami_config.bindings[0], self.window, ()),
+            ))
+
+    def test_search_console_route_dates_outside_provider_window_are_rejected(self):
+        config = self.config("search-console")
+        object.__setattr__(config.bindings[0], "options", {
+            "route_analytics": {"enabled": True}
+        })
+        connector = SearchConsoleConnector(config, QueueHttp([{
+            "rows": [{
+                "keys": ["2026-07-03", "https://example.com/outside"],
+                "clicks": 1,
+            }],
+        }]))
+        points = list(connector._collect_route_observations(
+            "token", "encoded", date(2026, 7, 1), date(2026, 7, 2),
+            config.sites[0], route_analytics_options(config.bindings[0]),
+        ))
+        self.assertEqual(points, [])
+
+    def test_ga4_rejects_invalid_headline_pageview_counts(self):
+        config = self.config("google-analytics")
+        for value in (
+            True, -1, "-1", 1.5, "1.5", "malformed",
+            "NaN", "Infinity", "-Infinity",
+        ):
+            with self.subTest(value=value):
+                response = {
+                    "metadata": {"timeZone": "UTC"},
+                    "metricHeaders": [{"name": "screenPageViews"}],
+                    "rows": [{
+                        "dimensionValues": [{"value": "20260701"}],
+                        "metricValues": [{"value": value}],
+                    }],
+                }
+                geography = {
+                    "metadata": {"timeZone": "UTC"},
+                    "metricHeaders": [{"name": "sessions"}],
+                    "rows": [],
+                }
+                connector = GoogleAnalyticsConnector(
+                    config, QueueHttp([response, geography])
+                )
+                with self.assertRaisesRegex(ValueError, "pageview count"):
+                    list(connector.collect(
+                        config.connections[0],
+                        MemoryCredentialLease({"access_token": b"test"}),
+                        SyncRequest(config.bindings[0], self.window, ()),
+                    ))
 
     def test_route_observations_reject_out_of_bounds_and_partial_day_windows(self):
         config = self.config("google-analytics")
@@ -379,7 +1218,7 @@ class ProviderConnectorTests(unittest.TestCase):
             {"pageviews": [], "sessions": []}, {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0}, [], [],
             {"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-07-03T00:00:00Z"},
         ]
-        responses.extend([[{"name": "/pricing/?email=a@example.com", "visits": 3}]] + [[]] * 5)
+        responses.extend([[], [{"name": "/pricing/?email=a@example.com", "visits": 3}]] + [[]] * 6)
         http = QueueHttp(responses)
         points = list(UmamiConnector(config, http).collect(
             config.connections[0], MemoryCredentialLease({"token": b"test"}),
@@ -388,6 +1227,8 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertEqual(dict(route.dimensions), {"route": "/pricing"})
         self.assertIn("/daterange", http.calls[4][1])
         self.assertIn("type=path", http.calls[5][1])
+        self.assertIn("field=pageviews", http.calls[5][1])
+        self.assertIn("field=visits", http.calls[6][1])
         self.assertIn("startAt=", http.calls[5][1])
         self.assertFalse(any(
             f"type={item}" in call[1]
@@ -395,5 +1236,301 @@ class ProviderConnectorTests(unittest.TestCase):
             for item in ("title", "channel", "domain", "device", "country")
         ))
 
+
+    def test_umami_route_pageviews_are_distinct_from_visits_and_field_bound(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        http = QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-01-01T00:00:00Z",
+                "endDate": "2026-07-02T00:00:00Z",
+            },
+            [{"name": "/pricing", "pageviews": 3, "visits": 99}],
+            [{"name": "/pricing", "visits": 2, "pageviews": 999}],
+            [],
+            [],
+        ])
+
+        points = list(UmamiConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+
+        route_pageviews = next(
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        )
+        route_visits = next(
+            point for point in points
+            if point.metric == "umami.route-visits"
+        )
+        self.assertEqual(route_pageviews.value, 3)
+        self.assertEqual(route_visits.value, 2)
+        self.assertIs(route_pageviews.completeness, Completeness.FINAL)
+        self.assertIn("type=path", http.calls[5][1])
+        self.assertIn("field=pageviews", http.calls[5][1])
+        self.assertIn("field=visits", http.calls[6][1])
+
+    def test_umami_route_availability_must_contain_the_exact_requested_interval(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        connector = UmamiConnector(config, QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-07-01T12:00:00Z",
+                "endDate": "2026-07-02T00:00:00Z",
+            },
+            [{"name": "/safe", "pageviews": 3}],
+            [],
+            [],
+            [],
+        ]))
+
+        with self.assertRaisesRegex(ValueError, "available date range"):
+            list(connector.collect(
+                config.connections[0],
+                MemoryCredentialLease({"token": b"test"}),
+                SyncRequest(config.bindings[0], one_day, ()),
+            ))
+
+    def test_umami_rejects_invalid_headline_pageview_counts(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        for value in (
+            True, -1, "-1", 1.5, "1.5", "malformed",
+            "NaN", "Infinity", "-Infinity",
+        ):
+            with self.subTest(value=value):
+                connector = UmamiConnector(config, QueueHttp([
+                    {
+                        "pageviews": [{
+                            "x": "2026-07-01T00:00:00Z",
+                            "y": value,
+                        }],
+                        "sessions": [],
+                    },
+                    {},
+                    [],
+                    [],
+                ]))
+                with self.assertRaisesRegex(ValueError, "pageview count"):
+                    list(connector.collect(
+                        config.connections[0],
+                        MemoryCredentialLease({"token": b"test"}),
+                        SyncRequest(config.bindings[0], self.window, ()),
+                    ))
+
+    def test_umami_invalid_route_pageview_downgrades_retained_safe_rows(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        connector = UmamiConnector(config, QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-01-01T00:00:00Z",
+                "endDate": "2026-07-02T00:00:00Z",
+            },
+            [
+                {"name": "/safe", "pageviews": 2},
+                {"name": "/fractional", "pageviews": 1.5},
+            ],
+            [],
+            [],
+            [],
+        ]))
+
+        points = list(connector.collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+        pageviews = [
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        ]
+
+        self.assertEqual(len(pageviews), 1)
+        self.assertEqual(dict(pageviews[0].dimensions), {"route": "/safe"})
+        self.assertEqual(pageviews[0].value, 2)
+        self.assertIs(pageviews[0].completeness, Completeness.UNKNOWN)
+
+    def test_umami_full_last_page_preserves_safe_pageviews_as_unknown(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 1, "page_size": 1, "max_pages": 1,
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        http = QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-01-01T00:00:00Z",
+                "endDate": "2026-07-02T00:00:00Z",
+            },
+            [{"name": "/pricing", "pageviews": 3}],
+            [],
+            [],
+            [],
+        ])
+
+        points = list(UmamiConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+
+        route = next(
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        )
+        self.assertEqual(route.value, 3)
+        self.assertIs(route.completeness, Completeness.UNKNOWN)
+
+    def test_umami_overlapping_raw_pages_are_not_double_counted_or_exhaustive(self):
+        responses = [
+            [
+                {"name": "/first", "pageviews": 2},
+                {"name": "/overlap", "pageviews": 3},
+            ],
+            [
+                {"name": "/overlap", "pageviews": 4},
+            ],
+        ]
+        rows, exhaustive = UmamiConnector(
+            None, QueueHttp(responses)
+        )._expanded_rows(
+            "https://analytics.example.invalid",
+            {},
+            "startAt=1&endAt=2",
+            "path",
+            "pageviews",
+            SimpleNamespace(page_size=2, max_pages=2),
+        )
+
+        self.assertFalse(exhaustive)
+        self.assertEqual(
+            rows,
+            [
+                {"name": "/first", "pageviews": 2},
+                {"name": "/overlap", "pageviews": 3},
+            ],
+        )
+
+    def test_umami_unique_short_final_page_proves_exhaustion(self):
+        rows, exhaustive = UmamiConnector(
+            None,
+            QueueHttp([
+                [
+                    {"name": "/first", "pageviews": 2},
+                    {"name": "/second", "pageviews": 3},
+                ],
+                [{"name": "/third", "pageviews": 4}],
+            ]),
+        )._expanded_rows(
+            "https://analytics.example.invalid",
+            {},
+            "startAt=1&endAt=2",
+            "path",
+            "pageviews",
+            SimpleNamespace(page_size=2, max_pages=2),
+        )
+
+        self.assertTrue(exhaustive)
+        self.assertEqual([row["name"] for row in rows], [
+            "/first", "/second", "/third",
+        ])
+
+
+    def test_umami_route_pageviews_reject_unsafe_paths_and_mark_safe_rows_unknown(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True,
+            "max_days": 1,
+            "page_size": 20,
+            "max_pages": 1,
+            "excluded_routes": ["/private"],
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        http = QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-01-01T00:00:00Z",
+                "endDate": "2026-07-02T00:00:00Z",
+            },
+            [
+                {"name": "/safe", "pageviews": 2},
+                {"name": "/safe/", "pageviews": 9},
+                {"name": "/query?campaign=test", "pageviews": 3},
+                {"name": "/fragment#details", "pageviews": 4},
+                {"name": "https://outside.example/path", "pageviews": 5},
+                {"name": r"/safe\..\private", "pageviews": 6},
+                {"name": "/bad%00route", "pageviews": 7},
+                {"name": "/private/form", "pageviews": 8},
+                {"name": "relative/path", "pageviews": 10},
+                {"name": "/bad\u0085route", "pageviews": 11},
+                {"name": "/bad%C2%85route", "pageviews": 12},
+            ],
+            [],
+            [],
+            [],
+        ])
+
+        points = list(UmamiConnector(config, http).collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+        pageviews = [
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        ]
+
+        self.assertEqual(len(pageviews), 1)
+        self.assertEqual(dict(pageviews[0].dimensions), {"route": "/safe"})
+        self.assertEqual(pageviews[0].value, 11)
+        self.assertIs(pageviews[0].completeness, Completeness.UNKNOWN)
 
 if __name__ == "__main__": unittest.main()

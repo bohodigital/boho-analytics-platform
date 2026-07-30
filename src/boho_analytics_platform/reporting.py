@@ -3,19 +3,95 @@
 from __future__ import annotations
 
 import csv
+import json
 import io
+import heapq
 from collections import defaultdict
 from datetime import UTC, datetime, time, timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from .catalog import METRICS, SOURCE_SEMANTICS, SourceSemantics
-from .config import binding_observation_boundary
+from .config import binding_observation_boundary, route_analytics_options
+from .contracts import PAGEVIEW_DATA_RESULT_KIND, explicit_pageview_result_kind
 from .models import Completeness, QueryWindow, TimeGrain
 
 
 UNKNOWN_SOURCE_SEMANTICS = SourceSemantics("unknown", "unknown", "unknown")
+
+PROVIDER_HEADLINE_PAGEVIEW_METRICS = (
+    "google.pageviews",
+    "umami.pageviews",
+)
+PROVIDER_ROUTE_PAGEVIEW_METRICS = (
+    "google.page-path-views",
+    "umami.route-pageviews",
+)
+PROVIDER_PAGEVIEW_METRICS = PROVIDER_HEADLINE_PAGEVIEW_METRICS + PROVIDER_ROUTE_PAGEVIEW_METRICS
+PROVIDER_PAGEVIEW_DEFINITIONS = {
+    "google-analytics": ("google.pageviews", "google.page-path-views"),
+    "umami": ("umami.pageviews", "umami.route-pageviews"),
+}
+PROVIDER_HISTORY_START = datetime(2000, 1, 1, tzinfo=UTC)
+LOW_VOLUME_PAGEVIEWS = 100
+_MAX_PAGEVIEW_SIGNIFICANT_DIGITS = 38
+_MAX_PAGEVIEW_ADJUSTED_EXPONENT = 37
+_MAX_PAGEVIEW_TOTAL_DIGITS = 64
+
+
+def _valid_pageview_value(value: object) -> bool:
+    """Revalidate retained provider facts at the reporting trust boundary."""
+
+    if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+        return False
+    return (
+        value == value.to_integral_value()
+        and len(value.as_tuple().digits) <= _MAX_PAGEVIEW_SIGNIFICANT_DIGITS
+        and abs(value.adjusted()) <= _MAX_PAGEVIEW_ADJUSTED_EXPONENT
+    )
+
+
+def _bounded_pageview_integer(total: int, *, daily: bool) -> Decimal | None:
+    """Convert one exact integer sum only inside the downstream size bound."""
+
+    maximum_digits = (
+        _MAX_PAGEVIEW_SIGNIFICANT_DIGITS if daily
+        else _MAX_PAGEVIEW_TOTAL_DIGITS
+    )
+    if total < 0 or len(str(total)) > maximum_digits:
+        return None
+    return Decimal(total)
+
+
+def _bounded_pageview_sum(values, *, daily: bool) -> Decimal | None:
+    """Sum retained fact counts exactly with a finite downstream bound."""
+
+    total = 0
+    for value in values:
+        if not _valid_pageview_value(value):
+            return None
+        total += int(value)
+    return _bounded_pageview_integer(total, daily=daily)
+
+
+def _bounded_pageview_total_sum(values) -> Decimal | None:
+    """Sum already-aggregated pageview totals inside the 64-digit domain."""
+
+    total = 0
+    for value in values:
+        if (
+            not isinstance(value, Decimal)
+            or not value.is_finite()
+            or value < 0
+            or value != value.to_integral_value()
+            or len(value.as_tuple().digits) > _MAX_PAGEVIEW_TOTAL_DIGITS
+            or abs(value.adjusted()) >= _MAX_PAGEVIEW_TOTAL_DIGITS
+        ):
+            return None
+        total += int(value)
+    return _bounded_pageview_integer(total, daily=False)
+
 
 DECISION_INPUT_METRICS = (
     "umami.pageviews",
@@ -212,7 +288,7 @@ class ReportService:
         return any(
             site_id in site_ids
             and (source in relevant_sources or source == "fixture")
-            and window.start < boundary
+            and self._site_calendar_window(window, site_id).start < boundary
             for (site_id, source), boundary in boundaries.items()
         )
 
@@ -221,7 +297,8 @@ class ReportService:
 
         Fixture bindings are deliberately wildcard bindings for local test/demo
         metrics, but fixture-sourced facts are never accepted unless the site
-        still has an explicit fixture binding.
+        still has an explicit fixture binding. Without the store, native fact
+        attribution cannot be proven and therefore fails closed.
         """
 
         providers_by_site: dict[str, set[str]] = defaultdict(set)
@@ -248,6 +325,8 @@ class ReportService:
             )
             if not source_is_supported:
                 continue
+            if self.store is None and point.source != "fixture":
+                continue
             boundary = observation_boundaries.get((point.site_id, point.source))
             if boundary is not None:
                 if point.end <= boundary:
@@ -257,19 +336,178 @@ class ReportService:
             supported.append(point)
         return supported
 
-    @staticmethod
-    def _aggregate(points, window, requested_metrics):
+    def _current_binding_attributed_points(self, points):
+        """Keep one unambiguous current-binding acquisition snapshot per cell."""
+
+        if self.store is None:
+            return []
+        connection_sources = {
+            item.id: item.provider for item in self.config.connections
+        }
+        current_keys_by_pair: dict[tuple[str, str], set[str]] = defaultdict(set)
+        for binding in self.config.bindings:
+            source = connection_sources[binding.connection_id]
+            if source not in PROVIDER_PAGEVIEW_DEFINITIONS:
+                continue
+            current_keys_by_pair[(binding.site_id, source)].add(
+                f"{binding.site_id}:{binding.connection_id}:"
+                f"{binding.resource_type}:{binding.resource_id}"
+            )
+
+        eligible_pairs = set(current_keys_by_pair)
+        indexed_points = [
+            (index, point) for index, point in enumerate(points)
+            if (point.site_id, point.source) in eligible_pairs
+            and point.metric in PROVIDER_PAGEVIEW_METRICS
+        ]
+        if not indexed_points:
+            return []
+        evidence_window = QueryWindow(
+            min(point.start for _index, point in indexed_points),
+            max(point.end for _index, point in indexed_points),
+            "UTC",
+            Completeness.UNKNOWN,
+        )
+        runs = self.store.query_sync_coverage(
+            site_ids=tuple(sorted({pair[0] for pair in eligible_pairs})),
+            sources=tuple(sorted({pair[1] for pair in eligible_pairs})),
+            binding_keys=None,
+            window=evidence_window,
+        )
+        runs_by_pair: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for run in runs:
+            if (
+                run["finished_at"] is not None
+                and explicit_pageview_result_kind(
+                    run["source"], run["result_kind"]
+                )
+            ):
+                runs_by_pair[(run["site_id"], run["source"])].append(run)
+        points_by_pair: dict[tuple[str, str], list[tuple[int, object]]] = defaultdict(list)
+        for index, point in indexed_points:
+            points_by_pair[(point.site_id, point.source)].append((index, point))
+
+        eligible_indexes = set()
+        for pair, pair_points in points_by_pair.items():
+            pair_runs = runs_by_pair.get(pair, [])
+            indexed_runs = list(enumerate(pair_runs))
+
+            intervals = sorted({
+                (point.start, point.end) for _index, point in pair_points
+            })
+            by_window_start = sorted(
+                indexed_runs, key=lambda item: item[1]["window_start"]
+            )
+            latest_for_interval = {}
+            latest_heap = []
+            window_index = 0
+            for cell_start, cell_end in intervals:
+                while (
+                    window_index < len(by_window_start)
+                    and by_window_start[window_index][1]["window_start"]
+                    <= cell_start
+                ):
+                    index, run = by_window_start[window_index]
+                    heapq.heappush(
+                        latest_heap,
+                        (-run["finished_at"].timestamp(), index),
+                    )
+                    window_index += 1
+                while latest_heap:
+                    _negative_finished, index = latest_heap[0]
+                    run = pair_runs[index]
+                    effective_end = min(
+                        run["window_end"],
+                        run.get("data_through") or run["window_end"],
+                    )
+                    if effective_end >= cell_end:
+                        latest_for_interval[(cell_start, cell_end)] = index
+                        break
+                    heapq.heappop(latest_heap)
+
+            data_runs = sorted(
+                (
+                    (index, run) for index, run in indexed_runs
+                    if run["result_kind"] == PAGEVIEW_DATA_RESULT_KIND
+                ),
+                key=lambda item: item[1]["started_at"],
+            )
+            active: dict[int, dict] = {}
+            finishes = []
+            run_index = 0
+            for point_index, point in sorted(
+                pair_points, key=lambda item: item[1].observed_at
+            ):
+                while (
+                    run_index < len(data_runs)
+                    and data_runs[run_index][1]["started_at"]
+                    <= point.observed_at
+                ):
+                    index, run = data_runs[run_index]
+                    active[index] = run
+                    heapq.heappush(finishes, (run["finished_at"], index))
+                    run_index += 1
+                while finishes and finishes[0][0] < point.observed_at:
+                    _finished_at, finished_index = heapq.heappop(finishes)
+                    active.pop(finished_index, None)
+                candidates = [
+                    (index, run) for index, run in active.items()
+                    if run["window_start"] <= point.start
+                    and min(
+                        run["window_end"],
+                        run.get("data_through") or run["window_end"],
+                    ) >= point.end
+                ]
+                if len(candidates) != 1:
+                    continue
+                attributed_index, run = candidates[0]
+                if (
+                    run["binding_key"] in current_keys_by_pair[pair]
+                    and latest_for_interval.get((point.start, point.end))
+                    == attributed_index
+                ):
+                    eligible_indexes.add(point_index)
+
+        return [
+            point for index, point in enumerate(points)
+            if index in eligible_indexes
+        ]
+
+    def _enforce_explicit_pageview_contract(self, points):
+        """Withhold native pageview facts not proven by a post-cutover run."""
+
+        attributed = self._current_binding_attributed_points(points)
+        attributed_ids = {id(point) for point in attributed}
+        return [
+            point for point in points
+            if (
+                point.source not in PROVIDER_PAGEVIEW_DEFINITIONS
+                or point.metric not in PROVIDER_PAGEVIEW_METRICS
+                or id(point) in attributed_ids
+            )
+        ]
+
+    def _aggregate(self, points, window, requested_metrics):
         output: dict[tuple[str, str, str, str], Decimal] = defaultdict(Decimal)
+        pageview_output: dict[tuple[str, str, str, str], int] = defaultdict(int)
         freshness: dict[str, datetime] = {}
         latest: dict[tuple[str, str, str, str], object] = {}
         for point in points:
+            if (
+                point.metric in PROVIDER_PAGEVIEW_METRICS
+                and not _valid_pageview_value(point.value)
+            ):
+                continue
             current = freshness.get(point.source)
             if current is None or point.observed_at > current:
                 freshness[point.source] = point.observed_at
             definition = METRICS[point.metric]
             key = (point.metric, point.site_id, point.source, point.unit)
             if definition.aggregation == "sum":
-                output[key] += point.value
+                if point.metric in PROVIDER_PAGEVIEW_METRICS:
+                    pageview_output[key] += int(point.value)
+                else:
+                    output[key] += point.value
             elif definition.aggregation == "latest":
                 previous = latest.get(key)
                 if previous is None or (point.end, point.observed_at) > (
@@ -277,14 +515,21 @@ class ReportService:
                     previous.observed_at,
                 ):
                     latest[key] = point
-            elif (
-                definition.aggregation == "window"
-                and point.start == window.start
-                and point.end == window.end
-            ):
-                output[key] = point.value
+            elif definition.aggregation == "window":
+                site_window = self._site_calendar_window(
+                    window, point.site_id
+                )
+                if (
+                    point.start == site_window.start
+                    and point.end == site_window.end
+                ):
+                    output[key] = point.value
         for key, point in latest.items():
             output[key] = point.value
+        for key, total in pageview_output.items():
+            bounded = _bounded_pageview_integer(total, daily=False)
+            if bounded is not None:
+                output[key] = bounded
 
         grouped = defaultdict(dict)
         for point in points:
@@ -340,22 +585,31 @@ class ReportService:
             for key, value in sorted(freshness.items())
         }
 
-    @staticmethod
-    def _series(points, window, requested_metrics):
+    def _series(self, points, window, requested_metrics):
         """Build compact daily series without changing provider aggregation semantics."""
 
-        zone = UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
         daily: dict[tuple[str, str, str, str, str], Decimal] = defaultdict(Decimal)
+        pageview_daily: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
         latest: dict[tuple[str, str, str, str, str], object] = {}
         grouped = defaultdict(dict)
         requested = set(requested_metrics)
         for point in points:
+            if (
+                point.metric in PROVIDER_PAGEVIEW_METRICS
+                and not _valid_pageview_value(point.value)
+            ):
+                continue
+            timezone = self._site_timezone(point.site_id, window)
+            zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
             day = point.start.astimezone(zone).date().isoformat()
             definition = METRICS[point.metric]
             key = (point.metric, point.site_id, point.source, point.unit, day)
             if point.metric in requested:
                 if definition.aggregation == "sum":
-                    daily[key] += point.value
+                    if point.metric in PROVIDER_PAGEVIEW_METRICS:
+                        pageview_daily[key] += int(point.value)
+                    else:
+                        daily[key] += point.value
                 elif definition.aggregation == "latest":
                     previous = latest.get(key)
                     if previous is None or (point.end, point.observed_at) > (
@@ -368,6 +622,10 @@ class ReportService:
             ] = point.value
         for key, point in latest.items():
             daily[key] = point.value
+        for key, total in pageview_daily.items():
+            bounded = _bounded_pageview_integer(total, daily=True)
+            if bounded is not None:
+                daily[key] = bounded
 
         clicks: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
         impressions: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
@@ -420,14 +678,30 @@ class ReportService:
         ]
 
     def _coverage(self, site_ids, requested_metrics, points, window):
-        zone = UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
-        start_day = window.start.astimezone(zone).date()
-        end_day = window.end.astimezone(zone).date()
-        dates: list[str] = []
-        day = start_day
-        while day < end_day:
-            dates.append(day.isoformat())
-            day += timedelta(days=1)
+        site_windows = {
+            site_id: self._site_calendar_window(window, site_id)
+            for site_id in site_ids
+        }
+        site_zones = {
+            site_id: (
+                UTC if site_window.timezone == "UTC"
+                else ZoneInfo(site_window.timezone)
+            )
+            for site_id, site_window in site_windows.items()
+        }
+        dates_by_site = {}
+        for site_id, site_window in site_windows.items():
+            dates = []
+            day = site_window.start.astimezone(
+                site_zones[site_id]
+            ).date()
+            end_day = site_window.end.astimezone(
+                site_zones[site_id]
+            ).date()
+            while day < end_day:
+                dates.append(day.isoformat())
+                day += timedelta(days=1)
+            dates_by_site[site_id] = dates
 
         connection_sources = {item.id: item.provider for item in self.config.connections}
         observation_boundaries, binding_observation_boundaries = (
@@ -449,34 +723,70 @@ class ReportService:
                 providers_by_site_source[(binding.site_id, provider)].add(provider)
 
         provider_sources = sorted(set(connection_sources.values()))
-        sync_coverage = self.store.query_sync_coverage(
-            site_ids=site_ids,
-            sources=provider_sources,
-            binding_keys=binding_keys,
-            window=window,
-        )
+        sync_coverage = []
+        for site_id in site_ids:
+            sync_coverage.extend(self.store.query_sync_coverage(
+                site_ids=(site_id,),
+                sources=provider_sources,
+                binding_keys=binding_keys,
+                window=site_windows[site_id],
+            ))
         coverage_runs: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
         for item in sync_coverage:
-            coverage_runs[(str(item["site_id"]), str(item["source"]))].append(item)
+            source = str(item["source"])
+            if (
+                source in PROVIDER_PAGEVIEW_DEFINITIONS
+                and not explicit_pageview_result_kind(
+                    source, item.get("result_kind")
+                )
+            ):
+                continue
+            coverage_runs[(str(item["site_id"]), source)].append(item)
 
-        usable = [point for point in points if _usable_for_window(point, window)]
+        usable = [
+            point for point in points
+            if point.site_id in site_windows
+            and site_windows[point.site_id].start <= point.start
+            and point.end <= site_windows[point.site_id].end
+            and _usable_for_window(point, site_windows[point.site_id])
+        ]
         daily_presence: dict[tuple[str, str, str], set[str]] = defaultdict(set)
         exact_window_presence: dict[tuple[str, str], set[str]] = defaultdict(set)
+        invalid_pageview_cells: set[tuple[str, str, str, str]] = set()
+        pageview_cell_totals: dict[tuple[str, str, str, str], int] = defaultdict(int)
         for point in usable:
+            site_window = site_windows[point.site_id]
+            point_day = point.start.astimezone(
+                site_zones[point.site_id]
+            ).date().isoformat()
+            if point.metric in PROVIDER_PAGEVIEW_METRICS:
+                cell = (point.site_id, point.metric, point_day, point.source)
+                if not _valid_pageview_value(point.value):
+                    invalid_pageview_cells.add(cell)
+                else:
+                    pageview_cell_totals[cell] += int(point.value)
+                continue
             daily_presence[(
                 point.site_id,
                 point.metric,
-                point.start.astimezone(zone).date().isoformat(),
+                point_day,
             )].add(point.source)
             boundary = observation_boundaries.get((point.site_id, point.source))
             if (
-                point.start == window.start
-                and point.end == window.end
+                point.start == site_window.start
+                and point.end == site_window.end
                 and (boundary is None or point.start >= boundary)
             ):
                 exact_window_presence[(point.site_id, point.metric)].add(
                     point.source
                 )
+
+        for cell, total in pageview_cell_totals.items():
+            site_id, metric, point_day, source = cell
+            if _bounded_pageview_integer(total, daily=True) is None:
+                invalid_pageview_cells.add(cell)
+                continue
+            daily_presence[(site_id, metric, point_day)].add(source)
 
         metrics_by_source: dict[str, list[str]] = defaultdict(list)
         for metric in requested_metrics:
@@ -492,6 +802,9 @@ class ReportService:
         total_covered = 0
 
         for site_id in site_ids:
+            site_window = site_windows[site_id]
+            zone = site_zones[site_id]
+            dates = dates_by_site[site_id]
             configured_sources = configured_by_site.get(site_id, set())
             wildcard_fixture = "fixture" in configured_sources
             for source, source_metrics in sorted(metrics_by_source.items()):
@@ -536,15 +849,24 @@ class ReportService:
                             )
                             present = bool(fact_providers)
                             cell_providers = set(fact_providers)
-                            if date_label is not None and source not in {
-                                "cloudflare-forms", "forms-inbox"
-                            }:
+                            if (
+                                date_label is not None
+                                and METRICS[input_metric].reportable
+                                and source not in {"cloudflare-forms", "forms-inbox"}
+                            ):
                                 local_day = datetime.fromisoformat(date_label).date()
                                 cell_start = datetime.combine(local_day, time.min, zone)
                                 cell_end = datetime.combine(
                                     local_day + timedelta(days=1), time.min, zone
                                 )
                                 for provider in configured_providers:
+                                    if (
+                                        site_id,
+                                        input_metric,
+                                        date_label,
+                                        provider,
+                                    ) in invalid_pageview_cells:
+                                        continue
                                     for run in coverage_runs.get(
                                         (site_id, provider), ()
                                     ):
@@ -715,6 +1037,7 @@ class ReportService:
         for row in rows:
             by_metric[row["metric"]].append(row)
         values: dict[str, Decimal] = {}
+        invalid_pageview_totals: set[str] = set()
         for metric in requested_metrics:
             matches = by_metric.get(metric, [])
             if not matches:
@@ -744,11 +1067,19 @@ class ReportService:
                         denominator += weight
                 if denominator:
                     values[metric] = numerator / denominator
+            elif metric in PROVIDER_PAGEVIEW_METRICS:
+                bounded = _bounded_pageview_total_sum(
+                    Decimal(str(item["value"])) for item in matches
+                )
+                if bounded is not None:
+                    values[metric] = bounded
+                else:
+                    invalid_pageview_totals.add(metric)
             else:
                 values[metric] = sum(
                     (Decimal(str(item["value"])) for item in matches), Decimal()
                 )
-        return values
+        return values, invalid_pageview_totals
 
     @classmethod
     def _summary_totals(
@@ -759,8 +1090,12 @@ class ReportService:
         coverage,
         prior_coverage,
     ):
-        current_values = cls._summary_values(current_rows, requested_metrics)
-        prior_values = cls._summary_values(prior_rows, requested_metrics)
+        current_values, invalid_current_totals = cls._summary_values(
+            current_rows, requested_metrics
+        )
+        prior_values, invalid_prior_totals = cls._summary_values(
+            prior_rows, requested_metrics
+        )
 
         def aggregate_source(rows, metric, metric_coverage):
             actual_sources = {
@@ -817,6 +1152,7 @@ class ReportService:
                 and definition.aggregation == "sum"
                 and coverage_status == "complete"
                 and current_source != "mixed"
+                and metric not in invalid_current_totals
             ):
                 value = Decimal()
             if definition.aggregation == "weighted" and coverage_status != "complete":
@@ -826,12 +1162,15 @@ class ReportService:
             comparison_available = (
                 coverage_status == "complete" and prior_status == "complete"
                 and current_source == prior_source and current_source != "mixed"
+                and metric not in invalid_current_totals
+                and metric not in invalid_prior_totals
             )
             previous = prior_values.get(metric) if comparison_available else None
             if (
                 previous is None
                 and comparison_available
                 and definition.aggregation == "sum"
+                and metric not in invalid_prior_totals
             ):
                 previous = Decimal()
             change = None
@@ -1601,6 +1940,564 @@ class ReportService:
             "coverage": insight_coverage,
         }
 
+    @staticmethod
+    def _date_summary(dates):
+        ordered = sorted(set(dates))
+        ranges = []
+        for date_label in ordered:
+            current = datetime.fromisoformat(date_label).date()
+            previous = ranges[-1] if ranges else None
+            if (
+                previous
+                and datetime.fromisoformat(previous["end"]).date()
+                + timedelta(days=1) == current
+            ):
+                previous["end"] = date_label
+            else:
+                ranges.append({"start": date_label, "end": date_label})
+        return {
+            "count": len(ordered),
+            "first": ordered[0] if ordered else None,
+            "last": ordered[-1] if ordered else None,
+            "ranges": ranges,
+        }
+
+    def _provider_bindings(self, site_id, provider):
+        connection_sources = {
+            connection.id: connection.provider
+            for connection in self.config.connections
+        }
+        return tuple(
+            binding for binding in self.config.bindings
+            if binding.site_id == site_id
+            and connection_sources.get(binding.connection_id) == provider
+        )
+
+    def _site_timezone(self, site_id, window):
+        if self.config is not None:
+            for site in self.config.sites:
+                if site.id == site_id:
+                    return site.timezone
+        return window.timezone
+
+    def _site_calendar_window(self, window, site_id):
+        """Project requested calendar dates onto one site's local interval."""
+
+        request_zone = (
+            UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
+        )
+        timezone = self._site_timezone(site_id, window)
+        site_zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        start_day = window.start.astimezone(request_zone).date()
+        end_day = window.end.astimezone(request_zone).date()
+        return QueryWindow(
+            datetime.combine(start_day, time.min, site_zone),
+            datetime.combine(end_day, time.min, site_zone),
+            timezone,
+            window.completeness,
+        )
+
+    def _query_site_calendar_points(
+        self, *, client_id, site_ids, metric_ids, window
+    ):
+        points = []
+        for site_id in site_ids:
+            points.extend(self.store.query(
+                client_id=client_id,
+                site_ids=(site_id,),
+                metric_ids=metric_ids,
+                window=self._site_calendar_window(window, site_id),
+            ))
+        return points
+
+    def _successful_provider_dates(self, site_id, provider, window):
+        bindings = self._provider_bindings(site_id, provider)
+        if not bindings:
+            return set()
+        current_binding_keys = {
+            f"{binding.site_id}:{binding.connection_id}:"
+            f"{binding.resource_type}:{binding.resource_id}"
+            for binding in bindings
+        }
+        runs = self.store.query_sync_coverage(
+            site_ids=(site_id,),
+            sources=(provider,),
+            binding_keys=None,
+            window=window,
+        )
+        timezone = self._site_timezone(site_id, window)
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        boundaries = {
+            f"{binding.site_id}:{binding.connection_id}:"
+            f"{binding.resource_type}:{binding.resource_id}":
+            binding_observation_boundary(self.config, binding)
+            for binding in bindings
+        }
+        intervals = []
+        for run in runs:
+            if not explicit_pageview_result_kind(
+                provider, run.get("result_kind")
+            ):
+                continue
+            run_start = run["window_start"]
+            boundary = boundaries.get(str(run["binding_key"]))
+            if boundary is not None:
+                run_start = max(run_start, boundary)
+            effective_end = min(
+                run["window_end"],
+                run.get("data_through") or run["window_end"],
+            )
+            if (
+                run_start < effective_end
+                and run["finished_at"] is not None
+            ):
+                intervals.append((run_start, effective_end, run))
+        intervals.sort(key=lambda item: item[0])
+
+        dates = set()
+        interval_index = 0
+        latest_heap = []
+        mature_through = datetime.now(UTC)
+        local_day = window.start.astimezone(zone).date()
+        final_day = window.end.astimezone(zone).date()
+        while local_day < final_day:
+            cell_start = datetime.combine(local_day, time.min, zone)
+            cell_end = datetime.combine(local_day + timedelta(days=1), time.min, zone)
+            if (
+                cell_start < window.start
+                or cell_end > window.end
+                or cell_end > mature_through
+            ):
+                local_day += timedelta(days=1)
+                continue
+            while (
+                interval_index < len(intervals)
+                and intervals[interval_index][0] <= cell_start
+            ):
+                _run_start, _run_end, run = intervals[interval_index]
+                heapq.heappush(
+                    latest_heap,
+                    (-run["finished_at"].timestamp(), interval_index),
+                )
+                interval_index += 1
+            while latest_heap:
+                _negative_finished, index = latest_heap[0]
+                _run_start, run_end, run = intervals[index]
+                if run_end >= cell_end:
+                    if run["binding_key"] in current_binding_keys:
+                        dates.add(local_day.isoformat())
+                    break
+                heapq.heappop(latest_heap)
+            local_day += timedelta(days=1)
+        return dates
+
+    @staticmethod
+    def _calendar_cell_date(point, timezone):
+        """Return a DAY fact's exact site-local calendar cell."""
+
+        if point.grain is not TimeGrain.DAY:
+            return None
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        local_day = point.start.astimezone(zone).date()
+        expected_start = datetime.combine(local_day, time.min, zone)
+        expected_end = datetime.combine(
+            local_day + timedelta(days=1), time.min, zone
+        )
+        if (
+            point.start.astimezone(UTC) != expected_start.astimezone(UTC)
+            or point.end.astimezone(UTC) != expected_end.astimezone(UTC)
+        ):
+            return None
+        return local_day.isoformat()
+
+    @staticmethod
+    def _daily_cell_date(point, window, timezone):
+        """Return an exact site-local DAY cell contained by the request."""
+
+        if point.start < window.start or point.end > window.end:
+            return None
+        return ReportService._calendar_cell_date(point, timezone)
+
+    @staticmethod
+    def _final_daily_values(
+        points, site_id, provider, metric, window, timezone
+    ):
+        totals: dict[str, int] = defaultdict(int)
+        invalid_dates = set()
+        mature_through = datetime.now(UTC)
+        for point in points:
+            if (
+                point.site_id != site_id
+                or point.source != provider
+                or point.metric != metric
+                or point.completeness is not Completeness.FINAL
+                or point.dimensions
+                or point.end > mature_through
+            ):
+                continue
+            day = ReportService._daily_cell_date(point, window, timezone)
+            if day is None:
+                continue
+            if not _valid_pageview_value(point.value):
+                invalid_dates.add(day)
+                continue
+            totals[day] += int(point.value)
+        values = {}
+        for day, total in totals.items():
+            bounded = _bounded_pageview_integer(total, daily=True)
+            if bounded is None:
+                invalid_dates.add(day)
+            else:
+                values[day] = bounded
+        return values, invalid_dates
+
+    @staticmethod
+    def _first_and_data_through(
+        history_points, site_id, provider, metric, window, timezone
+    ):
+        mature_through = datetime.now(UTC)
+        totals: dict[str, int] = defaultdict(int)
+        invalid_dates = set()
+        for point in history_points:
+            if (
+                point.site_id != site_id
+                or point.source != provider
+                or point.metric != metric
+                or point.completeness is not Completeness.FINAL
+                or point.dimensions
+                or point.end > window.end
+                or point.end > mature_through
+            ):
+                continue
+            day = ReportService._calendar_cell_date(point, timezone)
+            if (
+                day is None
+                or day < PROVIDER_HISTORY_START.date().isoformat()
+            ):
+                continue
+            if not _valid_pageview_value(point.value):
+                invalid_dates.add(day)
+                continue
+            totals[day] += int(point.value)
+        dates = sorted(
+            day for day, total in totals.items()
+            if day not in invalid_dates
+            and _bounded_pageview_integer(total, daily=True) is not None
+        )
+        return (
+            dates[0] if dates else None,
+            dates[-1] if dates else None,
+        )
+
+    def _route_reconciliation(
+        self,
+        *,
+        points,
+        site_id,
+        provider,
+        headline_metric,
+        route_metric,
+        complete_dates,
+        headline_values,
+        route_enabled,
+        window,
+    ):
+        headline_total = (
+            _bounded_pageview_sum(
+                (headline_values[day] for day in complete_dates), daily=False
+            )
+            if complete_dates else None
+        )
+        base = {
+            "headline_metric": headline_metric,
+            "route_metric": route_metric,
+            "window_start": window.start.isoformat(),
+            "window_end": window.end.isoformat(),
+            "complete_dates": self._date_summary(complete_dates),
+            "headline_total": (
+                _number(headline_total) if headline_total is not None else None
+            ),
+            "route_total": None,
+            "status": "withheld",
+            "reason": None,
+        }
+        if not complete_dates:
+            base["reason"] = "headline_coverage_incomplete"
+            return base
+        if not route_enabled:
+            base["reason"] = "route_analytics_not_enabled"
+            return base
+
+        timezone = self._site_timezone(site_id, window)
+        zone = UTC if timezone == "UTC" else ZoneInfo(timezone)
+        route_values: dict[str, int] = defaultdict(int)
+        observed_dates = set()
+        incomplete_dates = set()
+        for point in points:
+            if (
+                point.site_id != site_id
+                or point.source != provider
+                or point.metric != route_metric
+                or point.grain is not TimeGrain.DAY
+            ):
+                continue
+            day = point.start.astimezone(zone).date().isoformat()
+            if day not in complete_dates:
+                continue
+            exact_day = self._daily_cell_date(
+                point, window, timezone
+            )
+            if exact_day != day:
+                incomplete_dates.add(day)
+                continue
+            if (
+                point.completeness is not Completeness.FINAL
+                or not dict(point.dimensions).get("route")
+                or not _valid_pageview_value(point.value)
+            ):
+                incomplete_dates.add(day)
+                continue
+            observed_dates.add(day)
+            route_values[day] += int(point.value)
+
+        bounded_route_values = {}
+        for day, total in route_values.items():
+            bounded = _bounded_pageview_integer(total, daily=True)
+            if bounded is None:
+                incomplete_dates.add(day)
+            else:
+                bounded_route_values[day] = bounded
+        route_values = bounded_route_values
+
+        if incomplete_dates:
+            base["reason"] = "route_coverage_incomplete"
+            return base
+        if observed_dates != set(complete_dates):
+            base["reason"] = "route_facts_absent"
+            return base
+        route_total = _bounded_pageview_sum(
+            (route_values[day] for day in complete_dates), daily=False
+        )
+        if headline_total is None or route_total is None:
+            base["reason"] = "pageview_total_out_of_bounds"
+            return base
+        base["route_total"] = _number(route_total)
+        if all(
+            route_values[day] == headline_values[day]
+            for day in complete_dates
+        ):
+            base["status"] = "reconciled"
+            return base
+        base["reason"] = "route_sum_differs_from_headline"
+        return base
+
+    @staticmethod
+    def _comparison_evidence_state(
+        google_values,
+        umami_values,
+        paired_dates,
+        google_only_dates,
+        umami_only_dates,
+        *,
+        low_volume,
+    ):
+        if not paired_dates:
+            return "non_comparable"
+        if google_only_dates or umami_only_dates:
+            return "coverage_mismatch"
+        if low_volume:
+            return "low_volume"
+        if all(
+            google_values[day] == umami_values[day]
+            for day in paired_dates
+        ):
+            return "aligned"
+        outside_expected = []
+        for day in paired_dates:
+            google = int(google_values[day])
+            umami = int(umami_values[day])
+            if (
+                google != umami
+                and (
+                    umami == 0
+                    or 5 * google < 4 * umami
+                    or 4 * google > 5 * umami
+                )
+            ):
+                outside_expected.append(day)
+        if not outside_expected:
+            return "within_expected_variation"
+        if len(paired_dates) == 1:
+            return "isolated_divergence"
+        if len(outside_expected) * 2 > len(paired_dates):
+            return "persistent_divergence"
+        if len(outside_expected) * 2 < len(paired_dates):
+            return "isolated_divergence"
+        return "unknown"
+
+    def _provider_comparisons(self, site_ids, points, history_points, window):
+        comparisons = []
+        for site_id in site_ids:
+            site_window = self._site_calendar_window(window, site_id)
+            site_timezone = site_window.timezone
+            provider_values = {}
+            provider_dates = {}
+            provider_records = {}
+            for provider, (headline_metric, route_metric) in (
+                PROVIDER_PAGEVIEW_DEFINITIONS.items()
+            ):
+                bindings = self._provider_bindings(site_id, provider)
+                values, invalid_dates = self._final_daily_values(
+                    points, site_id, provider, headline_metric, site_window,
+                    site_timezone,
+                )
+                dates = (
+                    set(values) | self._successful_provider_dates(
+                        site_id, provider, site_window
+                    )
+                ) - invalid_dates
+                values = {
+                    day: values.get(day, Decimal())
+                    for day in dates
+                }
+                first_available, data_through = self._first_and_data_through(
+                    history_points, site_id, provider, headline_metric,
+                    site_window, site_timezone,
+                )
+                if dates:
+                    data_through = max(data_through or "", max(dates))
+                route_enabled = any(
+                    route_analytics_options(binding).enabled
+                    for binding in bindings
+                )
+                provider_values[provider] = values
+                provider_dates[provider] = dates
+                semantics = SOURCE_SEMANTICS.get(
+                    provider, UNKNOWN_SOURCE_SEMANTICS
+                )
+                provider_records[provider] = {
+                    "headline_metric": headline_metric,
+                    "route_metric": route_metric,
+                    "first_available_date": first_available,
+                    "data_through": data_through,
+                    "complete_dates": self._date_summary(dates),
+                    "route_reconciliation": self._route_reconciliation(
+                        points=points,
+                        site_id=site_id,
+                        provider=provider,
+                        headline_metric=headline_metric,
+                        route_metric=route_metric,
+                        complete_dates=dates,
+                        headline_values=values,
+                        route_enabled=route_enabled,
+                        window=site_window,
+                    ),
+                    "semantics": {
+                        "time_basis": semantics.time_basis,
+                        "sampling": semantics.sampling,
+                        "data_state": semantics.data_state,
+                        "pageview_definition": (
+                            "GA4 screenPageViews grouped by normalized pagePath."
+                            if provider == "google-analytics"
+                            else "Umami pageviews grouped by normalized path; visits are not used."
+                        ),
+                    },
+                }
+
+            google_dates = provider_dates["google-analytics"]
+            umami_dates = provider_dates["umami"]
+            paired = sorted(google_dates & umami_dates)
+            google_only = sorted(google_dates - umami_dates)
+            umami_only = sorted(umami_dates - google_dates)
+            google_values = provider_values["google-analytics"]
+            umami_values = provider_values["umami"]
+            numeric_totals_valid = False
+            if paired:
+                google_total = _bounded_pageview_sum(
+                    (google_values[day] for day in paired), daily=False
+                )
+                umami_total = _bounded_pageview_sum(
+                    (umami_values[day] for day in paired), daily=False
+                )
+                numeric_totals_valid = (
+                    google_total is not None and umami_total is not None
+                )
+                if numeric_totals_valid:
+                    absolute_difference = Decimal(
+                        abs(int(google_total) - int(umami_total))
+                    )
+                    if umami_total:
+                        with localcontext() as context:
+                            context.prec = 64
+                            ratio = google_total / umami_total
+                    else:
+                        ratio = None
+                    totals = {
+                        "google_pageviews": _number(google_total),
+                        "umami_pageviews": _number(umami_total),
+                        "absolute_difference": _number(absolute_difference),
+                        "google_to_umami_ratio": (
+                            _number(ratio) if ratio is not None else None
+                        ),
+                    }
+                    low_volume = (
+                        int(google_total) + int(umami_total)
+                        < LOW_VOLUME_PAGEVIEWS
+                    )
+                else:
+                    totals = {
+                        "google_pageviews": None,
+                        "umami_pageviews": None,
+                        "absolute_difference": None,
+                        "google_to_umami_ratio": None,
+                    }
+                    low_volume = False
+            else:
+                totals = {
+                    "google_pageviews": None,
+                    "umami_pageviews": None,
+                    "absolute_difference": None,
+                    "google_to_umami_ratio": None,
+                }
+                low_volume = False
+            state = (
+                self._comparison_evidence_state(
+                    google_values,
+                    umami_values,
+                    paired,
+                    google_only,
+                    umami_only,
+                    low_volume=low_volume,
+                )
+                if not paired or numeric_totals_valid
+                else "unknown"
+            )
+            comparisons.append({
+                "site_id": site_id,
+                "metric_family": "pageviews",
+                "comparable": bool(paired),
+                "evidence_state": state,
+                "paired_dates": self._date_summary(paired),
+                "google_only_dates": self._date_summary(google_only),
+                "umami_only_dates": self._date_summary(umami_only),
+                "first_paired_date": paired[0] if paired else None,
+                "last_paired_date": paired[-1] if paired else None,
+                "totals": totals,
+                "low_volume_warning": low_volume,
+                "providers": provider_records,
+                "semantics": [
+                    "Provider values remain separate; no blending, averaging, substitution, or correctness ranking is performed.",
+                    "Totals and differences use only mature dates complete for both providers.",
+                ],
+                "coverage_limits": [
+                    "Complete dates require final daily facts or a successful current-binding acquisition interval.",
+                    "First available date is the earliest retained final daily fact on or after 2000-01-01, not provider account creation.",
+                    "Low volume means the two paired provider totals combine to fewer than 100 pageviews.",
+                    "Route reconciliation is withheld unless every complete headline date has final normalized route facts.",
+                ],
+            })
+        return comparisons
+
     def render(
         self,
         report_id: str,
@@ -1609,6 +2506,7 @@ class ReportService:
         site_id: str | None = None,
         *,
         include_decision_support: bool = True,
+        include_provider_comparisons: bool = True,
     ) -> dict[str, Any]:
         report, metrics, title, filters = self.definition(report_id, subreport_id)
         if site_id is not None and site_id not in report.site_ids:
@@ -1634,23 +2532,75 @@ class ReportService:
             if subreport_id is None and include_decision_support
             else ()
         )
-        query_metrics = tuple(dict.fromkeys(
-            (*metrics, *weighted_inputs, *decision_metrics)
-        ))
-        current_points = self.store.query(
+        comparison_current_metrics = (
+            PROVIDER_PAGEVIEW_METRICS if include_provider_comparisons else ()
+        )
+        comparison_previous_metrics = (
+            PROVIDER_HEADLINE_PAGEVIEW_METRICS
+            if include_provider_comparisons else ()
+        )
+        requested_query_metrics = tuple(
+            metric for metric in metrics
+            if include_provider_comparisons
+            or metric not in PROVIDER_ROUTE_PAGEVIEW_METRICS
+        )
+        query_metrics = tuple(dict.fromkeys((
+            *requested_query_metrics, *weighted_inputs, *decision_metrics,
+            *comparison_current_metrics,
+        )))
+        previous_query_metrics = tuple(dict.fromkeys((
+            *requested_query_metrics, *weighted_inputs, *decision_metrics,
+            *comparison_previous_metrics,
+        )))
+        current_points = self._query_site_calendar_points(
             client_id=report.client_id,
             site_ids=site_ids,
             metric_ids=query_metrics,
             window=window,
         )
-        previous_points = self.store.query(
+        previous_points = self._query_site_calendar_points(
             client_id=report.client_id,
             site_ids=site_ids,
-            metric_ids=query_metrics,
+            metric_ids=previous_query_metrics,
             window=previous,
         )
         current_points = self._currently_supported_points(current_points)
         previous_points = self._currently_supported_points(previous_points)
+        current_points = self._enforce_explicit_pageview_contract(
+            current_points
+        )
+        previous_points = self._enforce_explicit_pageview_contract(
+            previous_points
+        )
+        provider_points = [
+            point for point in current_points
+            if point.source in PROVIDER_PAGEVIEW_DEFINITIONS
+            and point.metric in PROVIDER_PAGEVIEW_METRICS
+        ] if include_provider_comparisons else []
+        history_points = []
+        if include_provider_comparisons:
+            request_zone = (
+                UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
+            )
+            history_floor = datetime.combine(
+                PROVIDER_HISTORY_START.date(), time.min, request_zone
+            )
+            history_window = QueryWindow(
+                min(history_floor, window.start),
+                window.end,
+                window.timezone,
+                Completeness.UNKNOWN,
+            )
+            history_points = self._query_site_calendar_points(
+                client_id=report.client_id,
+                site_ids=site_ids,
+                metric_ids=PROVIDER_HEADLINE_PAGEVIEW_METRICS,
+                window=history_window,
+            )
+            history_points = self._currently_supported_points(history_points)
+            history_points = self._current_binding_attributed_points(
+                history_points
+            )
         if filters:
             required = dict(filters)
             current_points = [
@@ -1674,7 +2624,7 @@ class ReportService:
             current_points, window, query_metrics
         )
         prior_basis, _prior_freshness = self._aggregate(
-            previous_points, previous, query_metrics
+            previous_points, previous, previous_query_metrics
         )
         requested = set(metrics)
         current = [row for row in current_basis if row["metric"] in requested]
@@ -1867,6 +2817,12 @@ class ReportService:
                 prior_coverage, item["site_id"], item["metric"]
             ) == "complete"
         ]
+        provider_comparisons = (
+            self._provider_comparisons(
+                site_ids, provider_points, history_points, window
+            )
+            if include_provider_comparisons else []
+        )
         return {
             "schema_version": 2,
             "report_id": report.id,
@@ -1899,6 +2855,7 @@ class ReportService:
             "comparison_series": comparable_prior_series,
             "forms_pipeline": forms,
             "decision_support": decision_support,
+            "provider_comparisons": provider_comparisons,
             "warnings": warnings,
             "complete": coverage["status"] == "complete",
         }
@@ -2001,6 +2958,34 @@ def _context(
 
 def to_csv(report: dict[str, Any]) -> str:
     output = io.StringIO(newline="")
+    comparison_fields = [
+        "evidence_state",
+        "paired_date_count",
+        "paired_dates",
+        "google_only_dates",
+        "umami_only_dates",
+        "first_paired_date",
+        "last_paired_date",
+        "google_only_date_count",
+        "umami_only_date_count",
+        "google_complete_dates",
+        "umami_complete_dates",
+        "google_first_available_date",
+        "umami_first_available_date",
+        "google_data_through",
+        "umami_data_through",
+        "google_pageviews",
+        "umami_pageviews",
+        "absolute_difference",
+        "google_to_umami_ratio",
+        "low_volume_warning",
+        "google_route_reconciliation",
+        "google_route_reconciliation_reason",
+        "umami_route_reconciliation",
+        "umami_route_reconciliation_reason",
+        "provider_semantics",
+        "coverage_limits",
+    ]
     fields = [
         "metric",
         "site_id",
@@ -2009,12 +2994,15 @@ def to_csv(report: dict[str, Any]) -> str:
         "value",
         "previous_value",
         "change_percent",
+        "record_type",
+        *comparison_fields,
         *REPORT_CONTEXT_FIELDS,
     ]
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
     for row in report["rows"]:
         exported = {key: row.get(key) for key in fields}
+        exported["record_type"] = "metric"
         exported.update(
             _context(
                 report,
@@ -2027,6 +3015,86 @@ def to_csv(report: dict[str, Any]) -> str:
             "comparison_available", exported.get("comparison_available")
         )
         writer.writerow(exported)
+
+    for comparison in report.get("provider_comparisons", []):
+        providers = comparison["providers"]
+        google = providers["google-analytics"]
+        umami = providers["umami"]
+        totals = comparison["totals"]
+        writer.writerow({
+            "record_type": "provider_comparison",
+            "metric": "provider.pageviews",
+            "site_id": comparison["site_id"],
+            "source": "google-analytics / umami",
+            "unit": "count",
+            "evidence_state": comparison["evidence_state"],
+            "paired_date_count": comparison["paired_dates"]["count"],
+            "paired_dates": json.dumps(
+                comparison["paired_dates"], sort_keys=True, separators=(",", ":")
+            ),
+            "google_only_dates": json.dumps(
+                comparison["google_only_dates"], sort_keys=True, separators=(",", ":")
+            ),
+            "umami_only_dates": json.dumps(
+                comparison["umami_only_dates"], sort_keys=True, separators=(",", ":")
+            ),
+            "first_paired_date": comparison["first_paired_date"],
+            "last_paired_date": comparison["last_paired_date"],
+            "google_only_date_count": comparison["google_only_dates"]["count"],
+            "umami_only_date_count": comparison["umami_only_dates"]["count"],
+            "google_complete_dates": json.dumps(
+                google["complete_dates"], sort_keys=True, separators=(",", ":")
+            ),
+            "umami_complete_dates": json.dumps(
+                umami["complete_dates"], sort_keys=True, separators=(",", ":")
+            ),
+            "google_first_available_date": google["first_available_date"],
+            "umami_first_available_date": umami["first_available_date"],
+            "google_data_through": google["data_through"],
+            "umami_data_through": umami["data_through"],
+            "google_pageviews": totals["google_pageviews"],
+            "umami_pageviews": totals["umami_pageviews"],
+            "absolute_difference": totals["absolute_difference"],
+            "google_to_umami_ratio": totals["google_to_umami_ratio"],
+            "low_volume_warning": comparison["low_volume_warning"],
+            "google_route_reconciliation": (
+                google["route_reconciliation"]["status"]
+            ),
+            "google_route_reconciliation_reason": (
+                google["route_reconciliation"]["reason"]
+            ),
+            "umami_route_reconciliation": (
+                umami["route_reconciliation"]["status"]
+            ),
+            "umami_route_reconciliation_reason": (
+                umami["route_reconciliation"]["reason"]
+            ),
+            "provider_semantics": json.dumps({
+                "comparison": comparison["semantics"],
+                "google-analytics": google["semantics"],
+                "umami": umami["semantics"],
+            }, sort_keys=True, separators=(",", ":")),
+            "coverage_limits": json.dumps(
+                comparison["coverage_limits"], separators=(",", ":")
+            ),
+            "report_id": report["report_id"],
+            "subreport_id": report.get("subreport_id"),
+            "scope_site_id": report.get("site_id"),
+            "window_start": report["window"]["start"],
+            "window_end": report["window"]["end"],
+            "timezone": report["window"]["timezone"],
+            "generated_at": report.get("generated_at"),
+            "aggregation": "paired-complete-dates-only",
+            "coverage_status": comparison["evidence_state"],
+            "comparison_available": comparison["comparable"],
+            "data_through": json.dumps({
+                "google-analytics": google["data_through"],
+                "umami": umami["data_through"],
+            }, sort_keys=True, separators=(",", ":")),
+            "time_basis": "provider-specific; see provider_semantics",
+            "sampling": "provider-specific; see provider_semantics",
+            "data_state": "mature-complete-overlap",
+        })
     return output.getvalue()
 
 

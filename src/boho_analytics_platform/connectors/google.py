@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ..config import route_analytics_options
 from ..credentials import CredentialError, require_text
 from ..models import CapabilitySnapshot, Completeness
-from .common import bearer, binding_site, connection_bindings, daily_point, normalize_route, safe_public_label, sanitize_referrer
+from .common import aggregate_dimension_values, bearer, binding_site, connection_bindings, daily_point, nonnegative_bounded_number, nonnegative_integral_count, normalize_route, site_local_daily_bounds, safe_public_label, sanitize_referrer
 
 
 SEARCH_CONSOLE_TIMEZONE = "America/Los_Angeles"
@@ -188,22 +188,59 @@ class GoogleAnalyticsConnector:
     def collect(self, connection, credential, request):
         token = _access_token(credential); property_id = request.binding.resource_id.removeprefix("properties/")
         options = route_analytics_options(request.binding)
-        route_dates = _route_dates(request.window, site_timezone=binding_site(self.config, request.binding.site_id).timezone, options=options) if options.enabled else None
-        body = _ga_body(request.window.start.date(), request.window.end.date() - timedelta(days=1))
-        result = _require_response(self.http.request("POST", f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport", headers=bearer(token), body=body), "GA4")
         site = binding_site(self.config, request.binding.site_id)
+        local_start, local_end = site_local_daily_bounds(
+            request.window, site.timezone
+        )
+        route_dates = _route_dates(
+            request.window, site_timezone=site.timezone, options=options
+        ) if options.enabled else None
+        body = _ga_body(
+            local_start.date(), local_end.date() - timedelta(days=1)
+        )
+        result = _require_response(self.http.request("POST", f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport", headers=bearer(token), body=body), "GA4")
         _validate_ga_timezone(result, site.timezone)
-        headers = [item["name"] for item in result.get("metricHeaders", [])]
-        for row in result.get("rows", []):
-            raw_day = row["dimensionValues"][0]["value"]; day = f"{raw_day[:4]}-{raw_day[4:6]}-{raw_day[6:]}"
-            for name, value in zip(headers, row.get("metricValues", []), strict=False):
-                if name in self.metrics: yield daily_point(client_id=site.client_id, site_id=site.id,
+        raw_headers = result.get("metricHeaders")
+        rows = result.get("rows", [])
+        if not isinstance(raw_headers, list) or not isinstance(rows, list):
+            raise ValueError("GA4 pageview series was absent or invalid")
+        try:
+            headers = [item["name"] for item in raw_headers]
+        except (KeyError, TypeError):
+            raise ValueError("GA4 pageview series was absent or invalid") from None
+        if headers.count("screenPageViews") != 1:
+            raise ValueError("GA4 pageview series was absent or invalid")
+        pageview_index = headers.index("screenPageViews")
+        for row in rows:
+            dimensions = row.get("dimensionValues", []) if isinstance(row, dict) else []
+            values = row.get("metricValues", []) if isinstance(row, dict) else []
+            if (
+                len(dimensions) != 1
+                or len(values) != len(headers)
+                or not isinstance(values[pageview_index], dict)
+            ):
+                raise ValueError("GA4 headline row was invalid")
+            day = _ga_day(
+                dimensions[0].get("value"), start=local_start.date(),
+                end=local_end.date() - timedelta(days=1),
+            )
+            if day is None:
+                raise ValueError("GA4 headline date was outside the request")
+            for name, value in zip(headers, values, strict=True):
+                if name not in self.metrics:
+                    continue
+                raw_value = value.get("value")
+                if name == "screenPageViews":
+                    raw_value = nonnegative_integral_count(raw_value)
+                    if raw_value is None:
+                        raise ValueError("GA4 pageview count was invalid")
+                yield daily_point(client_id=site.client_id, site_id=site.id,
                     source=self.provider, metric=self.metrics[name], unit="count", day=day,
-                    value=value["value"], timezone=site.timezone)
+                    value=raw_value, timezone=site.timezone)
         geography = _require_response(self.http.request(
             "POST", f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport",
             headers=bearer(token), body=_ga_geography_body(
-                request.window.start.date(), request.window.end.date() - timedelta(days=1))), "GA4")
+                local_start.date(), local_end.date() - timedelta(days=1))), "GA4")
         _validate_ga_timezone(geography, site.timezone)
         geo_headers = [item["name"] for item in geography.get("metricHeaders", [])]
         sessions_index = geo_headers.index("sessions") if "sessions" in geo_headers else None
@@ -216,7 +253,12 @@ class GoogleAnalyticsConnector:
             country = country.strip().upper()
             if len(country) != 2 or not country.isalpha():
                 continue
-            day = f"{raw_day[:4]}-{raw_day[4:6]}-{raw_day[6:]}"
+            day = _ga_day(
+                raw_day, start=local_start.date(),
+                end=local_end.date() - timedelta(days=1),
+            )
+            if day is None:
+                raise ValueError("GA4 geography date was outside the request")
             value = values[sessions_index].get("value")
             if value is None:
                 continue
@@ -236,7 +278,7 @@ class GoogleAnalyticsConnector:
         start, end = route_dates
         definitions = (
             ("landingPagePlusQueryString", "sessions", "google.landing-page-sessions", "route"),
-            ("pagePathPlusQueryString", "screenPageViews", "google.page-path-views", "route"),
+            ("pagePath", "screenPageViews", "google.page-path-views", "route_path_only"),
             ("landingPagePlusQueryString", "engagedSessions", "google.route-engaged-sessions", "route"),
             ("landingPagePlusQueryString", "userEngagementDuration", "google.route-engagement-seconds", "route"),
             ("landingPagePlusQueryString", "keyEvents", "google.route-key-events", "route"),
@@ -248,31 +290,77 @@ class GoogleAnalyticsConnector:
         }
         definitions += tuple(optional_definitions[item] for item in options.ga4_dimensions)
         for dimension, metric, metric_id, dimension_key in definitions:
-            for row in self._ga_rows(token, property_id, start, end, dimension, metric, options):
+            rows, exhaustive = self._ga_rows(
+                token, property_id, start, end, dimension, metric, options
+            )
+            accepted = []
+            rejected = False
+            for row in rows:
                 values = row.get("dimensionValues", [])
                 measures = row.get("metricValues", [])
                 if len(values) < 2 or not measures:
+                    rejected = True
                     continue
-                day = _ga_day(values[0].get("value")); raw = values[1].get("value")
+                day = _ga_day(
+                    values[0].get("value"), start=start, end=end
+                )
+                raw = values[1].get("value")
                 dimensions = _ga_observation_dimensions(
                     dimension_key, raw, site.canonical_url, options
                 )
-                if day and dimensions:
-                    yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                        metric=metric_id, unit="seconds" if metric_id.endswith("seconds") else "count",
-                        day=day, value=measures[0].get("value"), timezone=site.timezone, dimensions=dimensions)
+                measure = measures[0].get("value")
+                if not metric_id.endswith("seconds"):
+                    measure = nonnegative_integral_count(measure)
+                if day and dimensions and measure is not None:
+                    accepted.append((day, dimensions, measure))
+                else:
+                    rejected = True
+            normalized, aggregate_rejected = aggregate_dimension_values(
+                accepted, integral=not metric_id.endswith("seconds")
+            )
+            completeness = (
+                Completeness.FINAL
+                if exhaustive and not rejected and not aggregate_rejected
+                else Completeness.UNKNOWN
+            )
+            for day, dimensions, value in normalized:
+                yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric=metric_id, unit="seconds" if metric_id.endswith("seconds") else "count",
+                    day=day, value=value, timezone=site.timezone, dimensions=dimensions,
+                    completeness=completeness)
         for event_name in options.ga4_event_names:
-            for row in self._ga_rows(token, property_id, start, end, "eventName", "eventCount", options,
-                    filter_name="eventName", filter_value=event_name):
+            rows, exhaustive = self._ga_rows(
+                token, property_id, start, end, "eventName", "eventCount", options,
+                filter_name="eventName", filter_value=event_name
+            )
+            accepted = []
+            rejected = False
+            for row in rows:
                 values = row.get("dimensionValues", []); measures = row.get("metricValues", [])
-                day = _ga_day(values[0].get("value")) if values else None
-                if day and measures:
-                    yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                        metric="google.configured-event-count", unit="count", day=day,
-                        value=measures[0].get("value"), timezone=site.timezone,
-                        dimensions={"event_name": event_name})
+                day = _ga_day(
+                    values[0].get("value"), start=start, end=end
+                ) if values else None
+                measure = nonnegative_integral_count(
+                    measures[0].get("value")
+                ) if measures else None
+                if day and measure is not None:
+                    accepted.append((day, measure))
+                else:
+                    rejected = True
+            completeness = (
+                Completeness.FINAL if exhaustive and not rejected
+                else Completeness.UNKNOWN
+            )
+            for day, value in accepted:
+                yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
+                    metric="google.configured-event-count", unit="count", day=day,
+                    value=value, timezone=site.timezone,
+                    dimensions={"event_name": event_name}, completeness=completeness)
 
     def _ga_rows(self, token, property_id, start, end, dimension, metric, options, *, filter_name=None, filter_value=None):
+        collected = []
+        expected_total = None
+        seen_dimension_keys = set()
         for page in range(options.max_pages):
             offset = page * options.page_size
             result = _require_response(self.http.request("POST",
@@ -280,25 +368,77 @@ class GoogleAnalyticsConnector:
                 headers=bearer(token), body=_ga_observation_body(start, end, dimension=dimension,
                     metric=metric, limit=options.page_size, offset=offset,
                     filter_name=filter_name, filter_value=filter_value)), "GA4")
+            dimension_headers = result.get("dimensionHeaders")
+            metric_headers = result.get("metricHeaders")
+            if (
+                not isinstance(dimension_headers, list)
+                or not isinstance(metric_headers, list)
+                or any(not isinstance(item, dict) for item in dimension_headers)
+                or any(not isinstance(item, dict) for item in metric_headers)
+                or [item.get("name") for item in dimension_headers]
+                != ["date", dimension]
+                or [item.get("name") for item in metric_headers] != [metric]
+            ):
+                return collected, False
             rows = result.get("rows", [])
             if not isinstance(rows, list) or len(rows) > options.page_size:
                 raise ValueError("GA4 route observation rows were invalid")
-            yield from rows
+            page_dimension_keys = set()
+            valid_rows = []
+            invalid_count = False
+            for row in rows:
+                dimensions = row.get("dimensionValues") if isinstance(row, dict) else None
+                measures = row.get("metricValues") if isinstance(row, dict) else None
+                if (
+                    not isinstance(dimensions, list)
+                    or len(dimensions) != 2
+                    or not all(
+                        isinstance(item, dict)
+                        and isinstance(item.get("value"), str)
+                        for item in dimensions
+                    )
+                    or not isinstance(measures, list)
+                    or len(measures) != 1
+                    or not isinstance(measures[0], dict)
+                    or "value" not in measures[0]
+                ):
+                    return collected, False
+                key = tuple(item["value"] for item in dimensions)
+                if key in seen_dimension_keys or key in page_dimension_keys:
+                    return collected, False
+                page_dimension_keys.add(key)
+                if nonnegative_bounded_number(
+                    measures[0]["value"],
+                    integral=metric != "userEngagementDuration",
+                ) is None:
+                    invalid_count = True
+                    continue
+                valid_rows.append(row)
+            seen_dimension_keys.update(page_dimension_keys)
+            if invalid_count:
+                return [*collected, *valid_rows], False
+            collected.extend(valid_rows)
             total = result.get("rowCount")
-            if isinstance(total, bool) or (
-                total is not None
-                and not isinstance(total, int)
-                and not (isinstance(total, str) and total.isdecimal())
-            ):
+            bounded_total = (
+                nonnegative_integral_count(total) if total is not None else None
+            )
+            if total is not None and bounded_total is None:
                 raise ValueError("GA4 route observation rowCount was invalid")
-            total_rows = int(total) if total is not None else None
-            if total_rows is not None and total_rows < 0:
-                raise ValueError("GA4 route observation rowCount was invalid")
-            if len(rows) < options.page_size or (
-                total_rows is not None and offset + len(rows) >= total_rows
+            total_rows = int(bounded_total) if bounded_total is not None else None
+            if total_rows is None:
+                return collected, False
+            if (
+                total_rows < 0
+                or offset + len(rows) > total_rows
+                or (expected_total is not None and total_rows != expected_total)
             ):
-                return
-        raise ValueError("GA4 route observation pagination exceeded configured max_pages")
+                return collected, False
+            expected_total = total_rows
+            if offset + len(rows) == total_rows:
+                return collected, True
+            if len(rows) < options.page_size:
+                return collected, False
+        return collected, False
 
 
 class SearchConsoleConnector:
@@ -337,9 +477,15 @@ class SearchConsoleConnector:
         result = _require_response(self.http.request("POST", f"https://www.googleapis.com/webmasters/v3/sites/{encoded}/searchAnalytics/query", headers=bearer(token), body=body), "Search Console")
         site = binding_site(self.config, request.binding.site_id)
         for row in result.get("rows", []):
+            keys = row.get("keys", [])
+            day = _search_console_day(
+                keys[0] if keys else None, start_date, end_date
+            )
+            if day is None:
+                continue
             for key, (metric, unit) in self.metrics.items():
                 if key in row: yield daily_point(client_id=site.client_id, site_id=site.id,
-                    source=self.provider, metric=metric, unit=unit, day=row["keys"][0], value=row[key],
+                    source=self.provider, metric=metric, unit=unit, day=day, value=row[key],
                     timezone=site.timezone)
         geography = _require_response(self.http.request(
             "POST", f"https://www.googleapis.com/webmasters/v3/sites/{encoded}/searchAnalytics/query",
@@ -348,10 +494,13 @@ class SearchConsoleConnector:
         for row in geography.get("rows", []):
             keys = row.get("keys", [])
             country = str(keys[1]).strip().upper() if len(keys) > 1 else ""
-            if len(country) == 3 and country.isalpha() and "clicks" in row:
+            day = _search_console_day(
+                keys[0] if keys else None, start_date, end_date
+            )
+            if day is not None and len(country) == 3 and country.isalpha() and "clicks" in row:
                 yield daily_point(client_id=site.client_id, site_id=site.id,
                     source=self.provider, metric="search.country-clicks", unit="count",
-                    day=keys[0], value=row["clicks"], timezone=site.timezone,
+                    day=day, value=row["clicks"], timezone=site.timezone,
                     dimensions={"country_code": country, "country_code_system": "iso-alpha3"})
         if options.enabled:
             yield from self._collect_route_observations(token, encoded, start_date, end_date, site, options)
@@ -369,7 +518,10 @@ class SearchConsoleConnector:
         for dimensions, cluster_expression, cluster_id, observation_scope in queries:
             for row in _search_console_rows(self.http, token, encoded, start_date, end_date, dimensions, options, cluster_expression):
                 keys = row.get("keys", [])
-                if len(keys) < 2:
+                day = _search_console_day(
+                    keys[0] if keys else None, start_date, end_date
+                )
+                if len(keys) < 2 or day is None:
                     continue
                 route = normalize_route(keys[1], site.canonical_url,
                     allow_query_parameters=options.allowed_query_parameters, exclusions=options.exclusions)
@@ -397,19 +549,40 @@ class SearchConsoleConnector:
                                           ("ctr", "search.route-ctr", "ratio"), ("position", "search.route-position", "position")):
                     if key in row:
                         yield daily_point(client_id=site.client_id, site_id=site.id, source=self.provider,
-                            metric=metric, unit=unit, day=keys[0], value=row[key], timezone=site.timezone,
+                            metric=metric, unit=unit, day=day, value=row[key], timezone=site.timezone,
                             dimensions=extra, completeness=Completeness.UNKNOWN)
 
 
-def _ga_day(value):
+def _search_console_day(value, start, end):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed < start or parsed > end:
+        return None
+    return parsed.isoformat()
+
+
+def _ga_day(value, *, start=None, end=None):
     if not isinstance(value, str) or len(value) != 8 or not value.isdigit():
         return None
-    return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    if start is None or end is None:
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y%m%d").date()
+    except ValueError:
+        return None
+    if parsed < start or parsed > end:
+        return None
+    return parsed.isoformat()
 
 
 def _ga_observation_dimensions(kind, value, canonical_url, options):
-    if kind == "route":
-        route = normalize_route(value, canonical_url, allow_query_parameters=options.allowed_query_parameters, exclusions=options.exclusions)
+    if kind in {"route", "route_path_only"}:
+        route = normalize_route(value, canonical_url, allow_query_parameters=options.allowed_query_parameters,
+            exclusions=options.exclusions, path_only=kind == "route_path_only")
         return {"route": route} if route else None
     if kind == "referrer":
         return sanitize_referrer(value, canonical_url, approved_domains=options.approved_referrer_domains,
@@ -439,7 +612,7 @@ def _validate_ga_metadata(metadata, options):
         "referrer": "fullReferrer",
     }
     required_dimensions = {
-        "date", "landingPagePlusQueryString", "pagePathPlusQueryString",
+        "date", "landingPagePlusQueryString", "pagePath",
         *(optional_dimensions[item] for item in options.ga4_dimensions),
         *(("eventName",) if options.ga4_event_names else ()),
     }
@@ -471,10 +644,7 @@ def _search_console_rows(http, token, encoded, start_date, end_date, dimensions,
 
 
 def _route_dates(window, *, site_timezone, options):
-    zone = ZoneInfo(site_timezone)
-    start = window.start.astimezone(zone); end = window.end.astimezone(zone)
-    if start.timetz().replace(tzinfo=None) != time.min or end.timetz().replace(tzinfo=None) != time.min:
-        raise ValueError("route observations require whole site-local days")
+    start, end = site_local_daily_bounds(window, site_timezone)
     days = (end.date() - start.date()).days
     if days < 1 or days > options.max_days:
         raise ValueError("route analytics request exceeds configured max_days")

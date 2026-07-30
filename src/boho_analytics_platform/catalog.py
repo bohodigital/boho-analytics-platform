@@ -72,6 +72,7 @@ METRICS = {item.id: item for item in (
     _metric("umami.country-visits", "umami", "count", "window", "Exact-window Umami visits grouped by ISO country code."),
     _metric("umami.region-visits", "umami", "count", "window", "Exact-window Umami visits grouped by country and region code."),
     _metric("umami.route-visits", "umami", "count", "sum", "Umami visits grouped by a normalized internal route.", reportable=False, dimension_sets=(("route",),)),
+    _metric("umami.route-pageviews", "umami", "count", "sum", "Umami pageviews grouped by a normalized internal pathname; never sourced from visits.", reportable=False, dimension_sets=(("route",),)),
     _metric("umami.entry-visits", "umami", "count", "sum", "Umami visits grouped by a normalized entry route.", reportable=False, dimension_sets=(("route",),)),
     _metric("umami.exit-visits", "umami", "count", "sum", "Umami visits grouped by a normalized exit route.", reportable=False, dimension_sets=(("route",),)),
     _metric("umami.page-title-visits", "umami", "count", "sum", "Umami visits grouped by a bounded page title.", reportable=False, dimension_sets=(("page_title",),)),

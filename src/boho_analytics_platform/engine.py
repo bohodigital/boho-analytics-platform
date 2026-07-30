@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, time
 
 from .catalog import validate_points
 from .connectors import build_connector
@@ -14,6 +14,7 @@ from .credentials import ReferenceCredentialProvider
 from .http import JsonHttpClient, ProviderError
 from .models import QueryWindow
 from .storage import LockBusy, SQLiteMetricStore
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,23 @@ class SyncEngine:
                 results.append(SyncResult(connection.id, None, "failed", 0, category))
         return results
 
+    @staticmethod
+    def _binding_window(window: QueryWindow, site_timezone: str) -> QueryWindow:
+        """Project requested calendar dates onto one binding's local timezone."""
+
+        request_zone = (
+            UTC if window.timezone == "UTC" else ZoneInfo(window.timezone)
+        )
+        site_zone = UTC if site_timezone == "UTC" else ZoneInfo(site_timezone)
+        start_day = window.start.astimezone(request_zone).date()
+        end_day = window.end.astimezone(request_zone).date()
+        return QueryWindow(
+            datetime.combine(start_day, time.min, site_zone),
+            datetime.combine(end_day, time.min, site_zone),
+            site_timezone,
+            window.completeness,
+        )
+
     def sync(self, window: QueryWindow, connection_ids: set[str] | None = None) -> list[SyncResult]:
         selected = self._selected_connection_ids(connection_ids)
         selected_bindings = [
@@ -75,24 +93,32 @@ class SyncEngine:
         results: list[SyncResult] = []
         try:
             connection_map = {item.id: item for item in self.config.connections}
+            site_timezones = {
+                site.id: site.timezone for site in self.config.sites
+            }
             for binding in selected_bindings:
                 connection = connection_map[binding.connection_id]
+                binding_window = self._binding_window(
+                    window, site_timezones[binding.site_id]
+                )
                 binding_key = f"{binding.site_id}:{binding.connection_id}:{binding.resource_type}:{binding.resource_id}"
                 run_id = self.store.start_run(
                     connection.id,
                     binding.site_id,
                     binding_key=binding_key,
                     source=connection.provider,
-                    window=window,
+                    window=binding_window,
                 )
                 try:
-                    request = SyncRequest(binding, window, binding.metric_groups)
+                    request = SyncRequest(
+                        binding, binding_window, binding.metric_groups
+                    )
                     with self.credentials.acquire(connection.credential_ref) as credential:
                         points = list(build_connector(connection.provider, self.config, self.http).collect(connection, credential, request))
                     validate_points(points, fixture=connection.provider == "fixture")
                     count = self.store.upsert(points)
                     if count:
-                        data_through = min(max(point.end for point in points), window.end)
+                        data_through = min(max(point.end for point in points), binding_window.end)
                         self.store.set_watermark(binding_key, data_through)
                         self.store.finish_run(
                             run_id,
@@ -107,7 +133,7 @@ class SyncEngine:
                         # acquisition coverage even when the window contains no
                         # events. Preserve event freshness as null while advancing
                         # the query watermark through the requested end.
-                        self.store.set_watermark(binding_key, window.end)
+                        self.store.set_watermark(binding_key, binding_window.end)
                         self.store.finish_run(
                             run_id,
                             "success",
