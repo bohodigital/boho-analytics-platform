@@ -1283,7 +1283,7 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertIn("field=pageviews", http.calls[5][1])
         self.assertIn("field=visits", http.calls[6][1])
 
-    def test_umami_route_availability_must_contain_the_exact_requested_interval(self):
+    def test_umami_route_availability_skips_a_partial_first_day(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
         object.__setattr__(config.bindings[0], "options", {"route_analytics": {
             "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
@@ -1308,12 +1308,52 @@ class ProviderConnectorTests(unittest.TestCase):
             [],
         ]))
 
-        with self.assertRaisesRegex(ValueError, "available date range"):
-            list(connector.collect(
-                config.connections[0],
-                MemoryCredentialLease({"token": b"test"}),
-                SyncRequest(config.bindings[0], one_day, ()),
-            ))
+        points = list(connector.collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+
+        self.assertFalse(any("route" in point.metric for point in points))
+        self.assertEqual(len(connector.http.calls), 5)
+
+    def test_umami_route_availability_accepts_quiet_trailing_hours(self):
+        config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
+        object.__setattr__(config.bindings[0], "options", {"route_analytics": {
+            "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
+        }})
+        one_day = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        connector = UmamiConnector(config, QueueHttp([
+            {"pageviews": [], "sessions": []},
+            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            [],
+            [],
+            {
+                "startDate": "2026-01-01T00:00:00Z",
+                "endDate": "2026-07-01T18:00:00Z",
+            },
+            [{"name": "/safe", "pageviews": 3}],
+            [],
+            [],
+            [],
+        ]))
+
+        points = list(connector.collect(
+            config.connections[0],
+            MemoryCredentialLease({"token": b"test"}),
+            SyncRequest(config.bindings[0], one_day, ()),
+        ))
+
+        route = next(
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        )
+        self.assertEqual(route.value, 3)
+        self.assertIs(route.completeness, Completeness.FINAL)
 
     def test_umami_rejects_invalid_headline_pageview_counts(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')

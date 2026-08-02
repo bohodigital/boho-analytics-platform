@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -145,11 +145,29 @@ class UmamiConnector:
         )
         available_start_local = available_start.astimezone(zone)
         available_end_local = available_end.astimezone(zone)
-        if (
-            start_local < available_start_local
-            or end_local > available_end_local
-        ):
-            raise ValueError("Umami route analytics request is outside the provider available date range")
+        # Umami's daterange is the first/last observed event extent, not a
+        # coverage interval. Convert it to conservative whole-day bounds so a
+        # quiet evening does not invalidate an otherwise complete daily sync.
+        trustworthy_start = datetime.combine(
+            available_start_local.date()
+            + (
+                timedelta(days=1)
+                if available_start_local.time() != time.min
+                else timedelta()
+            ),
+            time.min,
+            zone,
+        )
+        trustworthy_end = datetime.combine(
+            available_end_local.date() + timedelta(days=1),
+            time.min,
+            zone,
+        )
+        route_start = max(start_local, trustworthy_start)
+        route_end = min(end_local, trustworthy_end)
+        if route_start >= route_end:
+            return
+        days = (route_end.date() - route_start.date()).days
         definitions = (
             ("path", "pageviews", "umami.route-pageviews", "route"),
             ("path", "visits", "umami.route-visits", "route"),
@@ -169,7 +187,7 @@ class UmamiConnector:
             }[item],
         ) for item in options.umami_dimensions)
         for offset in range(days):
-            day = start_local.date() + timedelta(days=offset)
+            day = route_start.date() + timedelta(days=offset)
             start = datetime.combine(day, datetime.min.time(), zone)
             end = start + timedelta(days=1)
             query = urlencode({"startAt": int(start.timestamp() * 1000), "endAt": int(end.timestamp() * 1000), "timezone": site.timezone})
@@ -196,7 +214,7 @@ class UmamiConnector:
                     Completeness.FINAL
                     if (
                         exhaustive and not rejected and not aggregate_rejected
-                        and end <= available_end.astimezone(zone)
+                        and end <= trustworthy_end
                     )
                     else Completeness.UNKNOWN
                 )

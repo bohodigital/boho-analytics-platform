@@ -49,6 +49,10 @@ the first stable release.
 
 ### Fixed
 
+- Treated Umami's reported date range as an event extent and clamped route acquisition to
+  conservative whole-day bounds, preventing quiet trailing hours from failing otherwise valid
+  headline and route bindings.
+
 - Closed the provider-comparability acceptance findings: exact-half multi-date divergence is
   `unknown`; GA4 pagination requires exact requested headers, row arity, and bounded values; Umami
   detects overlapping raw page identities without double-counting; and retained invalid pageview
