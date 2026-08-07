@@ -16,7 +16,7 @@ from importlib.resources import files
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .build_info import build_identity
-from .catalog import METRICS, SOURCE_SEMANTICS
+from .catalog import METRICS, SOURCE_SEMANTICS, search_console_metric_supported
 from .credentials import ReferenceCredentialProvider, require_text
 from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
@@ -508,7 +508,12 @@ JS = r"""
     const liveStatus = document.getElementById("chart-live-status");
     const legend = document.getElementById("chart-legend");
     if (!series.length) {
-      status.textContent = "No stored daily values match this selection.";
+      const context = canvas.getContext("2d");
+      if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+      if (legend) legend.replaceChildren();
+      canvas.onpointermove = null;
+      canvas.onpointerleave = null;
+      status.textContent = payload.availability_note || "No stored daily values match this selection.";
       if (liveStatus) liveStatus.textContent = status.textContent;
       canvas.dataset.rendered = "empty";
       return;
@@ -1269,6 +1274,12 @@ def _source_label(source: str) -> str:
     return SOURCE_LABELS.get(source, source.replace("-", " ").title())
 
 
+def _search_type_label(search_type: str) -> str:
+    return {
+        "googleNews": "Google News",
+    }.get(search_type, search_type.replace("_", " ").title())
+
+
 def _format_value(value: int | float | None, unit: str = "count") -> str:
     if value is None:
         return "—"
@@ -1531,9 +1542,23 @@ def _summary_cards(result, expected_metrics, site_names=None):
                 f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells{site_scope_note}'
             )
         else:
-            value = "Unknown"
-            badge = '<span class="trend flat">Not observed</span>'
-            detail = f"{note} - no stored observation{site_scope_note}"
+            unavailable_position = (
+                selected_metric == "search.position"
+                and not search_console_metric_supported(
+                    selected_metric, result.get("search_type")
+                )
+            )
+            value = "Not available" if unavailable_position else "Unknown"
+            badge = (
+                '<span class="trend flat">Unsupported surface</span>'
+                if unavailable_position
+                else '<span class="trend flat">Not observed</span>'
+            )
+            detail = (
+                "Google does not define average position for Discover or Google News; clicks, impressions, and CTR remain available."
+                if unavailable_position
+                else f"{note} - no stored observation{site_scope_note}"
+            )
         state = "withheld" if withheld else "partial" if partial else "observed" if observed else "unknown"
         unit = total.get("unit", "count") if total else "count"
         source_id = total.get("source") if total else None
@@ -3620,11 +3645,19 @@ def handler_factory(config, store, credentials=None):
             )
             rows = []
             for point in points:
-                dimension_names = {key for key, _value in point.dimensions}
+                point_dimensions = dict(point.dimensions)
+                if (
+                    point.source == "search-console"
+                    and not search_console_metric_supported(
+                        point.metric, point_dimensions.get("search_type")
+                    )
+                ):
+                    continue
+                dimension_names = set(point_dimensions)
                 if dimension_names & {"query", "query_cluster"}:
                     continue
                 dimensions = {
-                    key: value for key, value in point.dimensions
+                    key: value for key, value in point_dimensions.items()
                     if key in ROUTE_OBSERVATION_DIMENSIONS
                 }
                 point_route = dimensions.get("route") or dimensions.get("referrer_route")
@@ -4036,7 +4069,17 @@ def handler_factory(config, store, credentials=None):
                 else "unavailable"
             )
             warnings = []
-            if not raw_current and current and current_coverage["status"] == "complete":
+            availability_note = (
+                "Google does not define average position for Discover or Google News. Select clicks, impressions, or CTR for this surface."
+                if metric == "search.position"
+                and not search_console_metric_supported(
+                    metric, report.get("search_type")
+                )
+                else None
+            )
+            if availability_note:
+                warnings.append(availability_note)
+            elif not raw_current and current and current_coverage["status"] == "complete":
                 warnings.append(
                     "The provider query completed for this selection; displayed zeroes are query-proven quiet dates."
                 )
@@ -4061,6 +4104,7 @@ def handler_factory(config, store, credentials=None):
                 "metric_label": _metric_label(metric) if metric else "Daily series",
                 "unit": METRICS[metric].unit if metric else "count",
                 "lower_is_better": metric in LOWER_IS_BETTER_METRICS,
+                "availability_note": availability_note,
                 "search_type": (
                     report.get("search_type") if source == "search-console" else None
                 ),
@@ -4307,7 +4351,7 @@ def handler_factory(config, store, credentials=None):
                 for source in represented_sources
             )
             search_type_options = "".join(
-                f'<option value="{_e(search_type)}"{" selected" if search_type == selected_search_type else ""}>{_e(search_type.replace("_", " ").title())}</option>'
+                f'<option value="{_e(search_type)}"{" selected" if search_type == selected_search_type else ""}>{_e(_search_type_label(search_type))}</option>'
                 for search_type in available_search_types
             )
             search_type_field = (
@@ -4414,7 +4458,7 @@ def handler_factory(config, store, credentials=None):
             controls_open = " open" if is_plot else ""
             coverage_summary = _coverage_summary_html(result)
             surface_context = (
-                f' · Search Console surface {_e(selected_search_type)}'
+                f' · Search Console surface {_e(_search_type_label(selected_search_type))}'
                 if selected_search_type else ""
             )
             chart_panel = (
@@ -4465,7 +4509,7 @@ def handler_factory(config, store, credentials=None):
                 f'<span>Window: {_e(start)} to {_e(end)} (end exclusive)</span>'
                 f'<span>Scope: {_e(scope_site_label)}</span>'
                 f'<span>Primary chart: {_e(_metric_label(selected_metric)) if selected_metric else "none"}</span>'
-                + (f'<span>Search surface: {_e(selected_search_type)}</span>' if selected_search_type else "")
+                + (f'<span>Search surface: {_e(_search_type_label(selected_search_type))}</span>' if selected_search_type else "")
                 + '</p>'
             )
 

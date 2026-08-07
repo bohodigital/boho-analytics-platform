@@ -266,6 +266,46 @@ class SearchConsoleFeedTests(unittest.TestCase):
             ["byPage", "byPage"],
         )
 
+    def test_non_search_surfaces_omit_position_and_query_wording(self):
+        config = self.config(
+            'search_types = ["discover", "googleNews"]\n'
+            'page_size = 10\nmax_pages = 2\n'
+            'search_console_query_text = true\n'
+            'search_console_page_query = true'
+        )
+        responses = []
+        for search_type in ("discover", "googleNews"):
+            control = search_row(["2026-07-01"])
+            country = search_row(["2026-07-01", "usa"])
+            if search_type == "discover":
+                control["position"] = 0
+                country["position"] = 0
+            else:
+                control.pop("position")
+                country.pop("position")
+            responses.extend([
+                {"responseAggregationType": "byPage", "rows": [control]},
+                {"responseAggregationType": "byPage", "rows": [country]},
+                {"responseAggregationType": "byPage", "rows": []},
+            ])
+
+        points, http = self.collect(config, responses)
+        self.assertFalse(any(point.metric.endswith("position") for point in points))
+        self.assertEqual(
+            {point.metric for point in points},
+            {
+                "search.clicks", "search.impressions", "search.ctr",
+                "search.country-clicks", "search.country-impressions",
+                "search.country-ctr",
+            },
+        )
+        self.assertFalse(any(
+            "query" in call[3]["dimensions"] for call in http.calls
+        ))
+        self.assertTrue(all(
+            call[3]["aggregationType"] == "byPage" for call in http.calls
+        ))
+
     def test_query_and_page_query_capture_redacts_and_aggregates_unsafe_text(self):
         config = self.config(
             'page_size = 2\nmax_pages = 4\n'
@@ -506,6 +546,89 @@ class SearchConsoleFeedTests(unittest.TestCase):
         self.assertIn("query-cluster-brand_terms", cluster.slice.slice_key)
         self.assertEqual(
             dict(cluster.points[0].dimensions)["query_cluster"], "brand_terms"
+        )
+
+    def test_query_clusters_are_not_requested_for_discover(self):
+        config = self.config(
+            'enabled = true\nsearch_type = "discover"\n'
+            'page_size = 10\nmax_pages = 4\n'
+            '[bindings.options.route_analytics.query_clusters]\n'
+            'brand_terms = "boho|biscuit"'
+        )
+        options = route_analytics_options(config.bindings[0])
+        http = QueueHttp([
+            {"responseAggregationType": "byPage", "rows": []},
+        ])
+
+        batches = list(SearchConsoleConnector(config, http)._collect_route_batches(
+            "token", "encoded", date(2026, 7, 1), date(2026, 7, 1),
+            config.sites[0], options,
+        ))
+
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(len(http.calls), 1)
+        self.assertNotIn("dimensionFilterGroups", http.calls[0][3])
+
+    def test_discover_appearance_routes_do_not_require_position(self):
+        config = self.config(
+            'enabled = true\nsearch_type = "discover"\n'
+            'search_console_dimensions = ["searchAppearance"]\n'
+            'page_size = 10\nmax_pages = 4'
+        )
+        options = route_analytics_options(config.bindings[0])
+        http = QueueHttp([
+            {"responseAggregationType": "byPage", "rows": []},
+            {
+                "responseAggregationType": "byPage",
+                "rows": [search_row(["DISCOVER_CARD"], position=None)],
+            },
+            {"responseAggregationType": "byPage", "rows": []},
+            {
+                "responseAggregationType": "byPage",
+                "rows": [search_row([
+                    "2026-07-01", "https://example.com/story/"
+                ], position=None)],
+            },
+            {"responseAggregationType": "byPage", "rows": []},
+        ])
+        for response in http.responses:
+            for row in response.get("rows", []):
+                row.pop("position", None)
+
+        batches = list(SearchConsoleConnector(config, http)._collect_route_batches(
+            "token", "encoded", date(2026, 7, 1), date(2026, 7, 1),
+            config.sites[0], options,
+        ))
+
+        route_points = [
+            point for batch in batches for point in batch.points
+            if point.metric.startswith("search.route-")
+        ]
+        self.assertTrue(route_points)
+        self.assertFalse(any(
+            point.metric == "search.route-position" for point in route_points
+        ))
+
+    def test_discover_skips_the_unsupported_device_route_dimension(self):
+        config = self.config(
+            'enabled = true\nsearch_type = "discover"\n'
+            'search_console_dimensions = ["country", "device"]\n'
+            'page_size = 10\nmax_pages = 4'
+        )
+        options = route_analytics_options(config.bindings[0])
+        http = QueueHttp([
+            {"responseAggregationType": "byPage", "rows": []},
+            {"responseAggregationType": "byPage", "rows": []},
+        ])
+
+        list(SearchConsoleConnector(config, http)._collect_route_batches(
+            "token", "encoded", date(2026, 7, 1), date(2026, 7, 1),
+            config.sites[0], options,
+        ))
+
+        self.assertEqual(
+            [call[3]["dimensions"] for call in http.calls],
+            [["date", "page"], ["date", "page", "country"]],
         )
 
     def test_hourly_feed_is_bounded_and_uses_incomplete_marker(self):

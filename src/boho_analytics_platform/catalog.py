@@ -68,6 +68,22 @@ SOURCE_SEMANTICS = {
 }
 
 
+SEARCH_CONSOLE_POSITION_SEARCH_TYPES = frozenset({
+    "web", "image", "video", "news",
+})
+
+
+def search_console_metric_supported(metric: str, search_type: str | None) -> bool:
+    """Return whether Google defines this metric for the selected surface."""
+
+    position_metric = metric == "search.position" or (
+        metric.startswith("search.") and metric.endswith("-position")
+    )
+    if not position_metric or search_type is None:
+        return True
+    return search_type in SEARCH_CONSOLE_POSITION_SEARCH_TYPES
+
+
 _SEARCH_CONTROL_DIMENSIONS = (
     (
         "aggregation", "data_state", "provider_date", "provider_timezone",
@@ -177,28 +193,28 @@ METRICS = {item.id: item for item in (
     _metric("search.impressions", "search-console", "count", "sum", "Final or explicitly provisional Search Console property-level impressions for one search type and Pacific provider date.", dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
     _metric("search.ctr", "search-console", "ratio", "weighted", "Search Console row CTR; not additive.",
         coverage_inputs=("search.clicks", "search.impressions"), dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
-    _metric("search.position", "search-console", "position", "weighted", "Search Console average position; not additive.",
+    _metric("search.position", "search-console", "position", "weighted", "Search Console average position for Google Search result surfaces (web, image, video, and News); not available for Discover or Google News and not additive.",
         coverage_inputs=("search.impressions", "search.position"), dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
     _metric("search.country-clicks", "search-console", "count", "sum", "Provider-limited Search Console clicks grouped by country.", reportable=False, dimension_sets=_SEARCH_COUNTRY_DIMENSIONS),
     _metric("search.country-impressions", "search-console", "count", "sum", "Provider-limited Search Console impressions grouped by country.", reportable=False, dimension_sets=_SEARCH_COUNTRY_DIMENSIONS),
     _metric("search.country-ctr", "search-console", "ratio", "weighted", "Provider-limited Search Console country CTR; not additive.", coverage_inputs=("search.country-clicks", "search.country-impressions"), reportable=False, dimension_sets=_SEARCH_COUNTRY_DIMENSIONS),
-    _metric("search.country-position", "search-console", "position", "weighted", "Provider-limited Search Console country position, weighted by impressions.", coverage_inputs=("search.country-impressions", "search.country-position"), reportable=False, dimension_sets=_SEARCH_COUNTRY_DIMENSIONS),
+    _metric("search.country-position", "search-console", "position", "weighted", "Provider-limited Search Console country position for Google Search result surfaces; unavailable for Discover or Google News and weighted by impressions.", coverage_inputs=("search.country-impressions", "search.country-position"), reportable=False, dimension_sets=_SEARCH_COUNTRY_DIMENSIONS),
     _metric("search.route-clicks", "search-console", "count", "sum", "Search Console clicks grouped by normalized canonical page route and explicit observation scope.", reportable=False, dimension_sets=_SEARCH_ROUTE_DIMENSIONS),
     _metric("search.route-impressions", "search-console", "count", "sum", "Search Console impressions grouped by normalized canonical page route and explicit observation scope.", reportable=False, dimension_sets=_SEARCH_ROUTE_DIMENSIONS),
     _metric("search.route-ctr", "search-console", "ratio", "weighted", "Search Console route CTR; not additive.", coverage_inputs=("search.route-clicks", "search.route-impressions"), reportable=False, dimension_sets=_SEARCH_ROUTE_DIMENSIONS),
-    _metric("search.route-position", "search-console", "position", "weighted", "Search Console route position; not additive.", coverage_inputs=("search.route-impressions", "search.route-position"), reportable=False, dimension_sets=_SEARCH_ROUTE_DIMENSIONS),
+    _metric("search.route-position", "search-console", "position", "weighted", "Search Console route position for Google Search result surfaces; unavailable for Discover or Google News and not additive.", coverage_inputs=("search.route-impressions", "search.route-position"), reportable=False, dimension_sets=_SEARCH_ROUTE_DIMENSIONS),
     _metric("search.query-clicks", "search-console", "count", "sum", "Provider-limited Search Console clicks grouped by privacy-screened query wording.", reportable=False, dimension_sets=_SEARCH_QUERY_DIMENSIONS),
     _metric("search.query-impressions", "search-console", "count", "sum", "Provider-limited Search Console impressions grouped by privacy-screened query wording.", reportable=False, dimension_sets=_SEARCH_QUERY_DIMENSIONS),
     _metric("search.query-ctr", "search-console", "ratio", "weighted", "Provider-limited Search Console query CTR; not additive.", coverage_inputs=("search.query-clicks", "search.query-impressions"), reportable=False, dimension_sets=_SEARCH_QUERY_DIMENSIONS),
-    _metric("search.query-position", "search-console", "position", "weighted", "Provider-limited Search Console query position, weighted by impressions.", coverage_inputs=("search.query-impressions", "search.query-position"), reportable=False, dimension_sets=_SEARCH_QUERY_DIMENSIONS),
+    _metric("search.query-position", "search-console", "position", "weighted", "Provider-limited Search Console query position for Google Search result surfaces, weighted by impressions.", coverage_inputs=("search.query-impressions", "search.query-position"), reportable=False, dimension_sets=_SEARCH_QUERY_DIMENSIONS),
     _metric("search.page-query-clicks", "search-console", "count", "sum", "Provider-limited Search Console clicks grouped by page and privacy-screened query wording.", reportable=False, dimension_sets=_SEARCH_PAGE_QUERY_DIMENSIONS),
     _metric("search.page-query-impressions", "search-console", "count", "sum", "Provider-limited Search Console impressions grouped by page and privacy-screened query wording.", reportable=False, dimension_sets=_SEARCH_PAGE_QUERY_DIMENSIONS),
     _metric("search.page-query-ctr", "search-console", "ratio", "weighted", "Provider-limited Search Console page-query CTR; not additive.", coverage_inputs=("search.page-query-clicks", "search.page-query-impressions"), reportable=False, dimension_sets=_SEARCH_PAGE_QUERY_DIMENSIONS),
-    _metric("search.page-query-position", "search-console", "position", "weighted", "Provider-limited Search Console page-query position, weighted by impressions.", coverage_inputs=("search.page-query-impressions", "search.page-query-position"), reportable=False, dimension_sets=_SEARCH_PAGE_QUERY_DIMENSIONS),
+    _metric("search.page-query-position", "search-console", "position", "weighted", "Provider-limited Search Console page-query position for Google Search result surfaces, weighted by impressions.", coverage_inputs=("search.page-query-impressions", "search.page-query-position"), reportable=False, dimension_sets=_SEARCH_PAGE_QUERY_DIMENSIONS),
     _metric("search.hourly-clicks", "search-console", "count", "sum", "Provisional Search Console hourly clicks for one explicit search type.", reportable=False, dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
     _metric("search.hourly-impressions", "search-console", "count", "sum", "Provisional Search Console hourly impressions for one explicit search type.", reportable=False, dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
     _metric("search.hourly-ctr", "search-console", "ratio", "weighted", "Provisional Search Console hourly CTR; not additive.", coverage_inputs=("search.hourly-clicks", "search.hourly-impressions"), reportable=False, dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
-    _metric("search.hourly-position", "search-console", "position", "weighted", "Provisional Search Console hourly position, weighted by impressions.", coverage_inputs=("search.hourly-impressions", "search.hourly-position"), reportable=False, dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
+    _metric("search.hourly-position", "search-console", "position", "weighted", "Provisional Search Console hourly position for Google Search result surfaces; unavailable for Discover or Google News and weighted by impressions.", coverage_inputs=("search.hourly-impressions", "search.hourly-position"), reportable=False, dimension_sets=_SEARCH_CONTROL_DIMENSIONS),
     _metric("forms.submissions", "cloudflare-forms", "count", "sum", "Durably stored form submissions."),
     _metric("forms.pending", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is pending."),
     _metric("forms.sent", "cloudflare-forms", "count", "sum", "Stored submissions whose notification is marked sent."),

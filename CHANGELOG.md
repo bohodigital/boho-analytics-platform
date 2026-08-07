@@ -76,10 +76,14 @@ the first stable release.
 
 ### Fixed
 
-- Corrected Umami's pageview-response `sessions` semantics to `umami.daily-visitors`, rejected
-  timezone-less series timestamps, retained partial first-observed days as `UNKNOWN`, and required
-  all documented exact-window stats fields instead of accepting silent empty success. Inclusive
-  provider end timestamps now stop one millisecond before each platform-exclusive boundary.
+- Corrected Umami's pageview-response `sessions` semantics to `umami.daily-visitors`, interpreted
+  timezone-less midnight series labels in the explicitly requested timezone, retained partial
+  first-observed days as `UNKNOWN`, and required all documented exact-window stats fields instead
+  of accepting silent empty success. Inclusive provider end timestamps now stop one millisecond
+  before each platform-exclusive boundary.
+- Made Search Console metrics surface-aware: Discover and Google News no longer fail when Google
+  omits position, never persist a synthetic zero position, skip unsupported query wording reads,
+  and present average position as unavailable instead of complete or missing on those surfaces.
 - Preserved Search Console's Pacific date on every daily fact, used `dataState=all` metadata to
   separate fresh provisional headline rows from settled detail, prevented incomplete empty
   snapshots from deleting current facts, and raised the implicit Search Console pagination plan to

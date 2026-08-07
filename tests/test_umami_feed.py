@@ -5,6 +5,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo
 
 from boho_analytics_platform.config import load_config, route_analytics_options
 from boho_analytics_platform.connectors.umami import UmamiConnector
@@ -55,17 +56,16 @@ class UmamiFeedTests(unittest.TestCase):
         )
         self.credential = MemoryCredentialLease({"token": b"test-token"})
 
-    def config(self, route_analytics=None):
+    def config(self, route_analytics=None, *, timezone="UTC"):
         path = self.root / "analytics.toml"
-        path.write_text(
-            config_text(
+        text = config_text(
                 self.root / "state.db",
                 self.fixture,
                 provider="umami",
                 options='base_url = "https://analytics.example.invalid"',
-            ),
-            encoding="utf-8",
         )
+        text = text.replace('timezone = "UTC"', f'timezone = "{timezone}"')
+        path.write_text(text, encoding="utf-8")
         config = load_config(path)
         if route_analytics is not None:
             object.__setattr__(
@@ -104,9 +104,9 @@ class UmamiFeedTests(unittest.TestCase):
                 "daily visitor count",
             ),
             (
-                [{"x": "2026-07-01T00:00:00", "y": 1}],
+                [{"x": "2026-07-01 12:00:00", "y": 1}],
                 [],
-                "timezone-less",
+                "midnight bucket",
             ),
         ):
             with self.subTest(message=message):
@@ -115,6 +115,40 @@ class UmamiFeedTests(unittest.TestCase):
                         config,
                         QueueHttp([{"pageviews": pageviews, "sessions": sessions}]),
                     )
+
+        pacific = ZoneInfo("America/Los_Angeles")
+        local_config = self.config(timezone="America/Los_Angeles")
+        local_window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=pacific),
+            datetime(2026, 7, 3, tzinfo=pacific),
+            "America/Los_Angeles",
+        )
+        points = self.collect(
+            local_config,
+            QueueHttp(
+                [
+                    {
+                        "pageviews": [{"x": "2026-07-01 00:00:00", "y": 2}],
+                        "sessions": [{"x": "2026-07-01 00:00:00", "y": 1}],
+                    },
+                    stats_response(pageviews=2),
+                    [],
+                    [],
+                ]
+            ),
+            local_window,
+        )
+        self.assertEqual(
+            {
+                point.metric: point.start.date().isoformat()
+                for point in points
+                if point.metric in {"umami.pageviews", "umami.daily-visitors"}
+            },
+            {
+                "umami.pageviews": "2026-07-01",
+                "umami.daily-visitors": "2026-07-01",
+            },
+        )
 
         for key in ("pageviews", "visitors", "visits", "bounces", "totaltime"):
             with self.subTest(stats_key=key):

@@ -1176,7 +1176,15 @@ def _series_day(value, timezone: str) -> date:
                 raise ValueError("Umami returned an unsupported series timestamp") from exc
         else:
             if parsed.tzinfo is None or parsed.utcoffset() is None:
-                raise ValueError("Umami returned a timezone-less series timestamp")
+                # Umami's daily series can return a local ISO label without an
+                # offset even though the request explicitly names a timezone.
+                # Interpret that label in the requested timezone; do not assume
+                # UTC and shift it into a different reporting day.
+                if parsed.time() != time.min:
+                    raise ValueError(
+                        "Umami daily series timestamp was not a midnight bucket"
+                    )
+                return parsed.replace(tzinfo=zone).date()
             return parsed.astimezone(zone).date()
     if isinstance(value, (int, float)):
         try:

@@ -12,7 +12,12 @@ from decimal import Decimal, localcontext
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from .catalog import METRICS, SOURCE_SEMANTICS, SourceSemantics
+from .catalog import (
+    METRICS,
+    SOURCE_SEMANTICS,
+    SourceSemantics,
+    search_console_metric_supported,
+)
 from .config import binding_observation_boundary, route_analytics_options
 from .contracts import PAGEVIEW_DATA_RESULT_KIND, explicit_pageview_result_kind
 from .models import Completeness, QueryWindow, TimeGrain
@@ -319,7 +324,10 @@ class ReportService:
         return [
             point for point in points
             if METRICS[point.metric].source != "search-console"
-            or cls._point_search_type(point) == search_type
+            or (
+                cls._point_search_type(point) == search_type
+                and search_console_metric_supported(point.metric, search_type)
+            )
         ]
 
     def _window_has_observation_boundary(
@@ -877,7 +885,12 @@ class ReportService:
 
         by_site_source = []
         by_metric_counts: dict[str, dict[str, int]] = {
-            metric: {"expected": 0, "covered": 0, "configured_sites": 0}
+            metric: {
+                "expected": 0,
+                "covered": 0,
+                "configured_sites": 0,
+                "unsupported_sites": 0,
+            }
             for metric in requested_metrics
         }
         source_health = []
@@ -909,6 +922,20 @@ class ReportService:
                     metric_expected = 0
                     metric_covered = 0
                     evidence_providers: set[str] = set()
+                    if (
+                        configured
+                        and source == "search-console"
+                        and not search_console_metric_supported(metric, search_type)
+                    ):
+                        by_metric_counts[metric]["unsupported_sites"] += 1
+                        metric_status[metric] = "unavailable"
+                        metric_coverage[metric] = {
+                            "status": "unavailable",
+                            "expected": 0,
+                            "covered": 0,
+                        }
+                        metric_evidence_providers[metric] = []
+                        continue
                     if not configured:
                         metric_status[metric] = "not_configured"
                         metric_coverage[metric] = {
@@ -1016,6 +1043,10 @@ class ReportService:
                     status = "not_configured"
                 elif covered_cells == expected_cells and expected_cells:
                     status = "complete"
+                elif metric_status and all(
+                    item == "unavailable" for item in metric_status.values()
+                ):
+                    status = "unavailable"
                 else:
                     status = "partial"
 
@@ -1083,7 +1114,10 @@ class ReportService:
         by_metric: dict[str, str] = {}
         for metric, counts in by_metric_counts.items():
             if not counts["configured_sites"]:
-                by_metric[metric] = "not_configured"
+                by_metric[metric] = (
+                    "unavailable" if counts["unsupported_sites"]
+                    else "not_configured"
+                )
             elif counts["expected"] and counts["expected"] == counts["covered"]:
                 by_metric[metric] = "complete"
             else:
@@ -1828,7 +1862,7 @@ class ReportService:
                     "the scope until each card uses compatible actual sources."
                 ),
             })
-        if report_coverage["status"] != "complete":
+        if report_coverage["status"] == "partial":
             attention.append({
                 "id": "data_coverage",
                 "severity": "review",
@@ -2864,7 +2898,8 @@ class ReportService:
             metric for metric in metrics
             if metric not in observed_metrics
             and summary_totals[metric]["value"] is None
-            and summary_totals[metric]["coverage_status"] != "not_configured"
+            and summary_totals[metric]["coverage_status"]
+            not in {"not_configured", "unavailable"}
         )
         withheld = sorted(
             metric for metric in metrics
@@ -2881,6 +2916,17 @@ class ReportService:
                 "No observations match the selected window for: "
                 + ", ".join(missing)
             )
+        if (
+            "search.position" in metrics
+            and selected_search_type is not None
+            and not search_console_metric_supported(
+                "search.position", selected_search_type
+            )
+        ):
+            warnings.append(
+                "Search Console average position is not defined for Discover or "
+                "Google News, so it is shown as unavailable rather than zero."
+            )
         if withheld:
             warnings.append(
                 "Partial aggregate withheld for: " + ", ".join(withheld)
@@ -2891,7 +2937,7 @@ class ReportService:
                 "Daily unique metrics are shown only as daily series and are not "
                 "summed into window uniques: " + ", ".join(series_only)
             )
-        if coverage["status"] != "complete":
+        if coverage["status"] == "partial":
             warnings.append(
                 "Coverage is incomplete for one or more requested site, source, metric, or date cells."
             )

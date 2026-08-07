@@ -15,6 +15,9 @@ queries and labels only exact whole-day windows in the configured site timezone.
 visitors, visits, bounces, and total time come from `stats`. All five documented stats fields are
 required and the stats pageview total must reconcile exactly to the daily series. Exact-window
 metrics are never summed across overlapping sync intervals.
+Umami can serialize a non-UTC daily bucket as a timezone-less midnight label after applying the
+requested timezone. The connector interprets only that midnight form in the explicit request
+timezone; it does not relabel it as UTC or accept an arbitrary timezone-less time.
 Platform windows are half-open; Umami's inclusive `endAt` is sent as one millisecond before the
 exclusive boundary so adjacent days and 31-day headline chunks cannot count midnight twice.
 Country and region visit aggregates come from `metrics/expanded`. They keep the exact requested
@@ -136,6 +139,11 @@ clicks and impressions, and position remains impression-weighted in reporting. T
 must exactly match an accessible URL-prefix or domain property.
 `search_types = ["all"]` executes web, image, video, News, Discover, and Google News independently;
 search type stays in both fact identity and acquisition scope, so those surfaces are never blended.
+Average position is emitted only for the four Google Search result surfaces (web, image, video, and
+News). Discover and Google News omit position and do not expose query wording; the connector neither
+turns that absence into zero nor requests query/page-query dimensions for those two surfaces.
+Discover also omits the device grouping; the connector keeps page, country, appearance, and date
+evidence but does not issue the unsupported Discover page/device combination.
 Request dates use Search Console's `America/Los_Angeles` provider basis. Returned provider date
 labels map into the same-named configured site reporting-day bucket. Every daily fact also retains
 `provider_date` and `provider_timezone=America/Los_Angeles`, while the acquisition slice retains the

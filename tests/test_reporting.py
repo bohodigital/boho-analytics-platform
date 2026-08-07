@@ -2806,7 +2806,11 @@ timezone = "UTC"
             "search.clicks", 4, 1, "count",
             dimensions=(*base_dimensions, ("search_type", "image")),
         )
-        self.store.upsert([web, image])
+        legacy_discover_position = metric(
+            "search.position", 0, 1, "position",
+            dimensions=(*base_dimensions, ("search_type", "discover")),
+        )
+        self.store.upsert([web, image, legacy_discover_position])
         service = ReportService(self.config, self.store)
 
         default_report = service.render(
@@ -2865,6 +2869,63 @@ timezone = "UTC"
         )
         self.assertEqual(metric_csv["search_type"], "image")
         self.assertEqual(series_csv["search_type"], "image")
+
+        discover_report = service.render(
+            "summary", self.window, search_type="discover",
+            include_decision_support=False,
+            include_provider_comparisons=False,
+        )
+        discover_position = discover_report["summary_totals"]["search.position"]
+        self.assertEqual(discover_position["coverage_status"], "unavailable")
+        self.assertEqual(discover_position["expected_cells"], 0)
+        self.assertEqual(discover_position["covered_cells"], 0)
+        self.assertIsNone(discover_position["value"])
+        self.assertFalse(any(
+            row["metric"] == "search.position"
+            for row in discover_report["rows"]
+        ))
+        self.assertFalse(any(
+            row["metric"] == "search.position"
+            for row in discover_report["series"]
+        ))
+        search_bucket = next(
+            item for item in discover_report["coverage"]["by_site_source"]
+            if item["source"] == "search-console"
+        )
+        self.assertEqual(
+            search_bucket["metric_status"]["search.position"], "unavailable"
+        )
+        self.assertFalse(any(
+            "No observations match" in warning
+            and "search.position" in warning
+            for warning in discover_report["warnings"]
+        ))
+        self.assertTrue(any(
+            "average position is not defined" in warning
+            for warning in discover_report["warnings"]
+        ))
+
+        summary_config = next(
+            item for item in self.config.reports if item.id == "summary"
+        )
+        object.__setattr__(summary_config, "metric_ids", ("search.position",))
+        unsupported_only = service.render(
+            "summary", self.window, search_type="discover"
+        )
+        unsupported_bucket = next(
+            item for item in unsupported_only["coverage"]["by_site_source"]
+            if item["source"] == "search-console"
+        )
+        self.assertEqual(unsupported_bucket["status"], "unavailable")
+        self.assertEqual(unsupported_only["coverage"]["status"], "unavailable")
+        self.assertFalse(any(
+            "Coverage is incomplete" in warning
+            for warning in unsupported_only["warnings"]
+        ))
+        self.assertFalse(any(
+            item["id"] == "data_coverage"
+            for item in unsupported_only["decision_support"]["attention_items"]
+        ))
         with self.assertRaisesRegex(ValueError, "search type is unavailable"):
             service.render(
                 "summary", self.window, search_type="bogus",

@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from ..catalog import SEARCH_CONSOLE_POSITION_SEARCH_TYPES
 from ..config import route_analytics_options
 from ..credentials import CredentialError, require_text
 from ..models import (
@@ -48,6 +49,28 @@ _SEARCH_METRIC_FIELDS = (
     ("ctr", "ctr", "ratio"),
     ("position", "position", "position"),
 )
+
+
+def _search_console_metric_fields(search_type: str):
+    """Return only metrics Google defines for the selected search surface."""
+
+    if search_type in SEARCH_CONSOLE_POSITION_SEARCH_TYPES:
+        return _SEARCH_METRIC_FIELDS
+    return tuple(item for item in _SEARCH_METRIC_FIELDS if item[0] != "position")
+
+
+def _search_console_supports_query_dimension(search_type: str) -> bool:
+    """Discover and Google News do not expose search-query wording."""
+
+    return search_type not in {"discover", "googleNews"}
+
+
+def _search_console_supports_route_dimension(
+    search_type: str, dimension: str
+) -> bool:
+    """Apply the narrower grouping contract of non-Search reports."""
+
+    return not (search_type == "discover" and dimension == "device")
 
 
 def _access_token(credential) -> str:
@@ -213,12 +236,13 @@ def _search_console_response_aggregation(result: dict, expected: str) -> None:
 
 
 def _search_console_metrics(
-    row: object, *, require_all: bool = False, recompute_ctr: bool = False
+    row: object, *, require_all: bool = False, recompute_ctr: bool = False,
+    metric_fields=_SEARCH_METRIC_FIELDS,
 ) -> dict[str, Decimal]:
     if not isinstance(row, dict):
         raise ValueError("Search Console returned an invalid row")
     output: dict[str, Decimal] = {}
-    for key, _suffix, _unit in _SEARCH_METRIC_FIELDS:
+    for key, _suffix, _unit in metric_fields:
         if key not in row:
             continue
         value = nonnegative_bounded_number(
@@ -227,7 +251,7 @@ def _search_console_metrics(
         if value is None or (key == "ctr" and value > 1):
             raise ValueError("Search Console returned an invalid metric value")
         output[key] = value
-    if require_all and set(output) != {item[0] for item in _SEARCH_METRIC_FIELDS}:
+    if require_all and set(output) != {item[0] for item in metric_fields}:
         raise ValueError("Search Console row omitted required metrics")
     if recompute_ctr:
         if not {"clicks", "impressions"} <= output.keys():
@@ -803,11 +827,17 @@ class SearchConsoleConnector:
                 yield from self._collect_route_batches(
                     token, encoded, start_date, settled_end, site, options
                 )
-            if options.search_console_query_text:
+            if (
+                options.search_console_query_text
+                and _search_console_supports_query_dimension(options.search_type)
+            ):
                 yield from self._collect_query_batches(
                     token, encoded, start_date, settled_end, site, options
                 )
-            if options.search_console_page_query:
+            if (
+                options.search_console_page_query
+                and _search_console_supports_query_dimension(options.search_type)
+            ):
                 yield from self._collect_page_query_batches(
                     token, encoded, start_date, settled_end, site, options
                 )
@@ -847,6 +877,7 @@ class SearchConsoleConnector:
         )
         points = []
         seen_days = set()
+        metric_fields = _search_console_metric_fields(options.search_type)
         for row in rows:
             keys = row.get("keys", []) if isinstance(row, dict) else []
             day = _search_console_day(
@@ -856,7 +887,8 @@ class SearchConsoleConnector:
                 raise ValueError("Search Console headline dates were invalid")
             seen_days.add(day)
             values = _search_console_metrics(
-                row, require_all=True, recompute_ctr=True
+                row, require_all=True, recompute_ctr=True,
+                metric_fields=metric_fields,
             )
             completeness = (
                 Completeness.PROVISIONAL
@@ -866,10 +898,10 @@ class SearchConsoleConnector:
             dimensions = _search_console_daily_dimensions(
                 base_dimensions, day
             )
-            for key, (metric, unit) in self.metrics.items():
+            for key, suffix, unit in metric_fields:
                 points.append(daily_point(
                     client_id=site.client_id, site_id=site.id,
-                    source=self.provider, metric=metric, unit=unit, day=day,
+                    source=self.provider, metric=f"search.{suffix}", unit=unit, day=day,
                     value=values[key], timezone=site.timezone,
                     dimensions=dimensions,
                     completeness=completeness,
@@ -933,7 +965,8 @@ class SearchConsoleConnector:
                     "country_code": country,
                     "country_code_system": "iso-alpha3",
                 }, _search_console_metrics(
-                    row, require_all=True, recompute_ctr=True
+                    row, require_all=True, recompute_ctr=True,
+                    metric_fields=_search_console_metric_fields(options.search_type),
                 )))
             points = tuple(_daily_search_points(
                 site, self.provider, "search.country", entries,
@@ -995,7 +1028,8 @@ class SearchConsoleConnector:
                     "observation_scope": "query",
                     **_search_console_query_dimensions(keys[1]),
                 }, _search_console_metrics(
-                    row, require_all=True, recompute_ctr=True
+                    row, require_all=True, recompute_ctr=True,
+                    metric_fields=_search_console_metric_fields(options.search_type),
                 )))
             points = tuple(_daily_search_points(
                 site, self.provider, "search.query", entries,
@@ -1061,7 +1095,8 @@ class SearchConsoleConnector:
                     **_search_console_query_dimensions(keys[2]),
                     "route": route,
                 }, _search_console_metrics(
-                    row, require_all=True, recompute_ctr=True
+                    row, require_all=True, recompute_ctr=True,
+                    metric_fields=_search_console_metric_fields(options.search_type),
                 )))
             points = tuple(_daily_search_points(
                 site, self.provider, "search.page-query", entries,
@@ -1104,6 +1139,9 @@ class SearchConsoleConnector:
         ordinary_dimensions = tuple(
             item for item in options.search_console_dimensions
             if item != "searchAppearance"
+            and _search_console_supports_route_dimension(
+                options.search_type, item
+            )
         )
         for provider_day in _provider_days(start_date, end_date):
             queries = [(["date", "page"], (), None, "page", "page")]
@@ -1111,11 +1149,12 @@ class SearchConsoleConnector:
                 (["date", "page", item], (), item, f"page-{item}", item)
                 for item in ordinary_dimensions
             )
-            queries.extend(
-                (["date", "page"], (("query", "includingRegex", expression),),
-                 cluster_id, "query-cluster", f"query-cluster-{cluster_id}")
-                for cluster_id, expression in options.query_clusters
-            )
+            if _search_console_supports_query_dimension(options.search_type):
+                queries.extend(
+                    (["date", "page"], (("query", "includingRegex", expression),),
+                     cluster_id, "query-cluster", f"query-cluster-{cluster_id}")
+                    for cluster_id, expression in options.query_clusters
+                )
             for (
                 dimensions, filters, scope_value, observation_scope, identifier
             ) in queries:
@@ -1127,6 +1166,7 @@ class SearchConsoleConnector:
                 entries, rejected = _route_search_entries(
                     evidence.rows, dimensions, provider_day, site, options, base,
                     observation_scope, scope_value,
+                    _search_console_metric_fields(options.search_type),
                 )
                 points = tuple(_daily_search_points(
                     site, self.provider, "search.route", entries,
@@ -1166,7 +1206,8 @@ class SearchConsoleConnector:
                 discovery_rejected = 0
                 for row in discovery.rows:
                     _search_console_metrics(
-                        row, require_all=True, recompute_ctr=True
+                        row, require_all=True, recompute_ctr=True,
+                        metric_fields=_search_console_metric_fields(options.search_type),
                     )
                     label = safe_public_label(row["keys"][0], maximum=80)
                     if label is None or label in appearances:
@@ -1210,6 +1251,7 @@ class SearchConsoleConnector:
                         evidence.rows, ["date", "page"], provider_day,
                         site, options,
                         base, "page-searchAppearance", appearance,
+                        _search_console_metric_fields(options.search_type),
                     )
                     points = tuple(_daily_search_points(
                         site, self.provider, "search.route", entries,
@@ -1278,6 +1320,7 @@ class SearchConsoleConnector:
         seen = set()
         points = []
         any_provisional = False
+        metric_fields = _search_console_metric_fields(options.search_type)
         for row in rows:
             keys = row.get("keys", []) if isinstance(row, dict) else []
             hour = _search_console_hour(keys[0] if len(keys) == 1 else None,
@@ -1286,7 +1329,8 @@ class SearchConsoleConnector:
                 raise ValueError("Search Console hourly rows were invalid")
             seen.add(hour)
             values = _search_console_metrics(
-                row, require_all=True, recompute_ctr=True
+                row, require_all=True, recompute_ctr=True,
+                metric_fields=metric_fields,
             )
             completeness = (
                 Completeness.PROVISIONAL
@@ -1296,7 +1340,7 @@ class SearchConsoleConnector:
             any_provisional = any_provisional or (
                 completeness is Completeness.PROVISIONAL
             )
-            for key, suffix, unit in _SEARCH_METRIC_FIELDS:
+            for key, suffix, unit in metric_fields:
                 points.append(MetricPoint(
                     site.client_id, site.id, self.provider,
                     f"search.hourly-{suffix}", unit,
@@ -1512,7 +1556,7 @@ def _daily_search_points(site, provider, metric_prefix, entries, completeness):
 
 def _route_search_entries(
     rows, dimensions, provider_day, site, options, base,
-    observation_scope, scope_value,
+    observation_scope, scope_value, metric_fields=_SEARCH_METRIC_FIELDS,
 ):
     entries = []
     rejected = 0
@@ -1549,7 +1593,8 @@ def _route_search_entries(
                 rejected += 1
                 continue
         entries.append((day, extra, _search_console_metrics(
-            row, require_all=True, recompute_ctr=True
+            row, require_all=True, recompute_ctr=True,
+            metric_fields=metric_fields,
         )))
     return entries, rejected
 

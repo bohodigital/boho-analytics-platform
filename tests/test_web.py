@@ -30,6 +30,7 @@ from boho_analytics_platform.web import (
     _performance_by_site_html,
     _provider_comparisons_html,
     _snapshot_status_text,
+    _search_type_label,
     _site_option_enabled,
     _summary_cards,
     handler_factory,
@@ -39,6 +40,10 @@ from tests.site_graph.test_analysis import seed_site_graph
 
 
 class WebTests(unittest.TestCase):
+    def test_search_type_label_preserves_google_news_wordmark(self):
+        self.assertEqual(_search_type_label("googleNews"), "Google News")
+        self.assertEqual(_search_type_label("discover"), "Discover")
+
     def test_search_surface_only_filters_search_console_site_options(self):
         available = {
             "umami": {"umami-only"},
@@ -786,6 +791,8 @@ metric_groups = ["traffic"]
         self.assertIn('const effectiveStyle = lowerIsBetter ? "line" : payload.style', body)
         self.assertIn('selectedSource !== "search-console"', body)
         self.assertIn("updateStyleOptions", body)
+        self.assertIn("canvas.onpointermove = null", body)
+        self.assertIn("if (legend) legend.replaceChildren()", body)
         self.assertNotIn("createLinearGradient", body)
         self.assertIn('requestedSource === "search-console"', body)
         self.assertIn('url.searchParams.delete("search_type")', body)
@@ -906,6 +913,92 @@ metric_groups = ["traffic"]
         self.assertIn("36.4", html)
         self.assertNotIn("8.0%", html)
         self.assertNotIn("132.8", html)
+
+    def test_discover_position_is_explicitly_unavailable(self):
+        result = {
+            "subreport_id": "search",
+            "search_type": "discover",
+            "rows": [],
+            "summary_totals": {
+                "search.position": {
+                    "metric": "search.position",
+                    "source": "search-console",
+                    "unit": "position",
+                    "aggregation": "weighted",
+                    "value": None,
+                    "previous_value": None,
+                    "change_percent": None,
+                    "coverage_status": "unavailable",
+                    "comparison_available": False,
+                }
+            },
+            "forms_pipeline": None,
+        }
+        html = _summary_cards(result, ("search.position",))
+        self.assertIn("Not available", html)
+        self.assertIn("Unsupported surface", html)
+        self.assertIn("does not define average position", html)
+
+        search_binding = self.config.bindings[0]
+        object.__setattr__(search_binding, "options", {
+            "route_analytics": {"search_types": ["all"]},
+        })
+        object.__setattr__(
+            self.config.reports[0],
+            "metric_ids",
+            (*self.config.reports[0].metric_ids, "search.position"),
+        )
+        status, _headers, body = self.request(
+            "/api/v1/series?report=summary&view=plot"
+            "&source=search-console&metric=search.position"
+            "&style=line&search_type=discover"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["series"], [])
+        self.assertIn(
+            "does not define average position", payload["availability_note"]
+        )
+        self.assertIn(payload["availability_note"], payload["warnings"])
+
+    def test_route_observations_hide_legacy_discover_position_zeroes(self):
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+
+        def route_position(search_type, value):
+            return MetricPoint(
+                "example-client", "example-site", "search-console",
+                "search.route-position", "position", start,
+                start + timedelta(days=1), TimeGrain.DAY, Decimal(value),
+                tuple(sorted((
+                    ("aggregation", "byPage"),
+                    ("data_state", "final"),
+                    ("observation_scope", "page"),
+                    ("provider_date", "2026-07-01"),
+                    ("provider_timezone", "America/Los_Angeles"),
+                    ("route", "/story/"),
+                    ("search_type", search_type),
+                ))),
+                Completeness.FINAL, start + timedelta(hours=12),
+            )
+
+        self.store.upsert([
+            route_position("discover", "0"),
+            route_position("web", "4"),
+        ])
+        status, _headers, body = self.request(
+            "/api/v1/route-observations?report=summary&site=example-site"
+            "&source=search-console&metric=search.route-position"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["total_rows"], 1)
+        self.assertEqual(payload["rows"][0]["value"], "4")
+        self.assertEqual(
+            payload["rows"][0]["dimensions"]["search_type"], "web"
+        )
 
     def test_forms_cards_preserve_unknown_pipeline_values(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]

@@ -112,6 +112,12 @@ country, appearance, and other high-dimensional Search Analytics reads are provi
 not exhaustive exports. When neither pagination bound is configured, Search Console detail uses
 25,000 rows per page and three calls so two full pages plus the required terminal empty call can
 prove the API's 50,000-row ceiling. Smaller explicit bounds remain valid but fail closed at the cap.
+Average position is defined only for Google Search result surfaces (`web`, `image`, `video`, and
+`news`). Discover and Google News collect clicks, impressions, and CTR without inventing a zero
+position. Those two surfaces also do not expose search-query wording, so query and page/query reads
+are skipped even when the binding enables those optional families. Discover's report also does
+not expose a device grouping, so a configured `device` route dimension is skipped for Discover
+while remaining enabled for the Google Search and Google News surfaces that support it.
 
 For Umami, `umami_dimensions = ["all"]` expands to every supported privacy-safe aggregate:
 browser, channel, country, device, domain, event name, hostname, language, operating system,
