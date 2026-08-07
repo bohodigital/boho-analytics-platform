@@ -39,9 +39,13 @@ class CatalogTests(unittest.TestCase):
             metric="search.route-clicks",
             source="search-console",
             dimensions=(
+                ("aggregation", "byPage"),
                 ("data_state", "final"),
                 ("observation_scope", "page"),
+                ("provider_date", "2026-07-01"),
+                ("provider_timezone", "America/Los_Angeles"),
                 ("route", "/about"),
+                ("search_type", "web"),
             ),
         )
         validate_points([valid])
@@ -60,10 +64,76 @@ class CatalogTests(unittest.TestCase):
         self.assertFalse(definition.reportable)
         self.assertNotEqual(definition.id, METRICS["umami.route-visits"].id)
 
+    def test_gsc_control_and_detail_metrics_carry_provider_semantics(self):
+        self.assertIn(
+            (
+                "aggregation", "data_state", "provider_date",
+                "provider_timezone", "search_type",
+            ),
+            METRICS["search.clicks"].dimension_sets,
+        )
+        self.assertIn(
+            ("aggregation", "data_state", "search_type"),
+            METRICS["search.hourly-clicks"].dimension_sets,
+        )
+        self.assertFalse(METRICS["search.query-clicks"].reportable)
+        self.assertFalse(METRICS["search.page-query-clicks"].reportable)
+        self.assertIn(
+            (
+                "aggregation", "data_state", "observation_scope",
+                "provider_date", "provider_timezone", "query_text",
+                "query_visibility", "route", "search_type",
+            ),
+            METRICS["search.page-query-clicks"].dimension_sets,
+        )
+
+    def test_umami_expanded_metrics_use_one_generic_safe_dimension_contract(self):
+        definition = METRICS["umami.dimension-visits"]
+        self.assertEqual(definition.source, "umami")
+        self.assertEqual(
+            definition.dimension_sets,
+            (("dimension_type", "dimension_value", "dimension_value_kind"),),
+        )
+        self.assertFalse(definition.reportable)
+
+    def test_geography_buckets_are_dimension_only_not_scalar_report_metrics(self):
+        expected = {
+            "umami.country-visits": (
+                ("country_code", "country_code_system"),
+            ),
+            "umami.region-visits": (
+                ("country_code", "country_code_system", "region_code"),
+                ("country_code", "country_code_system", "region_name"),
+            ),
+            "cloudflare.country-visits": (
+                ("country_code", "country_code_system"),
+            ),
+            "google.country-sessions": (
+                ("country_code", "country_code_system"),
+            ),
+            "google.region-sessions": (
+                ("country_code", "country_code_system", "region_code"),
+                ("country_code", "country_code_system", "region_name"),
+            ),
+        }
+
+        for metric, dimension_sets in expected.items():
+            with self.subTest(metric=metric):
+                self.assertFalse(METRICS[metric].reportable)
+                self.assertEqual(METRICS[metric].dimension_sets, dimension_sets)
+
     def test_source_semantics_do_not_claim_unknown_provider_details(self):
         self.assertEqual(
             SOURCE_SEMANTICS["search-console"].time_basis,
-            "America/Los_Angeles-provider-date-mapped-to-site-day",
+            "explicit-America/Los_Angeles-provider-date-mapped-to-site-reporting-day",
+        )
+        self.assertEqual(
+            SOURCE_SEMANTICS["search-console"].sampling,
+            "control-totals-plus-provider-top-rows",
+        )
+        self.assertEqual(
+            SOURCE_SEMANTICS["search-console"].data_state,
+            "request-labeled-final-or-provisional",
         )
         self.assertEqual(SOURCE_SEMANTICS["cloudflare"].sampling, "adaptive")
         self.assertEqual(

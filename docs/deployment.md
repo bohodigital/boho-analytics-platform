@@ -66,6 +66,16 @@ and `analytics_definition_retirements`) must initially be empty. Re-run initiali
 idempotent no-op, verify integrity and foreign keys, and prove the older runtime refuses schema 5.
 This repository change does not authorize a production migration.
 
+The schema-6 acquisition-provenance upgrade is also additive, but it cuts Search Console and Umami
+to identity version 2. Before an authorized cutover, stop writers, create and verify an online
+schema-5 backup, run migration 006 on a disposable copy, and compare every pre-existing table's row
+count and deterministic fingerprint. The two new provenance tables must initially be empty. After
+upgrade, run fresh source-backed GSC and Umami syncs before treating those providers as current;
+version-1 rows remain retained lineage and are not rewritten. Verify the pinned migration-006
+tables, indexes, immutability triggers, record hashes, foreign keys, and a known report window before
+re-enabling the timer. This repository change does not authorize that production migration or the
+separate Search Console BigQuery export setup.
+
 Before any package build or release handoff, run `python scripts/verify_release.py` from the exact
 reviewed Git checkout. The verifier requires a clean tracked and untracked status and independently
 recomputes the filesystem Git tree. For a Git archive or another export without `.git`, preserve the
@@ -98,8 +108,10 @@ Test restores away from the live state path. A live restore requires `--confirm`
 validates source integrity, foreign keys, the schema marker, and every schema-5 definition's
 canonical type-specific privacy contract and immutable hashes. It also requires the exact migration
 005 table, index, and trigger definitions and recursively resolves every embedded typed version
-reference. A source schema outside the running package's supported range is rejected before any
-copy, and the destination schema marker must still match the source after copying.
+reference. Schema-6 sources additionally require the exact migration-006 provenance schema and
+valid acquisition-slice and normalized-observation hashes and linkage. A source schema outside the
+running package's supported range is rejected before any copy, and the destination schema marker
+must still match the source after copying.
 Retained-version activation,
 reuse, reference resolution, and current-definition reads repeat semantic, content-hash,
 version-identity, and immutable version-record validation; current

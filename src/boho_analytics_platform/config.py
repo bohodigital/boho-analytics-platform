@@ -101,7 +101,11 @@ class RouteAnalyticsOptions:
     exclusions: tuple[str, ...] = ()
     approved_referrer_domains: tuple[str, ...] = ()
     search_type: str = "web"
+    search_types: tuple[str, ...] = ("web",)
     search_console_dimensions: tuple[str, ...] = ()
+    search_console_query_text: bool = False
+    search_console_page_query: bool = False
+    search_console_hourly: bool = False
     ga4_dimensions: tuple[str, ...] = ()
     umami_dimensions: tuple[str, ...] = ()
     query_clusters: tuple[tuple[str, str], ...] = ()
@@ -190,8 +194,10 @@ def route_analytics_options(binding: BindingConfig) -> RouteAnalyticsOptions:
         raise ConfigError("binding route_analytics must be a TOML table")
     allowed = {
         "enabled", "max_days", "page_size", "max_pages", "allowed_query_parameters",
-        "excluded_routes", "approved_referrer_domains", "search_type",
-        "search_console_dimensions", "query_clusters", "ga4_event_names", "umami_event_names",
+        "excluded_routes", "approved_referrer_domains", "search_type", "search_types",
+        "search_console_dimensions", "search_console_query_text",
+        "search_console_page_query", "search_console_hourly", "query_clusters",
+        "ga4_event_names", "umami_event_names",
         "ga4_dimensions", "umami_dimensions",
     }
     _reject_unknown(raw, allowed, "binding route_analytics")
@@ -204,21 +210,70 @@ def route_analytics_options(binding: BindingConfig) -> RouteAnalyticsOptions:
     query_parameters = _route_query_keys(raw.get("allowed_query_parameters", []))
     exclusions = _route_paths(raw.get("excluded_routes", []))
     domains = _route_domains(raw.get("approved_referrer_domains", []))
-    search_type = raw.get("search_type", "web")
-    if search_type not in {"web", "image", "video", "news", "discover", "googleNews"}:
-        raise ConfigError("binding route_analytics.search_type is unsupported")
-    dimensions = _route_enum_list(
-        raw.get("search_console_dimensions", []), "search_console_dimensions",
-        {"device", "country", "searchAppearance"},
+    search_type_choices = (
+        "web", "image", "video", "news", "discover", "googleNews",
     )
+    if "search_type" in raw and "search_types" in raw:
+        raise ConfigError(
+            "binding route_analytics must use search_type or search_types, not both"
+        )
+    if "search_types" in raw:
+        raw_search_types = raw["search_types"]
+        if raw_search_types == ["all"]:
+            search_types = search_type_choices
+        else:
+            search_types = _route_enum_list(
+                raw_search_types, "search_types", set(search_type_choices),
+            )
+            if not search_types:
+                raise ConfigError(
+                    "binding route_analytics.search_types must not be empty"
+                )
+    else:
+        search_type = raw.get("search_type", "web")
+        if search_type not in set(search_type_choices):
+            raise ConfigError("binding route_analytics.search_type is unsupported")
+        search_types = (search_type,)
+    search_type = search_types[0]
+    search_dimension_choices = {"device", "country", "searchAppearance"}
+    raw_search_dimensions = raw.get("search_console_dimensions", [])
+    if raw_search_dimensions == ["all"]:
+        dimensions = tuple(sorted(search_dimension_choices))
+    else:
+        dimensions = _route_enum_list(
+            raw_search_dimensions, "search_console_dimensions",
+            search_dimension_choices,
+        )
+    search_console_query_text = _route_bool(
+        raw, "search_console_query_text", False
+    )
+    search_console_page_query = _route_bool(
+        raw, "search_console_page_query", False
+    )
+    search_console_hourly = _route_bool(
+        raw, "search_console_hourly", False
+    )
+    if search_console_page_query and not search_console_query_text:
+        raise ConfigError(
+            "binding route_analytics.search_console_page_query requires "
+            "search_console_query_text"
+        )
     ga4_dimensions = _route_enum_list(
         raw.get("ga4_dimensions", []), "ga4_dimensions",
         {"title", "channel", "referrer"},
     )
-    umami_dimensions = _route_enum_list(
-        raw.get("umami_dimensions", []), "umami_dimensions",
-        {"title", "channel", "domain", "device", "country"},
-    )
+    umami_choices = {
+        "title", "channel", "domain", "country", "region", "referrer",
+        "browser", "os", "device", "language", "screen", "hostname",
+        "tag", "event",
+    }
+    raw_umami_dimensions = raw.get("umami_dimensions", [])
+    if raw_umami_dimensions == ["all"]:
+        umami_dimensions = tuple(sorted(umami_choices))
+    else:
+        umami_dimensions = _route_enum_list(
+            raw_umami_dimensions, "umami_dimensions", umami_choices,
+        )
     clusters_raw = raw.get("query_clusters", {})
     if not isinstance(clusters_raw, dict) or len(clusters_raw) > 20:
         raise ConfigError("binding route_analytics.query_clusters must be a table with at most 20 entries")
@@ -233,7 +288,12 @@ def route_analytics_options(binding: BindingConfig) -> RouteAnalyticsOptions:
         enabled=enabled, max_days=max_days, page_size=page_size, max_pages=max_pages,
         allowed_query_parameters=query_parameters, exclusions=exclusions,
         approved_referrer_domains=domains, search_type=search_type,
-        search_console_dimensions=dimensions, ga4_dimensions=ga4_dimensions,
+        search_types=search_types,
+        search_console_dimensions=dimensions,
+        search_console_query_text=search_console_query_text,
+        search_console_page_query=search_console_page_query,
+        search_console_hourly=search_console_hourly,
+        ga4_dimensions=ga4_dimensions,
         umami_dimensions=umami_dimensions,
         query_clusters=tuple(sorted(clusters)),
         ga4_event_names=_route_keys(raw.get("ga4_event_names", []), "ga4_event_names"),
@@ -245,6 +305,13 @@ def _route_int(value: Mapping[str, Any], key: str, default: int, low: int, high:
     raw = value.get(key, default)
     if isinstance(raw, bool) or not isinstance(raw, int) or not low <= raw <= high:
         raise ConfigError(f"binding route_analytics.{key} must be an integer from {low} to {high}")
+    return raw
+
+
+def _route_bool(value: Mapping[str, Any], key: str, default: bool) -> bool:
+    raw = value.get(key, default)
+    if not isinstance(raw, bool):
+        raise ConfigError(f"binding route_analytics.{key} must be a boolean")
     return raw
 
 

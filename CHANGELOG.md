@@ -8,9 +8,23 @@ the first stable release.
 ### Added
 
 - Added provider-correct route pageview acquisition: GA4 uses `pagePath` with
-  `screenPageViews`, while Umami uses paginated `metrics/expanded` requests with
-  `type=path` and `field=pageviews`. Safe rows from an unproven pagination boundary remain
-  `UNKNOWN`; route visits are never relabeled as pageviews.
+  `screenPageViews`, while Umami parses the pageview and visit fields returned together by one
+  paginated `metrics/expanded?type=path` request. Safe rows from an unproven pagination boundary
+  remain `UNKNOWN`; route visits are never relabeled as pageviews.
+- Expanded Search Console acquisition with explicit search type, data state, and aggregation on
+  every request; per-day bounded geography, page, query, page/query, device, country, appearance,
+  and query-cluster views; privacy-screened query wording; and a recent `hourly_all` provisional
+  feed. `search_types = ["all"]` keeps all six Google search surfaces in separate scopes, while
+  `search_console_dimensions = ["all"]` expands the supported breakdowns. High-dimensional Search
+  Analytics rows never claim exhaustive coverage.
+- Expanded Umami v3 acquisition to validate and retain every privacy-safe aggregate measure for
+  explicitly enabled dimension families, require and reconcile the complete stats response, paginate configured
+  geography and website discovery, and collect timezone-bound configured event series without
+  event properties.
+- Added schema-6 immutable acquisition slices and normalized fact observations. Provider scope,
+  request dimensions, aggregation, data state, page/row/rejection counts, and exhaustion evidence
+  are retained alongside a read-optimized current fact snapshot; raw provider payloads remain out
+  of storage.
 - Added GA4/Umami pageview comparisons over mature complete overlapping dates only, with separate
   provider coverage, source-only dates, paired totals, difference, ratio, low-volume and evidence
   states, exact route-to-headline reconciliation, and explicit withholding reasons. HTML, JSON,
@@ -47,7 +61,34 @@ the first stable release.
   `HEAD`, exported trees require an independently supplied tree ID, and modified, staged, deleted,
   or additional allowlisted content now fails closed.
 
+### Changed
+
+- Reworked the loopback analytics dashboard around an operational first view: provider-qualified
+  KPIs, exact report-cell coverage, a unit-aware primary trend, per-site performance, concise action
+  items, and progressively disclosed reconciliation and data-health evidence. The interface no
+  longer calls coverage confidence or trust, and it distinguishes observed partial totals, true
+  zeroes, new activity, and unavailable comparisons. KPI totals disclose contributing/configured
+  site scope; geography copy follows the active provider payload; lower-is-better metrics are
+  line-only; and pointer inspection no longer floods assistive-technology live regions.
+- Search Console reporting selects and discloses one search surface before aggregation. Umami daily
+  unique visitors remain a daily series instead of being presented as a report-window unique total;
+  dimensioned geography stays in its dimension-aware consumer.
+
 ### Fixed
+
+- Corrected Umami's pageview-response `sessions` semantics to `umami.daily-visitors`, rejected
+  timezone-less series timestamps, retained partial first-observed days as `UNKNOWN`, and required
+  all documented exact-window stats fields instead of accepting silent empty success. Inclusive
+  provider end timestamps now stop one millisecond before each platform-exclusive boundary.
+- Preserved Search Console's Pacific date on every daily fact, used `dataState=all` metadata to
+  separate fresh provisional headline rows from settled detail, prevented incomplete empty
+  snapshots from deleting current facts, and raised the implicit Search Console pagination plan to
+  two 25,000-row pages plus a terminal exhaustion call. Hourly requests remain provisional whenever
+  an incomplete marker exists, and pagination reaches the exact 50,000-row offset even when the
+  configured page size does not divide that ceiling.
+
+- Corrected GA4 country totals so sessions are summed across all returned regions instead of the
+  last region overwriting the country fact.
 
 - Treated Umami's reported date range as an event extent and clamped route acquisition to
   conservative whole-day bounds, preventing quiet trailing hours from failing otherwise valid

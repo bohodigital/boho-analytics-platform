@@ -114,9 +114,54 @@ class SyncEngine:
                         binding, binding_window, binding.metric_groups
                     )
                     with self.credentials.acquire(connection.credential_ref) as credential:
-                        points = list(build_connector(connection.provider, self.config, self.http).collect(connection, credential, request))
+                        connector = build_connector(
+                            connection.provider, self.config, self.http
+                        )
+                        collect_batches = getattr(connector, "collect_batches", None)
+                        if callable(collect_batches):
+                            completed_batches = []
+                            try:
+                                for batch in collect_batches(
+                                    connection, credential, request
+                                ):
+                                    validate_points(
+                                        list(batch.points),
+                                        fixture=connection.provider == "fixture",
+                                    )
+                                    completed_batches.append(batch)
+                            except Exception:
+                                if completed_batches:
+                                    try:
+                                        self.store.record_acquisition_batches(
+                                            run_id,
+                                            binding_key,
+                                            tuple(completed_batches),
+                                            publish_current=False,
+                                        )
+                                    except Exception:
+                                        # Preserve the provider failure category;
+                                        # attempt-evidence persistence is best effort.
+                                        pass
+                                raise
+                            batches = tuple(completed_batches)
+                            points = [
+                                point
+                                for batch in batches
+                                for point in batch.points
+                            ]
+                        else:
+                            batches = ()
+                            points = list(
+                                connector.collect(connection, credential, request)
+                            )
                     validate_points(points, fixture=connection.provider == "fixture")
-                    count = self.store.upsert(points)
+                    count = (
+                        self.store.record_acquisition_batches(
+                            run_id, binding_key, batches
+                        )
+                        if batches
+                        else self.store.upsert(points)
+                    )
                     if count:
                         data_through = min(max(point.end for point in points), binding_window.end)
                         self.store.set_watermark(binding_key, data_through)

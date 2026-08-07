@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -27,6 +27,8 @@ from .contracts import (
     public_result_kind,
 )
 from .models import (
+    AcquisitionBatch,
+    AcquisitionSlice,
     AnalyticsDefinition,
     CapabilitySnapshot,
     Completeness,
@@ -47,15 +49,21 @@ from .models import (
 )
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 MIGRATIONS = {
     1: "001_initial.sql",
     2: "002_site_graph.sql",
     3: "003_sync_coverage.sql",
     4: "004_forms_evidence_v3.sql",
     5: "005_analytics_definitions.sql",
+    6: "006_acquisition_provenance.sql",
 }
-CURRENT_IDENTITY_VERSIONS = {"cloudflare-forms": 3, "forms-inbox": 3}
+CURRENT_IDENTITY_VERSIONS = {
+    "cloudflare-forms": 3,
+    "forms-inbox": 3,
+    "search-console": 2,
+    "umami": 2,
+}
 
 
 def _apply_migration(db: sqlite3.Connection, migration: str, version: int) -> None:
@@ -85,16 +93,21 @@ def _parse(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _key(point: MetricPoint) -> str:
+def _key_at_identity_version(point: MetricPoint, identity_version: int) -> str:
     identity = [
         point.client_id, point.site_id, point.source, point.metric, point.unit,
         _iso(point.start), _iso(point.end), point.grain.value, list(point.dimensions)
     ]
-    identity_version = CURRENT_IDENTITY_VERSIONS.get(point.source, 1)
     if identity_version != 1:
         identity.append(identity_version)
     identity = json.dumps(identity, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _key(point: MetricPoint) -> str:
+    return _key_at_identity_version(
+        point, CURRENT_IDENTITY_VERSIONS.get(point.source, 1)
+    )
 
 
 def _digest_fields(fields: Sequence[object]) -> str:
@@ -149,6 +162,47 @@ def _canonical_definition_schema_rows(
         return _definition_schema_rows(canonical)
 
 
+def _acquisition_schema_rows(
+    db: sqlite3.Connection,
+) -> tuple[tuple[str, str, str, str], ...]:
+    names = {
+        "acquisition_slices",
+        "acquisition_slices_run",
+        "acquisition_slices_no_update",
+        "acquisition_slices_no_delete",
+        "metric_fact_observations",
+        "metric_fact_observations_point_history",
+        "metric_fact_observations_run",
+        "metric_fact_observations_no_update",
+        "metric_fact_observations_no_delete",
+    }
+    placeholders = ",".join("?" for _ in names)
+    return tuple(
+        tuple(row)
+        for row in db.execute(
+            f"""SELECT type,name,tbl_name,sql
+                  FROM sqlite_master
+                 WHERE name IN ({placeholders})
+                   AND sql IS NOT NULL
+                 ORDER BY type,name""",
+            sorted(names),
+        ).fetchall()
+    )
+
+
+@lru_cache(maxsize=1)
+def _canonical_acquisition_schema_rows(
+) -> tuple[tuple[str, str, str, str], ...]:
+    migration = (
+        files("boho_analytics_platform.migrations")
+        .joinpath(MIGRATIONS[6])
+        .read_text(encoding="utf-8")
+    )
+    with closing(sqlite3.connect(":memory:")) as canonical:
+        canonical.executescript(migration)
+        return _acquisition_schema_rows(canonical)
+
+
 def _transaction_time(value: datetime | None = None) -> datetime:
     instant = value or datetime.now(UTC)
     if instant.tzinfo is None or instant.utcoffset() is None:
@@ -169,6 +223,10 @@ class DefinitionNotActiveError(LookupError):
 
 
 class DefinitionIntegrityError(RuntimeError):
+    pass
+
+
+class AcquisitionIntegrityError(RuntimeError):
     pass
 
 
@@ -1092,6 +1150,453 @@ class SQLiteMetricStore:
             db.execute("BEGIN")
             return self._verify_definition_integrity_connection(db)
 
+    @staticmethod
+    def _verify_acquisition_integrity_connection(
+        db: sqlite3.Connection,
+    ) -> dict[str, int]:
+        """Verify the pinned schema and every immutable acquisition record."""
+
+        if _acquisition_schema_rows(db) != _canonical_acquisition_schema_rows():
+            raise AcquisitionIntegrityError(
+                "acquisition provenance schema does not match migration 006"
+            )
+
+        def timestamp(value: object, label: str) -> datetime:
+            if not isinstance(value, str):
+                raise AcquisitionIntegrityError(f"{label} is not a timestamp")
+            try:
+                parsed = _parse(value)
+            except ValueError as exc:
+                raise AcquisitionIntegrityError(
+                    f"{label} is not a timestamp"
+                ) from exc
+            if (
+                parsed.tzinfo is None
+                or parsed.utcoffset() is None
+                or _iso(parsed) != value
+            ):
+                raise AcquisitionIntegrityError(
+                    f"{label} is not a canonical UTC timestamp"
+                )
+            return parsed
+
+        slices = db.execute(
+            """SELECT acquisition.*,run.site_id AS run_site_id,
+                      run.source AS run_source,run.binding_key AS run_binding_key,
+                      run.window_start AS run_window_start,
+                      run.window_end AS run_window_end
+                 FROM acquisition_slices AS acquisition
+                 JOIN sync_runs AS run ON run.id=acquisition.sync_run_id
+                ORDER BY acquisition.id"""
+        ).fetchall()
+        slice_intervals: dict[str, tuple[datetime, datetime, str, str]] = {}
+        for row in slices:
+            try:
+                raw_dimensions = json.loads(row["request_dimensions_json"])
+                if not isinstance(raw_dimensions, list) or any(
+                    not isinstance(item, str) for item in raw_dimensions
+                ):
+                    raise ValueError("request dimensions are invalid")
+                dimensions = tuple(raw_dimensions)
+                if json.dumps(
+                    list(dimensions), separators=(",", ":"), ensure_ascii=True
+                ) != row["request_dimensions_json"]:
+                    raise ValueError("request dimensions are not canonical")
+                start = timestamp(row["start_at"], "acquisition start")
+                end = timestamp(row["end_at"], "acquisition end")
+                timestamp(row["recorded_at"], "acquisition record time")
+                acquisition = AcquisitionSlice(
+                    row["slice_key"], row["metric_family"], start, end,
+                    Completeness(row["completeness"]), row["data_state"],
+                    row["provider_scope"], dimensions,
+                    row["provider_aggregation"], int(row["pages_fetched"]),
+                    int(row["raw_rows"]), int(row["accepted_rows"]),
+                    int(row["rejected_rows"]), row["exhaustion_reason"],
+                )
+                expected_id = _digest_fields(
+                    (row["sync_run_id"], row["binding_key"], acquisition.slice_key)
+                )
+                fields: tuple[object, ...] = (
+                    row["id"], row["sync_run_id"], row["binding_key"],
+                    acquisition.slice_key, acquisition.metric_family,
+                    row["start_at"], row["end_at"],
+                    acquisition.completeness.value, acquisition.data_state,
+                    acquisition.provider_scope, row["request_dimensions_json"],
+                    acquisition.provider_aggregation, acquisition.pages_fetched,
+                    acquisition.raw_rows, acquisition.accepted_rows,
+                    acquisition.rejected_rows, acquisition.exhaustion_reason,
+                    row["recorded_at"],
+                )
+                run_start = timestamp(
+                    row["run_window_start"], "sync run window start"
+                )
+                run_end = timestamp(row["run_window_end"], "sync run window end")
+            except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
+                raise AcquisitionIntegrityError(
+                    "acquisition slice semantic validation failed"
+                ) from exc
+            if expected_id != row["id"] or _digest_fields(fields) != row["record_hash"]:
+                raise AcquisitionIntegrityError(
+                    "acquisition slice immutable integrity failed"
+                )
+            if (
+                row["binding_key"] != row["run_binding_key"]
+                or not row["run_site_id"]
+                or not row["run_source"]
+                or start >= run_end
+                or end <= run_start
+            ):
+                raise AcquisitionIntegrityError(
+                    "acquisition slice does not match its sync run"
+                )
+            slice_intervals[row["id"]] = (
+                start, end, row["run_site_id"], row["run_source"]
+            )
+
+        observations = db.execute(
+            """SELECT observation.*
+                 FROM metric_fact_observations AS observation
+                ORDER BY observation.id"""
+        ).fetchall()
+        for row in observations:
+            try:
+                raw_dimensions = json.loads(row["dimensions_json"])
+                if not isinstance(raw_dimensions, dict) or any(
+                    not isinstance(key, str) or not isinstance(value, str)
+                    for key, value in raw_dimensions.items()
+                ):
+                    raise ValueError("metric dimensions are invalid")
+                dimensions = tuple(sorted(raw_dimensions.items()))
+                if json.dumps(
+                    dict(dimensions), separators=(",", ":"), sort_keys=True,
+                    ensure_ascii=True,
+                ) != row["dimensions_json"]:
+                    raise ValueError("metric dimensions are not canonical")
+                start = timestamp(row["start_at"], "metric start")
+                end = timestamp(row["end_at"], "metric end")
+                observed_at = timestamp(row["observed_at"], "metric observation")
+                timestamp(row["recorded_at"], "metric record time")
+                point = MetricPoint(
+                    row["client_id"], row["site_id"], row["source"],
+                    row["metric"], row["unit"], start, end,
+                    TimeGrain(row["grain"]), Decimal(row["value"]), dimensions,
+                    Completeness(row["completeness"]), observed_at,
+                )
+                identity_version = int(row["identity_version"])
+                expected_point_key = _key_at_identity_version(
+                    point, identity_version
+                )
+                expected_id = _digest_fields(
+                    (row["acquisition_slice_id"], row["point_key"])
+                )
+                fields = (
+                    row["id"], row["acquisition_slice_id"], row["sync_run_id"],
+                    row["binding_key"], row["point_key"], point.client_id,
+                    point.site_id, point.source, point.metric, point.unit,
+                    row["start_at"], row["end_at"], point.grain.value,
+                    row["value"], row["dimensions_json"],
+                    point.completeness.value, row["observed_at"],
+                    identity_version, row["recorded_at"],
+                )
+                _slice_start, _slice_end, run_site, run_source = slice_intervals[
+                    row["acquisition_slice_id"]
+                ]
+            except (InvalidOperation, KeyError, TypeError, ValueError) as exc:
+                raise AcquisitionIntegrityError(
+                    "metric fact observation semantic validation failed"
+                ) from exc
+            if (
+                expected_id != row["id"]
+                or expected_point_key != row["point_key"]
+                or _digest_fields(fields) != row["record_hash"]
+            ):
+                raise AcquisitionIntegrityError(
+                    "metric fact observation immutable integrity failed"
+                )
+            if (
+                start >= _slice_end
+                or end <= _slice_start
+                or point.site_id != run_site
+                or point.source != run_source
+            ):
+                raise AcquisitionIntegrityError(
+                    "metric fact observation does not match its acquisition slice"
+                )
+
+        return {"slices": len(slices), "observations": len(observations)}
+
+    def verify_acquisition_integrity(self) -> dict[str, int]:
+        """Verify schema enforcement, immutable hashes, and request linkage."""
+
+        with self.connect(readonly=True) as db:
+            db.execute("BEGIN")
+            return self._verify_acquisition_integrity_connection(db)
+
+    def record_acquisition_batches(
+        self,
+        run_id: str,
+        binding_key: str,
+        batches: Sequence[AcquisitionBatch],
+        *,
+        publish_current: bool = True,
+    ) -> int:
+        """Preserve request evidence; optionally publish the latest snapshot."""
+
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be non-empty")
+        if not isinstance(binding_key, str) or not binding_key:
+            raise ValueError("binding_key must be non-empty")
+        if len(binding_key.encode("utf-8")) > 2048:
+            raise ValueError("binding_key is too long")
+        if not isinstance(publish_current, bool):
+            raise ValueError("publish_current must be a boolean")
+        materialized = tuple(batches)
+        if not materialized:
+            raise ValueError("at least one acquisition batch is required")
+        if any(not isinstance(batch, AcquisitionBatch) for batch in materialized):
+            raise ValueError("batches must contain only AcquisitionBatch values")
+
+        recorded_at = _iso(datetime.now(UTC))
+        seen_slice_keys: set[str] = set()
+        seen_point_keys: set[str] = set()
+        slice_rows: list[tuple[object, ...]] = []
+        observation_rows: list[tuple[object, ...]] = []
+        fact_rows: list[tuple[object, ...]] = []
+        batch_point_rows: list[tuple[AcquisitionBatch, MetricPoint, str]] = []
+
+        for batch in materialized:
+            acquisition = batch.slice
+            if acquisition.slice_key in seen_slice_keys:
+                raise ValueError(
+                    f"duplicate acquisition slice key: {acquisition.slice_key}"
+                )
+            seen_slice_keys.add(acquisition.slice_key)
+            request_dimensions_json = json.dumps(
+                list(acquisition.request_dimensions),
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+            if len(request_dimensions_json.encode("utf-8")) > 4096:
+                raise ValueError("request_dimensions exceed the storage limit")
+            slice_id = _digest_fields(
+                (run_id, binding_key, acquisition.slice_key)
+            )
+            slice_fields: tuple[object, ...] = (
+                slice_id,
+                run_id,
+                binding_key,
+                acquisition.slice_key,
+                acquisition.metric_family,
+                _iso(acquisition.start),
+                _iso(acquisition.end),
+                acquisition.completeness.value,
+                acquisition.data_state,
+                acquisition.provider_scope,
+                request_dimensions_json,
+                acquisition.provider_aggregation,
+                acquisition.pages_fetched,
+                acquisition.raw_rows,
+                acquisition.accepted_rows,
+                acquisition.rejected_rows,
+                acquisition.exhaustion_reason,
+                recorded_at,
+            )
+            slice_rows.append((*slice_fields, _digest_fields(slice_fields)))
+
+            for point in batch.points:
+                point_key = _key(point)
+                if point_key in seen_point_keys:
+                    raise ValueError(
+                        "duplicate metric point identity across acquisition batches"
+                    )
+                seen_point_keys.add(point_key)
+                if not point.unit:
+                    raise ValueError("metric point unit must be non-empty")
+                dimensions_json = json.dumps(
+                    dict(point.dimensions),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                    ensure_ascii=True,
+                )
+                if len(dimensions_json.encode("utf-8")) > 32768:
+                    raise ValueError("metric point dimensions exceed the storage limit")
+                identity_version = CURRENT_IDENTITY_VERSIONS.get(point.source, 1)
+                observation_id = _digest_fields((slice_id, point_key))
+                observation_fields: tuple[object, ...] = (
+                    observation_id,
+                    slice_id,
+                    run_id,
+                    binding_key,
+                    point_key,
+                    point.client_id,
+                    point.site_id,
+                    point.source,
+                    point.metric,
+                    point.unit,
+                    _iso(point.start),
+                    _iso(point.end),
+                    point.grain.value,
+                    str(point.value),
+                    dimensions_json,
+                    point.completeness.value,
+                    _iso(point.observed_at),
+                    identity_version,
+                    recorded_at,
+                )
+                observation_rows.append(
+                    (*observation_fields, _digest_fields(observation_fields))
+                )
+                fact_rows.append(
+                    (
+                        point_key,
+                        point.client_id,
+                        point.site_id,
+                        point.source,
+                        point.metric,
+                        point.unit,
+                        _iso(point.start),
+                        _iso(point.end),
+                        point.grain.value,
+                        str(point.value),
+                        dimensions_json,
+                        point.completeness.value,
+                        _iso(point.observed_at),
+                        recorded_at,
+                        identity_version,
+                    )
+                )
+                batch_point_rows.append((batch, point, point_key))
+
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = db.execute(
+                """SELECT site_id,status,binding_key,source,window_start,window_end
+                     FROM sync_runs WHERE id=?""",
+                (run_id,),
+            ).fetchone()
+            if run is None:
+                raise ValueError("sync run does not exist")
+            if run["status"] != "running":
+                raise ValueError("acquisition batches require a running sync run")
+            if run["binding_key"] != binding_key:
+                raise ValueError("binding_key does not match the sync run")
+            if not run["site_id"] or not run["source"]:
+                raise ValueError("sync run must identify a site and source")
+            if not run["window_start"] or not run["window_end"]:
+                raise ValueError("sync run must identify an acquisition window")
+            run_start = _parse(run["window_start"])
+            run_end = _parse(run["window_end"])
+            for batch in materialized:
+                if (
+                    batch.slice.start >= run_end
+                    or batch.slice.end <= run_start
+                ):
+                    raise ValueError(
+                        "acquisition slice must overlap the sync run window"
+                    )
+            for _batch, point, _point_key in batch_point_rows:
+                if point.site_id != run["site_id"]:
+                    raise ValueError("metric point site does not match the sync run")
+                if point.source != run["source"]:
+                    raise ValueError("metric point source does not match the sync run")
+
+            if publish_current:
+                # A provider snapshot can legitimately omit a row that existed
+                # in an earlier revision. Retire only current snapshot rows
+                # covered by the same binding/request scope; history remains.
+                stale_point_keys: set[str] = set()
+                for batch in materialized:
+                    acquisition = batch.slice
+                    # Fresh Search Console snapshots can be explicitly partial.
+                    # Their missing rows are not authoritative deletions; a
+                    # later final snapshot can retire them without losing the
+                    # immutable observation history.
+                    if (
+                        acquisition.data_state in {"all", "hourly_all"}
+                        and acquisition.completeness is not Completeness.FINAL
+                    ):
+                        continue
+                    request_dimensions_json = json.dumps(
+                        list(acquisition.request_dimensions),
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    )
+                    prior = db.execute(
+                        """SELECT observation.point_key,observation.grain,
+                                  observation.start_at,observation.end_at,
+                                  acquisition.start_at AS slice_start_at,
+                                  acquisition.end_at AS slice_end_at
+                             FROM metric_fact_observations AS observation
+                             JOIN acquisition_slices AS acquisition
+                               ON acquisition.id=observation.acquisition_slice_id
+                            WHERE acquisition.binding_key=?
+                              AND acquisition.metric_family=?
+                              AND acquisition.provider_scope=?
+                              AND acquisition.request_dimensions_json=?
+                              AND acquisition.provider_aggregation=?""",
+                        (
+                            binding_key,
+                            acquisition.metric_family,
+                            acquisition.provider_scope,
+                            request_dimensions_json,
+                            acquisition.provider_aggregation,
+                        ),
+                    ).fetchall()
+                    for row in prior:
+                        if row["grain"] == TimeGrain.TOTAL.value:
+                            covered = (
+                                row["slice_start_at"] == _iso(acquisition.start)
+                                and row["slice_end_at"] == _iso(acquisition.end)
+                            )
+                        else:
+                            covered = (
+                                _parse(row["start_at"]) < acquisition.end
+                                and _parse(row["end_at"]) > acquisition.start
+                            )
+                        if covered:
+                            stale_point_keys.add(row["point_key"])
+                stale_point_keys.difference_update(seen_point_keys)
+                if stale_point_keys:
+                    db.executemany(
+                        "DELETE FROM metric_facts WHERE point_key=?",
+                        ((point_key,) for point_key in sorted(stale_point_keys)),
+                    )
+
+            db.executemany(
+                """INSERT INTO acquisition_slices(
+                     id,sync_run_id,binding_key,slice_key,metric_family,start_at,end_at,
+                     completeness,data_state,provider_scope,request_dimensions_json,
+                     provider_aggregation,pages_fetched,raw_rows,accepted_rows,
+                     rejected_rows,exhaustion_reason,recorded_at,record_hash
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                slice_rows,
+            )
+            if observation_rows:
+                db.executemany(
+                    """INSERT INTO metric_fact_observations(
+                         id,acquisition_slice_id,sync_run_id,binding_key,point_key,
+                         client_id,site_id,source,metric,unit,start_at,end_at,grain,
+                         value,dimensions_json,completeness,observed_at,identity_version,
+                         recorded_at,record_hash
+                       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    observation_rows,
+                )
+                if publish_current:
+                    db.executemany(
+                        """INSERT INTO metric_facts(
+                             point_key,client_id,site_id,source,metric,unit,start_at,end_at,
+                             grain,value,dimensions_json,completeness,observed_at,updated_at,
+                             identity_version
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           ON CONFLICT(point_key) DO UPDATE SET
+                             value=excluded.value,
+                             completeness=excluded.completeness,
+                             observed_at=excluded.observed_at,
+                             updated_at=excluded.updated_at""",
+                        fact_rows,
+                    )
+        return len(fact_rows)
+
     def upsert(self, points: Iterable[MetricPoint]) -> int:
         now = _iso(datetime.now(UTC)); rows = []
         for point in points:
@@ -1385,7 +1890,21 @@ class SQLiteMetricStore:
 
     def integrity_check(self) -> str:
         with self.connect(readonly=True) as db:
-            return str(db.execute("PRAGMA integrity_check").fetchone()[0])
+            result = str(db.execute("PRAGMA integrity_check").fetchone()[0])
+            if result != "ok":
+                return result
+            try:
+                schema_row = db.execute(
+                    "SELECT version FROM schema_meta LIMIT 1"
+                ).fetchone()
+                schema_version = int(schema_row[0]) if schema_row else 0
+                if schema_version >= 5:
+                    self._verify_definition_integrity_connection(db)
+                if schema_version >= 6:
+                    self._verify_acquisition_integrity_connection(db)
+            except (AcquisitionIntegrityError, DefinitionIntegrityError):
+                return "application-integrity-error"
+            return "ok"
 
     def backup(self, destination: str | Path) -> Path:
         target = Path(destination); target.parent.mkdir(parents=True, exist_ok=True)
@@ -1416,6 +1935,11 @@ class SQLiteMetricStore:
                 SQLiteMetricStore._verify_definition_integrity_connection(db)
             except DefinitionIntegrityError as exc:
                 raise ValueError("backup definition integrity check failed") from exc
+        if source_schema >= 6:
+            try:
+                SQLiteMetricStore._verify_acquisition_integrity_connection(db)
+            except AcquisitionIntegrityError as exc:
+                raise ValueError("backup acquisition integrity check failed") from exc
         return source_schema
 
     @staticmethod

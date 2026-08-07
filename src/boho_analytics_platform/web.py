@@ -47,8 +47,10 @@ ROUTE_OBSERVATION_METRICS = tuple(sorted(
 ))
 ROUTE_OBSERVATION_DIMENSIONS = frozenset({
     "channel", "country_code", "country_code_system", "data_state", "device",
-    "domain", "event_name", "observation_scope", "page_title", "referrer_domain",
-    "referrer_route", "route", "search_appearance",
+    "dimension_type", "dimension_value", "dimension_value_kind", "domain",
+    "event_name", "observation_scope", "page_title", "provider_date",
+    "provider_timezone", "query_text", "query_visibility", "referrer_domain",
+    "referrer_route", "route", "search_appearance", "search_type",
 })
 ROUTE_OBSERVATION_LIMIT = 500
 ROUTE_OBSERVATION_MAX_DAYS = 366
@@ -283,36 +285,36 @@ def site_graph_core21_projection(graph_store, payload, layers):
 
 
 METRIC_LABELS = {
-    "umami.pageviews": "Page views",
-    "umami.sessions": "Sessions",
-    "umami.visitors": "Visitors",
-    "umami.visits": "Visits",
-    "umami.bounces": "Bounces",
-    "umami.total-time": "Visit time",
-    "umami.country-visits": "Country visits",
-    "umami.region-visits": "Region visits",
-    "cloudflare.requests": "Edge requests",
-    "cloudflare.visits": "Edge visits",
-    "cloudflare.bytes": "Response bytes",
-    "cloudflare.country-visits": "Country edge visits",
-    "google.active-users": "Active users",
+    "umami.pageviews": "Umami page views",
+    "umami.daily-visitors": "Umami daily unique visitors",
+    "umami.visitors": "Umami exact-window visitors",
+    "umami.visits": "Umami visits",
+    "umami.bounces": "Umami bounced visits",
+    "umami.total-time": "Umami visit time",
+    "umami.country-visits": "Umami country visits",
+    "umami.region-visits": "Umami region visits",
+    "cloudflare.requests": "Cloudflare edge requests",
+    "cloudflare.visits": "Cloudflare edge visits",
+    "cloudflare.bytes": "Cloudflare response bytes",
+    "cloudflare.country-visits": "Cloudflare country visits",
+    "google.active-users": "GA active-user days",
     "google.sessions": "GA sessions",
     "google.pageviews": "GA page views",
     "google.events": "GA events",
     "google.key-events": "Key events",
     "google.country-sessions": "Country GA sessions",
     "google.region-sessions": "Region GA sessions",
-    "search.clicks": "Search clicks",
-    "search.impressions": "Search impressions",
-    "search.ctr": "Search CTR",
-    "search.position": "Average position",
-    "search.country-clicks": "Country search clicks",
-    "forms.submissions": "Form submissions",
-    "forms.pending": "Pending notifications",
-    "forms.sent": "Sent notifications",
-    "forms.failed": "Failed notifications",
-    "forms.inbox-deliveries": "Inbox deliveries",
-    "forms.inbox-unread": "Unread notifications",
+    "search.clicks": "Search Console clicks",
+    "search.impressions": "Search Console impressions",
+    "search.ctr": "Search Console CTR",
+    "search.position": "Search Console average position",
+    "search.country-clicks": "Search Console country clicks",
+    "forms.submissions": "Durable form leads",
+    "forms.pending": "Pending form notifications",
+    "forms.sent": "Sent form notifications",
+    "forms.failed": "Failed form notifications",
+    "forms.inbox-deliveries": "Inbox delivery evidence",
+    "forms.inbox-unread": "Unread inbox evidence",
 }
 
 SOURCE_LABELS = {
@@ -327,7 +329,7 @@ SOURCE_LABELS = {
 
 CHART_PRIORITY = (
     "umami.pageviews",
-    "umami.sessions",
+    "umami.daily-visitors",
     "google.pageviews",
     "google.sessions",
     "cloudflare.visits",
@@ -339,10 +341,10 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
-    ("Organic clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
-    ("Umami visits", ("umami.visits",), "Exact-window Umami visits"),
-    ("GA sessions", ("google.sessions",), "Google Analytics sessions"),
+    ("Search Console clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
+    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
+    ("Umami page views", ("umami.pageviews",), "Page views recorded by Umami"),
+    ("Durable leads", ("forms.submissions",), "Accepted records in the forms database"),
 )
 
 TRAFFIC_SUMMARY = (
@@ -353,17 +355,17 @@ TRAFFIC_SUMMARY = (
 )
 
 SEARCH_SUMMARY = (
-    ("Impressions", ("search.impressions",), "Search result visibility"),
-    ("Clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("CTR", ("search.ctr",), "Clicks per impression"),
-    ("Average position", ("search.position",), "Impression-weighted rank"),
+    ("Search Console impressions", ("search.impressions",), "Search result visibility on the selected Search Console surface"),
+    ("Search Console clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
+    ("Search Console CTR", ("search.ctr",), "Clicks divided by impressions"),
+    ("Search Console average position", ("search.position",), "Impression-weighted result position; lower is better"),
 )
 
 FORMS_SUMMARY = (
-    ("Submissions", ("forms.submissions",), "Stored form records"),
-    ("Inbox deliveries", ("forms.inbox-deliveries",), "Mailbox delivery evidence"),
-    ("Pending", ("forms.pending",), "Awaiting notification"),
-    ("Failed", ("forms.failed",), "Notification failures"),
+    ("Durable leads", ("forms.submissions",), "Accepted records in the forms database"),
+    ("Inbox delivery evidence", ("forms.inbox-deliveries",), "Matching messages observed in the configured mailbox"),
+    ("Pending form notifications", ("forms.pending",), "Accepted records awaiting notification"),
+    ("Failed form notifications", ("forms.failed",), "Accepted records whose notification is marked failed"),
 )
 
 
@@ -396,25 +398,26 @@ BASE_CSS = """
 
 VISUAL_REFRESH_CSS = """
 :root{--ink:#12201b;--ink-2:#263a32;--paper:#f1f4f2;--surface:#fff;--line:#dce4df;--muted:#5c6b64;--accent:#e96d3c;--accent-soft:#fff0e9;--green:#13795b;--green-soft:#e5f5ef;--amber:#9a5a10;--amber-soft:#fff5df;--red:#a64138;--red-soft:#fdecea;--shadow:0 18px 48px rgba(20,39,31,.07);--shadow-soft:0 8px 24px rgba(20,39,31,.055)}
-body{background:radial-gradient(circle at 8% 0%,#fff 0,transparent 28%),linear-gradient(180deg,#f6f8f7 0,#eef2ef 100%);font-size:14px}.topbar{position:sticky;top:0;z-index:10;background:rgba(18,32,27,.96);border-bottom:1px solid rgba(255,255,255,.09);backdrop-filter:blur(16px)}.topbar-inner{max-width:1360px;padding-top:14px;padding-bottom:14px}.brand-mark{border:0;background:linear-gradient(135deg,#ff9b72,#e96d3c);color:#1b211e;box-shadow:inset 0 1px rgba(255,255,255,.5)}.live-state{padding:7px 10px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.055)}
-.shell{max-width:1360px;padding-top:26px}.report-nav{margin-bottom:14px}.report-nav a,.subnav a,.quick-links a{border-color:#d8e0db;background:rgba(255,255,255,.72);box-shadow:0 1px 2px rgba(20,39,31,.03);transition:transform .15s ease,border-color .15s ease,background .15s ease}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{transform:translateY(-1px);border-color:#aebcb4}.report-nav a.active,.subnav a.active{background:#183129;border-color:#183129}.subnav{margin:14px 0 18px}
-.hero{align-items:center;margin-bottom:18px;padding:30px 32px;border:1px solid rgba(255,255,255,.11);border-radius:26px;background:radial-gradient(circle at 82% 18%,rgba(233,109,60,.27),transparent 30%),linear-gradient(135deg,#142a22 0%,#1c3b31 58%,#244a3d 100%);box-shadow:0 24px 60px rgba(17,39,31,.18);color:#fff}.hero .eyebrow{color:#ffae8e}.hero h1{max-width:760px;font-size:clamp(32px,4.5vw,52px)}.hero-copy{color:#c7d5cf}.trust-card{min-width:205px;padding:16px 17px;border:1px solid rgba(255,255,255,.17);border-radius:18px;background:rgba(255,255,255,.09);box-shadow:inset 0 1px rgba(255,255,255,.08);backdrop-filter:blur(10px)}.trust-card[data-state="partial"]{background:rgba(255,191,105,.11)}.trust-label{display:block;color:#bfcec8;font-size:10px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}.trust-value{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin:6px 0;color:#fff}.trust-value strong{font-size:25px;letter-spacing:-.04em}.trust-value span{color:#d8e3df;font-size:12px;font-weight:750}.coverage-track{height:6px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.15)}.coverage-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#5ad0a0,#8ce6bd)}.trust-card[data-state="partial"] .coverage-fill{background:linear-gradient(90deg,#eaa04f,#ffd08b)}
-.panel{border-color:rgba(205,217,210,.92);border-radius:20px;box-shadow:var(--shadow-soft)}.kpi-grid{gap:12px}.kpi-card{min-height:142px;padding:17px 17px 16px;border-radius:18px;box-shadow:var(--shadow-soft)}.kpi-card:before{content:"";position:absolute;left:0;top:0;width:100%;height:4px;background:linear-gradient(90deg,#e96d3c,#f2a37f)}.kpi-card:nth-child(2):before{background:linear-gradient(90deg,#168264,#62c4a2)}.kpi-card:nth-child(3):before{background:linear-gradient(90deg,#586aa8,#8998ce)}.kpi-card:nth-child(4):before{background:linear-gradient(90deg,#a97924,#d4aa59)}.kpi-card:after{right:-38px;bottom:-50px;width:125px;height:125px;opacity:.72}.kpi-value{margin-top:18px;font-size:38px}.kpi-note{max-width:92%;line-height:1.42}
-.dashboard-primary{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,.72fr);gap:18px;align-items:stretch;margin-bottom:18px}.dashboard-primary>.chart-panel,.dashboard-primary>.attention-panel{margin-bottom:0}.chart-panel{padding:23px}.chart-stage{min-height:430px;border-color:#dfe7e2;border-radius:16px;background:linear-gradient(180deg,#fbfdfc 0%,#f6faf7 100%)}.time-series-chart{height:430px}.chart-status{left:20px;top:16px;border-color:#dfe7e2;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 4px 14px rgba(20,39,31,.06)}.source-chip{background:#edf3ef;color:#385248}
-.attention-panel{padding:21px;background:linear-gradient(180deg,#fff,#fbfdfc)}.attention-panel .panel-heading{margin-bottom:16px}.attention-list{gap:10px}.attention-item{grid-template-columns:auto minmax(0,1fr);padding:14px;border-color:#e4ebe7;border-radius:15px;background:#f7faf8}.attention-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.attention-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.attention-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.attention-rank{width:30px;height:30px;border-radius:50%;background:#23443a}.attention-copy h3{font-size:15px;line-height:1.3}.attention-copy p{line-height:1.45}.attention-severity{color:#6b7b73!important}
+body{background:#f2f5f3;font-size:14px}.topbar{position:sticky;top:0;z-index:10;background:#12201b;border-bottom:1px solid rgba(255,255,255,.09)}.topbar-inner{max-width:1360px;padding-top:11px;padding-bottom:11px}.brand-mark{border:0;background:#ff9369;color:#1b211e}.live-state{padding:6px 10px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.055)}.live-dot{display:none}
+.shell{max-width:1360px;padding-top:18px}.report-nav{margin-bottom:10px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}.report-nav a,.subnav a,.quick-links a{flex:0 0 auto;border-color:#d8e0db;background:#fff;box-shadow:0 1px 2px rgba(20,39,31,.03);transition:border-color .15s ease,background .15s ease}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{border-color:#aebcb4}.report-nav a.active,.subnav a.active{background:#183129;border-color:#183129}.subnav{margin:10px 0 12px}.scope-summary{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 0!important;color:var(--muted)!important}.scope-summary span{font-size:12px;font-weight:750}
+.hero{align-items:center;margin-bottom:12px;padding:20px 22px;border:1px solid #234138;border-radius:18px;background:#183129;box-shadow:0 12px 30px rgba(17,39,31,.12);color:#fff}.hero .eyebrow{color:#ffb093}.hero h1{max-width:760px;font-size:clamp(29px,3.6vw,40px)}.hero-copy{max-width:820px;margin-top:7px;color:#d4dfda;font-size:14px}.trust-card{min-width:220px;padding:13px 14px;border:1px solid rgba(255,255,255,.17);border-radius:14px;background:rgba(255,255,255,.08)}.trust-card[data-state="partial"],.trust-card[data-state="unknown"]{background:rgba(255,191,105,.1)}.trust-label{display:block;color:#c8d4cf;font-size:10px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}.trust-value{display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin:4px 0;color:#fff}.trust-value strong{font-size:22px;letter-spacing:-.03em}.trust-value span{color:#e0e8e4;font-size:11px;font-weight:750}.coverage-track{height:5px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.15)}.coverage-fill{display:block;height:100%;border-radius:inherit;background:#63d1a8}.trust-card[data-state="partial"] .coverage-fill,.trust-card[data-state="unknown"] .coverage-fill{background:#eeb05f}
+.panel{border-color:rgba(205,217,210,.92);border-radius:16px;box-shadow:var(--shadow-soft)}.kpi-grid{gap:10px;margin-bottom:12px}.kpi-card{min-height:124px;padding:15px 16px;border-radius:15px;box-shadow:var(--shadow-soft)}.kpi-card:before{content:"";position:absolute;left:0;top:0;width:100%;height:3px;background:#e96d3c}.kpi-card:after{display:none}.kpi-value{margin-top:14px;font-size:34px}.kpi-note{max-width:100%;line-height:1.35}.kpi-context{display:block;margin-top:5px;color:var(--muted);font-size:11px}
+.dashboard-primary{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(300px,.68fr);gap:12px;align-items:start;margin-bottom:12px}.dashboard-primary>.chart-panel,.dashboard-primary>.attention-panel{margin-bottom:0}.chart-panel{padding:18px}.panel .eyebrow{color:#883b1d}.chart-stage{min-height:350px;border-color:#dfe7e2;border-radius:13px;background:#f8fbf9}.time-series-chart{height:350px}.chart-status{left:16px;top:13px;border-color:#dfe7e2;border-radius:8px;background:rgba(255,255,255,.94);box-shadow:0 3px 10px rgba(20,39,31,.05)}.source-chip{background:#edf3ef;color:#385248}
+.attention-panel{padding:21px;background:linear-gradient(180deg,#fff,#fbfdfc)}.attention-panel .panel-heading{margin-bottom:16px}.attention-list{gap:10px}.attention-item{grid-template-columns:auto minmax(0,1fr);padding:14px;border-color:#e4ebe7;border-radius:15px;background:#f7faf8}.attention-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.attention-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.attention-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.attention-rank{width:30px;height:30px;border-radius:50%;background:#23443a}.attention-copy h3{font-size:15px;line-height:1.3}.attention-copy p{line-height:1.45}.attention-severity{color:#6b7b73!important}.attention-more{margin-top:10px;border-top:1px solid #e4ebe7;padding-top:10px}.attention-more>summary{cursor:pointer;color:#385248;font-size:12px;font-weight:800}.attention-more>.attention-list{margin-top:10px}
 .decision-panel{padding:22px}.decision-card,.engagement-card,.roadmap-card{border-color:#e2e9e5;border-radius:15px;background:#f8faf9}.decision-value{font-size:32px}.decision-grid{gap:10px}.engagement-grid{gap:10px}.split-grid{gap:14px}.section-panel{padding:21px}.health-item,.pipeline-item,.operation-card{border-color:#e2e9e5;border-radius:13px;background:#f8faf9}
-.control-panel{padding:0;overflow:hidden}.control-summary{margin:0;padding:17px 20px;cursor:pointer;list-style:none;align-items:center}.control-summary::-webkit-details-marker{display:none}.control-summary:after{content:"+";display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:50%;background:#edf3ef;color:#27453a;font-size:20px;font-weight:500}.control-panel[open] .control-summary:after{content:"−"}.control-content{padding:0 20px 19px;border-top:1px solid #e9eeeb}.control-content .filter-form{padding-top:18px}.control-content .tools-row{margin-bottom:0}.data-notices{margin:0 0 18px;border:1px solid #edd7af;border-radius:15px;background:#fffaf0}.data-notices>summary{cursor:pointer;padding:13px 16px;color:#744711;font-weight:800}.data-notices .alerts{margin:0;padding:0 12px 12px}.data-notices .alert{border:0;background:rgba(255,255,255,.62)}
+.control-panel{padding:0;overflow:hidden;margin-bottom:12px}.control-summary{margin:0;padding:13px 16px;cursor:pointer;list-style:none;align-items:center}.control-summary::-webkit-details-marker{display:none}.control-summary:after{content:"+";display:grid;place-items:center;flex:0 0 28px;height:28px;border-radius:50%;background:#edf3ef;color:#27453a;font-size:18px;font-weight:500}.control-panel[open] .control-summary:after{content:"−"}.control-content{padding:0 16px 16px;border-top:1px solid #e9eeeb}.control-content .filter-form{padding-top:15px}.control-content .tools-row{margin-bottom:0}.data-notices{margin:0 0 12px;border:1px solid #edd7af;border-radius:13px;background:#fffaf0}.data-notices>summary{cursor:pointer;padding:11px 14px;color:#744711;font-weight:800}.data-notices .alerts{margin:0;padding:0 10px 10px}.data-notices .alert{border:0;background:rgba(255,255,255,.62)}
 .control-summary:focus,.data-notices>summary:focus,.evidence-panel>summary:focus{outline:3px solid rgba(233,109,60,.3);outline-offset:-3px}
-.evidence-panel{padding:0;overflow:hidden}.evidence-panel>summary{cursor:pointer;list-style:none;padding:19px 21px}.evidence-panel>summary::-webkit-details-marker{display:none}.evidence-panel>summary:after{content:"View";padding:5px 9px;border-radius:999px;background:#edf3ef;color:#385248;font-size:11px;font-weight:800}.evidence-panel[open]>summary:after{content:"Hide"}.evidence-body{padding:0 21px 21px}.evidence-panel .operations-grid,.evidence-panel .roadmap-grid{margin-top:0}.table-panel{border-radius:20px}.table-scroll{scrollbar-color:#bdc9c2 transparent}.footer{padding:8px 2px 0}
+.evidence-panel{padding:0;overflow:hidden}.evidence-panel>summary{cursor:pointer;list-style:none;padding:16px 18px}.evidence-panel>summary::-webkit-details-marker{display:none}.evidence-panel>summary:after{content:"View";padding:5px 9px;border-radius:999px;background:#edf3ef;color:#385248;font-size:11px;font-weight:800}.evidence-panel[open]>summary:after{content:"Hide"}.evidence-body{padding:0 18px 18px}.evidence-panel .operations-grid,.evidence-panel .roadmap-grid{margin-top:0}.evidence-bundle{margin-bottom:12px}.evidence-bundle .panel{box-shadow:none}.table-panel{border-radius:16px}.table-scroll{scrollbar-color:#bdc9c2 transparent}.performance-panel{margin-bottom:12px}.performance-panel .panel-heading{padding:17px 18px 0}.performance-table th:first-child,.performance-table td:first-child{position:sticky;left:0;z-index:1;background:#fff}.performance-value{display:block;color:var(--ink);font-size:15px;font-weight:850}.performance-meta{display:block;color:var(--muted);font-size:10px;font-weight:700}.performance-meta[data-state="partial"],.performance-meta[data-state="withheld"]{color:var(--amber)}.footer{padding:8px 2px 0}
 @media(max-width:1080px){.dashboard-primary{grid-template-columns:1fr}.attention-panel .attention-list{grid-template-columns:repeat(2,minmax(0,1fr))}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:1/-1}}
-@media(max-width:760px){.hero{padding:24px}.trust-card{width:100%}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:14px}.attention-panel .attention-list{grid-template-columns:1fr}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:auto}.chart-stage{min-height:340px}.time-series-chart{height:340px}.control-summary{display:flex}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:480px){.shell{padding-top:18px}.hero{padding:22px 19px;border-radius:21px}.hero h1{font-size:34px}.kpi-grid{grid-template-columns:1fr}.kpi-card{min-height:130px}.chart-panel,.attention-panel,.decision-panel,.section-panel{padding:17px}.chart-stage{min-height:300px}.time-series-chart{height:300px}.live-state{border-radius:12px}}
+@media(max-width:760px){.hero{padding:18px}.trust-card{width:100%}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:12px}.attention-panel .attention-list{grid-template-columns:1fr}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:auto}.chart-stage{min-height:320px}.time-series-chart{height:320px}.control-summary{display:flex}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.performance-table{min-width:720px}}
+@media(max-width:480px){.shell{padding-top:12px}.report-nav{flex-wrap:wrap;overflow-x:visible}.hero{padding:17px 16px;border-radius:16px}.hero h1{font-size:29px}.kpi-grid{grid-template-columns:1fr}.kpi-card{min-height:116px}.chart-panel,.attention-panel,.decision-panel,.section-panel{padding:15px}.chart-stage{min-height:290px}.time-series-chart{height:290px}.live-state{border-radius:10px}.topbar-inner{gap:9px}.brand span{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.report-nav a,.subnav a,.quick-links a{transition:none}}
 """
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
 WIDTH_CLASSES = "".join(f".p-{level}{{width:{level}%}}" for level in range(101))
 GEOGRAPHY_CSS = """
-.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
+.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
 @media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
 @media(max-width:560px){.geography-panel{padding:16px}.geography-controls{display:grid;grid-template-columns:1fr}.geography-controls .field{min-width:0}.geo-svg{min-height:210px}.map-card{padding:10px}}
 """
@@ -424,6 +427,33 @@ JS = r"""
 (() => {
   const colors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+
+  function formatMetricValue(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "unavailable";
+    if (unit === "ratio") return `${(number * 100).toFixed(1)}%`;
+    if (unit === "position") return number.toFixed(1);
+    if (unit === "seconds") {
+      const rounded = Math.max(0, Math.round(number));
+      const hours = Math.floor(rounded / 3600);
+      const minutes = Math.floor((rounded % 3600) / 60);
+      const seconds = rounded % 60;
+      if (hours) return `${format.format(hours)}h ${String(minutes).padStart(2, "0")}m`;
+      if (minutes) return `${format.format(minutes)}m ${String(seconds).padStart(2, "0")}s`;
+      return `${seconds}s`;
+    }
+    if (unit === "bytes") {
+      const suffixes = ["B", "KB", "MB", "GB", "TB"];
+      let scaled = number;
+      let index = 0;
+      while (Math.abs(scaled) >= 1024 && index < suffixes.length - 1) {
+        scaled /= 1024;
+        index += 1;
+      }
+      return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: index ? 1 : 0}).format(scaled)} ${suffixes[index]}`;
+    }
+    return format.format(number);
+  }
 
   function updateMetricOptions() {
     const source = document.querySelector('select[name="source"]');
@@ -443,11 +473,14 @@ JS = r"""
     const source = document.querySelector('select[name="source"]');
     const metric = document.querySelector('select[name="metric"]');
     const site = document.querySelector('select[name="site"]');
+    const searchType = document.querySelector('select[name="search_type"]');
     const selectedSource = source?.value || metric?.selectedOptions[0]?.dataset.source || "";
     if (!selectedSource || !site) return;
     let first = null;
     for (const option of site.options) {
-      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
+      const sourceSupported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
+      const surfaceSupported = selectedSource !== "search-console" || option.value === "all" || !searchType?.value || (option.dataset.searchTypes || "").split(",").includes(searchType.value);
+      const supported = sourceSupported && surfaceSupported;
       option.hidden = !supported;
       option.disabled = !supported;
       if (supported && first === null) first = option;
@@ -455,13 +488,28 @@ JS = r"""
     if (site.selectedOptions[0]?.disabled && first) first.selected = true;
   }
 
+  function updateStyleOptions() {
+    const metric = document.querySelector('select[name="metric"]');
+    const style = document.querySelector('select[name="style"]');
+    if (!metric || !style) return;
+    const lineOnly = metric.selectedOptions[0]?.dataset.lowerIsBetter === "true";
+    for (const option of style.options) {
+      option.disabled = lineOnly && option.value !== "line";
+    }
+    if (lineOnly && style.value !== "line") style.value = "line";
+  }
+
   function drawChart(canvas, payload) {
     const series = payload.series || [];
     const comparison = payload.comparison_series || [];
+    const unit = payload.unit || series[0]?.unit || "count";
+    const lowerIsBetter = Boolean(payload.lower_is_better);
     const status = document.getElementById("chart-status");
+    const liveStatus = document.getElementById("chart-live-status");
     const legend = document.getElementById("chart-legend");
     if (!series.length) {
       status.textContent = "No stored daily values match this selection.";
+      if (liveStatus) liveStatus.textContent = status.textContent;
       canvas.dataset.rendered = "empty";
       return;
     }
@@ -479,12 +527,17 @@ JS = r"""
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
     const allValues = [...series, ...comparison].flatMap(item => item.points.map(point => Number(point.value)));
-    let min = Math.min(0, ...allValues);
-    let max = Math.max(0, ...allValues);
+    let min = lowerIsBetter ? Math.min(...allValues) : Math.min(0, ...allValues);
+    let max = lowerIsBetter ? Math.max(...allValues) : Math.max(0, ...allValues);
     if (min === max) max = min + 1;
     const padding = (max - min) * .08;
-    if (max > 0) max += padding;
-    if (min < 0) min -= padding;
+    if (lowerIsBetter) {
+      max += padding;
+      min = Math.max(0, min - padding);
+    } else {
+      if (max > 0) max += padding;
+      if (min < 0) min -= padding;
+    }
     const dateMs = value => Date.parse(value + "T00:00:00Z");
     const currentStart = dateMs(payload.window.start.slice(0, 10));
     const currentEnd = dateMs(payload.window.end.slice(0, 10));
@@ -503,7 +556,7 @@ JS = r"""
       const value = max - (max - min) * step / 4;
       const py = margin.top + plotHeight * step / 4;
       ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(width - margin.right, py); ctx.stroke();
-      ctx.textAlign = "right"; ctx.fillText(format.format(value), margin.left - 9, py);
+      ctx.textAlign = "right"; ctx.fillText(formatMetricValue(value, unit), margin.left - 9, py);
     }
     const dateAt = index => new Date(currentStart + index * 86400000).toISOString().slice(0, 10);
     const tickIndexes = [...new Set([0, Math.floor((dayCount - 1) / 2), dayCount - 1])];
@@ -534,11 +587,10 @@ JS = r"""
           if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         });
         if (fill && segment.length > 1) {
-          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
-          ctx.lineTo(xPoint(segment[0], startMs), y(min)); ctx.closePath();
-          const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
-          gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
-          ctx.fillStyle = gradient; ctx.fill();
+          const baseline = min;
+          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(baseline));
+          ctx.lineTo(xPoint(segment[0], startMs), y(baseline)); ctx.closePath();
+          ctx.save(); ctx.fillStyle = color; ctx.globalAlpha = .14; ctx.fill(); ctx.restore();
           ctx.beginPath();
           segment.forEach((point, index) => {
             const px = xPoint(point, startMs), py = y(Number(point.value));
@@ -555,7 +607,8 @@ JS = r"""
       }
     }
 
-    if (payload.style === "bar") {
+    const effectiveStyle = lowerIsBetter ? "line" : payload.style;
+    if (effectiveStyle === "bar") {
       const groupWidth = Math.max(2, Math.min(18, plotWidth / dayCount * .7));
       const barWidth = Math.max(1.5, groupWidth / series.length);
       series.forEach((item, seriesIndex) => {
@@ -569,7 +622,7 @@ JS = r"""
       comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
     } else {
       comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
-      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false, payload.style === "area"));
+      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false, effectiveStyle === "area"));
     }
 
     if (legend) {
@@ -587,7 +640,14 @@ JS = r"""
     }
     const rangeText = `${dateAt(0)} through ${dateAt(dayCount - 1)}`;
     const comparisonText = payload.compare && !payload.comparison_available ? " - comparison unavailable" : "";
-    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`;
+    const directionText = lowerIsBetter ? " - lower is better" : "";
+    const surfaceText = payload.search_type ? ` - ${payload.search_type} search surface` : "";
+    const statusText = `${payload.metric_label} (${unit})${directionText}${surfaceText} - ${series.length} series - ${rangeText}${comparisonText}`;
+    status.textContent = statusText;
+    if (liveStatus && liveStatus.dataset.summary !== statusText) {
+      liveStatus.dataset.summary = statusText;
+      liveStatus.textContent = statusText;
+    }
     canvas.dataset.rendered = "true";
     canvas.onpointermove = event => {
       const bounds = canvas.getBoundingClientRect();
@@ -595,17 +655,18 @@ JS = r"""
       const selectedDate = dateAt(index);
       const values = series.map(item => {
         const point = item.points.find(candidate => candidate.date === selectedDate);
-        return `${payload.site_names[item.site_id] || item.site_id}: ${point ? format.format(Number(point.value)) : "no value"}`;
+        return `${payload.site_names[item.site_id] || item.site_id}: ${point ? formatMetricValue(point.value, unit) : "no value"}`;
       });
       status.textContent = `${selectedDate} - ${values.join(" - ")}`;
     };
-    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`; };
+    canvas.onpointerleave = () => { status.textContent = statusText; };
   }
 
   async function loadChart() {
     const canvas = document.getElementById("time-series-chart");
     if (!canvas) return;
     const status = document.getElementById("chart-status");
+    const liveStatus = document.getElementById("chart-live-status");
     try {
       const response = await fetch(canvas.dataset.seriesUrl, {headers: {Accept: "application/json"}, credentials: "same-origin"});
       if (!response.ok) throw new Error(`Series request failed (${response.status})`);
@@ -615,6 +676,7 @@ JS = r"""
       new ResizeObserver(() => drawChart(canvas, canvas._payload)).observe(canvas);
     } catch (error) {
       status.textContent = error.message;
+      if (liveStatus) liveStatus.textContent = error.message;
       canvas.dataset.rendered = "error";
     }
   }
@@ -665,15 +727,60 @@ JS = r"""
     return polygons.map(polygon => polygon.map(ring => topoRing(topology, ring)).join("")).join("");
   }
 
+  function setGeographyTableMessage(message) {
+    const body = document.getElementById("geography-table-body");
+    if (!body) return;
+    body.replaceChildren();
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 3; cell.className = "geo-empty"; cell.textContent = message;
+    row.append(cell); body.append(row);
+  }
+
+  function updateGeographyDisclosures(payload) {
+    const title = document.getElementById("geography-title");
+    const sourceMetric = document.getElementById("geography-source-metric");
+    const suppression = document.getElementById("geography-suppression");
+    const methodology = document.getElementById("geography-method");
+    const county = document.getElementById("geography-county-note");
+    const region = document.getElementById("geography-region-note");
+    const worldSvg = document.getElementById("world-geo-map");
+    const usSvg = document.getElementById("us-geo-map");
+    const searchSurface = payload.search_type ? ` (${payload.search_type} search surface)` : "";
+    const sourceScope = payload.search_type ? `; ${payload.search_type} search surface` : "";
+    title.textContent = `${payload.label} by geography${searchSurface}`;
+    sourceMetric.textContent = `${payload.label}; metric ${payload.metric}; ${payload.grain} aggregation${sourceScope}.`;
+    suppression.textContent = `Buckets below ${payload.suppression.threshold} are withheld; ${payload.suppression.withheld_country_rows} country and ${payload.suppression.withheld_us_state_rows} state rows are hidden for this payload.`;
+    methodology.textContent = payload.methodology;
+    county.textContent = payload.counties.reason;
+    region.textContent = payload.region_support.status === "available"
+      ? `${payload.label} includes provider-reported state or region values.`
+      : payload.region_support.reason;
+    worldSvg.setAttribute("aria-label", `${payload.label} world country choropleth${searchSurface}`);
+    usSvg.setAttribute("aria-label", `${payload.label} United States state choropleth${searchSurface}; county boundaries are orientation only`);
+  }
+
+  function setGeographyLoadingState(label, status, announcement) {
+    document.getElementById("geography-title").textContent = "Geographic activity";
+    document.getElementById("geography-source-metric").textContent = `${label} selected; awaiting its stored aggregate payload.`;
+    document.getElementById("geography-suppression").textContent = "Suppression counts are loading for the selected payload.";
+    document.getElementById("geography-method").textContent = "Method disclosure is loading for the selected payload.";
+    document.getElementById("geography-county-note").textContent = "County availability is loading for the selected payload.";
+    document.getElementById("geography-region-note").textContent = "State and region availability is loading for the selected payload.";
+    document.getElementById("world-geo-map").replaceChildren();
+    document.getElementById("us-geo-map").replaceChildren();
+    setGeographyTableMessage("Loading geography rows for the selected source and metric.");
+    status.textContent = `Loading ${label} geography...`;
+    announcement.textContent = `Loading ${label} geography.`;
+  }
+
   function updateGeographyTable(payload) {
     const body = document.getElementById("geography-table-body");
     if (!body) return;
     body.replaceChildren();
     if (!payload.countries.length) {
-      const row = document.createElement("tr");
-      const cell = document.createElement("td"); cell.colSpan = 3; cell.className = "geo-empty";
-      cell.textContent = "No unsuppressed country rows are stored for this source and exact window.";
-      row.append(cell); body.append(row); return;
+      setGeographyTableMessage("No unsuppressed country rows are stored for this source and exact window.");
+      return;
     }
     for (const item of payload.countries) {
       const row = document.createElement("tr");
@@ -764,6 +871,7 @@ JS = r"""
     const worldSvg = document.getElementById("world-geo-map");
     const usSvg = document.getElementById("us-geo-map");
     const status = document.getElementById("geography-status");
+    const announcement = document.getElementById("geography-announcement");
     const source = document.getElementById("geography-source");
     try {
       const [worldResponse, usResponse] = await Promise.all([
@@ -772,22 +880,49 @@ JS = r"""
       ]);
       if (!worldResponse.ok || !usResponse.ok) throw new Error("Local map boundary request failed.");
       const world = await worldResponse.json(); const us = await usResponse.json();
+      let renderVersion = 0;
       const render = async () => {
+        const version = ++renderVersion;
+        const requestedSource = source.value;
+        const requestedLabel = source.selectedOptions[0].textContent;
         const url = new URL(stage.dataset.geographyApi, window.location.href);
-        url.searchParams.set("source", source.value);
-        status.textContent = `Loading ${source.selectedOptions[0].textContent} geography...`;
+        url.searchParams.set("source", requestedSource);
+        if (requestedSource === "search-console" && stage.dataset.searchType) {
+          url.searchParams.set("search_type", stage.dataset.searchType);
+        } else {
+          url.searchParams.delete("search_type");
+        }
+        setGeographyLoadingState(requestedLabel, status, announcement);
         const response = await fetch(url, {headers: {Accept: "application/json"}, credentials: "same-origin"});
+        if (version !== renderVersion) return;
         if (!response.ok) throw new Error(`Geography request failed (${response.status})`);
-        const payload = await response.json();
+        let payload;
+        try {
+          payload = await response.json();
+        } catch (error) {
+          if (version !== renderVersion) return;
+          throw error;
+        }
+        if (version !== renderVersion) return;
+        if (payload.source !== requestedSource) throw new Error("Geography response did not match the selected source.");
+        updateGeographyDisclosures(payload);
         renderWorldMap(worldSvg, world, payload, status); renderUsMap(usSvg, us, payload, status); updateGeographyTable(payload);
         const withheld = payload.suppression.withheld_country_rows + payload.suppression.withheld_us_state_rows;
         status.textContent = `${payload.label}: ${payload.countries.length} countries and ${payload.us_states.length} US states displayed; ${withheld} low-volume rows withheld. ${payload.coverage.note}`;
+        announcement.textContent = `${payload.label} geography loaded.`;
         stage.dataset.rendered = "true";
       };
-      source.addEventListener("change", () => render().catch(error => { status.textContent = error.message; stage.dataset.rendered = "error"; }));
+      const reportError = error => {
+        status.textContent = error.message;
+        announcement.textContent = `Geography could not be loaded. ${error.message}`;
+        stage.dataset.rendered = "error";
+      };
+      source.addEventListener("change", () => render().catch(reportError));
       await render();
     } catch (error) {
-      status.textContent = error.message; stage.dataset.rendered = "error";
+      status.textContent = error.message;
+      announcement.textContent = `Geography could not be loaded. ${error.message}`;
+      stage.dataset.rendered = "error";
     }
   }
 
@@ -1082,12 +1217,19 @@ JS = r"""
   if (source) {
     updateMetricOptions();
     updateSiteOptions();
-    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); });
+    updateStyleOptions();
+    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); updateStyleOptions(); });
   }
   const metric = document.querySelector('select[name="metric"]');
-  if (!source && metric) {
+  if (metric) {
+    if (!source) updateSiteOptions();
+    updateStyleOptions();
+    metric.addEventListener("change", () => { updateSiteOptions(); updateStyleOptions(); });
+  }
+  const searchType = document.querySelector('select[name="search_type"]');
+  if (searchType) {
     updateSiteOptions();
-    metric.addEventListener("change", updateSiteOptions);
+    searchType.addEventListener("change", updateSiteOptions);
   }
   loadChart();
   loadGeography();
@@ -1136,8 +1278,14 @@ def _format_value(value: int | float | None, unit: str = "count") -> str:
     if unit == "position":
         return f"{number:.1f}"
     if unit == "seconds":
-        minutes = number / 60
-        return f"{minutes:,.1f} min"
+        rounded = max(0, round(number))
+        hours, remainder = divmod(rounded, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours:,}h {minutes:02d}m"
+        if minutes:
+            return f"{minutes:,}m {seconds:02d}s"
+        return f"{seconds}s"
     if unit == "bytes":
         for suffix in ("B", "KB", "MB", "GB", "TB"):
             if abs(number) < 1024 or suffix == "TB":
@@ -1166,6 +1314,7 @@ def _metric_total(result, metric):
             "covered_cells": summary.get("covered_cells", 0),
             "expected_cells": summary.get("expected_cells", 0),
             "observed": summary.get("observed", False),
+            "comparison_available": bool(summary.get("comparison_available", False)),
         }
     rows = [row for row in result["rows"] if row["metric"] == metric]
     if not rows:
@@ -1173,8 +1322,15 @@ def _metric_total(result, metric):
     if metric in METRICS and METRICS[metric].aggregation in {"weighted", "latest"}:
         return None
     value = sum(float(row["value"]) for row in rows)
-    prior_values = [float(row["previous_value"]) for row in rows if row["previous_value"] is not None]
-    previous = sum(prior_values) if prior_values else None
+    comparison_available = bool(rows) and all(
+        row.get("comparison_available", row.get("previous_value") is not None)
+        for row in rows
+    )
+    prior_values = [
+        float(row["previous_value"])
+        for row in rows if row.get("previous_value") is not None
+    ]
+    previous = sum(prior_values) if comparison_available and len(prior_values) == len(rows) else None
     change = None if previous in {None, 0} else round((value - previous) / previous * 100, 1)
     return {
         "value": value, "previous": previous, "change": change,
@@ -1183,19 +1339,103 @@ def _metric_total(result, metric):
         "covered_cells": 0,
         "expected_cells": 0,
         "observed": True,
+        "comparison_available": comparison_available,
     }
+
+
+def _metric_site_scope(result, metric):
+    """Describe which report sites can actually contribute to a KPI total."""
+
+    definition = METRICS.get(metric)
+    if definition is None:
+        return ""
+    report_site_ids = {
+        str(site_id) for site_id in result.get("site_ids", []) if site_id
+    }
+    buckets = [
+        bucket
+        for bucket in (result.get("coverage") or {}).get("by_site_source", [])
+        if bucket.get("source") == definition.source
+        and bucket.get("site_id")
+        and metric in (bucket.get("metric_status") or {})
+    ]
+    if not report_site_ids:
+        report_site_ids = {str(bucket["site_id"]) for bucket in buckets}
+    configured_site_ids = {
+        str(bucket["site_id"])
+        for bucket in buckets
+        if str(bucket["site_id"]) in report_site_ids
+        and (bucket.get("metric_status") or {}).get(metric) != "not_configured"
+    }
+    if not report_site_ids or not configured_site_ids:
+        return ""
+    contributing_site_ids = {
+        str(row["site_id"])
+        for row in result.get("rows", [])
+        if row.get("metric") == metric
+        and row.get("site_id")
+        and str(row["site_id"]) in report_site_ids
+    }
+    # A complete covered bucket contributes a supported zero when an additive
+    # metric has no fact row, so it belongs in the aggregate's site scope too.
+    contributing_site_ids.update(
+        str(bucket["site_id"])
+        for bucket in buckets
+        if str(bucket["site_id"]) in configured_site_ids
+        and (bucket.get("metric_status") or {}).get(metric) == "complete"
+    )
+    contributing = len(contributing_site_ids)
+    configured = len(configured_site_ids)
+    report_sites = len(report_site_ids)
+
+    def site_label(count):
+        return "site" if count == 1 else "sites"
+
+    scope = (
+        f"scope {contributing} contributing {site_label(contributing)} "
+        f"of {configured} configured {site_label(configured)}"
+    )
+    if configured != report_sites:
+        scope += (
+            f" ({configured} of {report_sites} report "
+            f"{site_label(report_sites)} configured)"
+        )
+    return f"; {scope}"
 
 
 def _trend(change, *, lower_is_better=False, neutral=False):
     if change is None:
-        return '<span class="trend flat">No prior</span>'
+        return '<span class="trend flat">Prior unavailable</span>'
     favorable = change < 0 if lower_is_better else change > 0
     state = "flat" if neutral or change == 0 else "up" if favorable else "down"
     prefix = "+" if change > 0 else ""
     return f'<span class="trend {state}">{prefix}{change:.1f}%</span>'
 
 
-def _summary_cards(result, expected_metrics):
+LOWER_IS_BETTER_METRICS = frozenset({
+    "search.position", "forms.pending", "forms.failed", "umami.bounces",
+})
+
+
+def _comparison_badge(total):
+    if not total or not total.get("comparison_available"):
+        return '<span class="trend flat">Prior unavailable</span>'
+    current = total.get("value")
+    previous = total.get("previous")
+    lower_is_better = total.get("metric") in LOWER_IS_BETTER_METRICS
+    if previous == 0:
+        if current == 0:
+            return '<span class="trend flat">0 vs 0 prior</span>'
+        favorable = current < 0 if lower_is_better else current > 0
+        state = "up" if favorable else "down"
+        return f'<span class="trend {state}">New vs 0 prior</span>'
+    change = total.get("change")
+    if change is None and current is not None and previous not in {None, 0}:
+        change = (float(current) - float(previous)) / float(previous) * 100
+    return _trend(change, lower_is_better=lower_is_better)
+
+
+def _summary_cards(result, expected_metrics, site_names=None):
     expected = set(expected_metrics)
     if expected and all(metric.startswith("forms.") for metric in expected):
         definitions = FORMS_SUMMARY
@@ -1233,11 +1473,13 @@ def _summary_cards(result, expected_metrics):
                     "covered_cells": 0,
                     "expected_cells": 0,
                     "observed": False,
+                    "comparison_available": False,
                 }
                 selected_metric = metric
                 break
         observed = total is not None and total["value"] is not None
         partial = bool(total and total.get("coverage_status") == "partial")
+        site_scope_note = _metric_site_scope(result, selected_metric)
         source_conflict = bool(total and total.get("source") == "mixed")
         withheld = bool(
             total and total["value"] is None and (partial or source_conflict)
@@ -1255,16 +1497,26 @@ def _summary_cards(result, expected_metrics):
             badge = (
                 '<span class="trend partial">Partial data</span>'
                 if partial
-                else _trend(
-                    total["change"],
-                    lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
-                )
+                else _comparison_badge(total)
             )
             coverage_note = (
                 f'; observed {total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
                 if partial else ""
             )
-            detail = f"{note} - {source}{coverage_note}"
+            comparison_note = (
+                "comparison is against the immediately preceding equal-length window"
+                if total.get("comparison_available")
+                else "preceding-window comparison is unavailable"
+            )
+            surface_note = (
+                f'; Search Console surface {result["search_type"]}'
+                if selected_metric.startswith("search.") and result.get("search_type")
+                else ""
+            )
+            detail = (
+                f"{note} - {source}{surface_note}{site_scope_note}"
+                f"{coverage_note}; {comparison_note}"
+            )
         elif withheld:
             value = "Withheld"
             badge = (
@@ -1273,18 +1525,25 @@ def _summary_cards(result, expected_metrics):
                 else '<span class="trend partial">Partial data</span>'
             )
             detail = (
-                f'{note} - aggregate withheld because multiple actual provider sources are present'
+                f'{note} - aggregate withheld because multiple actual provider sources are present{site_scope_note}'
                 if source_conflict
                 else f'{note} - aggregate withheld; observed '
-                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells{site_scope_note}'
             )
         else:
             value = "Unknown"
             badge = '<span class="trend flat">Not observed</span>'
-            detail = f"{note} - no stored observation"
+            detail = f"{note} - no stored observation{site_scope_note}"
         state = "withheld" if withheld else "partial" if partial else "observed" if observed else "unknown"
+        unit = total.get("unit", "count") if total else "count"
+        source_id = total.get("source") if total else None
+        comparison_state = (
+            "available" if total and total.get("comparison_available") else "unavailable"
+        )
         cards.append(
-            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
+            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}" '
+            f'data-unit="{_e(unit)}" data-source="{_e(source_id or "unavailable")}" '
+            f'data-comparison="{comparison_state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
             f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
@@ -1294,17 +1553,46 @@ def _coverage_summary_html(result):
     coverage = result.get("coverage") or {}
     expected = int(coverage.get("expected_cells") or 0)
     covered = int(coverage.get("covered_cells") or 0)
-    percent = round(covered / expected * 100) if expected else (100 if result.get("complete") else 0)
+    measurable = expected > 0
+    percent = round(covered / expected * 100) if measurable else 0
     percent = max(0, min(100, percent))
-    state = "complete" if result.get("complete") else "partial"
-    label = "Trusted window" if state == "complete" else "Coverage to review"
+    state = "complete" if measurable and covered == expected else "partial" if measurable else "unknown"
+    value = f"{percent}%" if measurable else "—"
+    label = f"{covered:,} of {expected:,} expected cells" if measurable else "Not measurable for this selection"
     return (
-        f'<aside class="trust-card" data-state="{state}" aria-label="{_e(label)}: {percent}%">'
-        '<span class="trust-label">Data confidence</span>'
-        f'<span class="trust-value"><strong>{percent}%</strong><span>{_e(label)}</span></span>'
+        f'<aside class="trust-card" data-state="{state}" aria-label="Report coverage: {_e(label)}">'
+        '<span class="trust-label">Report coverage</span>'
+        f'<span class="trust-value"><strong>{_e(value)}</strong><span>{_e(label)}</span></span>'
         f'<span class="coverage-track" aria-hidden="true"><span class="coverage-fill p-{percent}"></span></span>'
         '</aside>'
     )
+
+
+def _snapshot_status_text(result):
+    health = result.get("source_health") or []
+    feed_count = len(health)
+    feed_label = "site-source feed" if feed_count == 1 else "site-source feeds"
+    data_through = sorted({
+        str(item["data_through"])[:10]
+        for item in health if item.get("data_through")
+    })
+    ingested = sorted({
+        str(item["ingested_at"])
+        for item in health if item.get("ingested_at")
+    })
+    if not feed_count:
+        return "Stored snapshot · no feed evidence in this selection"
+    if not data_through:
+        through_text = "data-through dates unavailable"
+    elif len(data_through) == 1:
+        through_text = f"data through {data_through[0]}"
+    else:
+        through_text = f"data-through range {data_through[0]}–{data_through[-1]}"
+    ingest_text = (
+        f"latest ingest {ingested[-1][:16].replace('T', ' ')}Z"
+        if ingested else "ingest time unavailable"
+    )
+    return f"Stored snapshot · {feed_count} {feed_label} · {through_text} · {ingest_text}"
 
 
 def _decision_badge(item):
@@ -1376,7 +1664,7 @@ def _decision_summary_html(support, site_names):
     return (
         '<section class="panel decision-panel" aria-labelledby="decision-summary-title">'
         '<div class="panel-heading"><div><h2 id="decision-summary-title">Decision summary</h2>'
-        '<p>Four outcome and trust signals first; provider inventory stays supporting evidence.</p>'
+        '<p>Outcome and trust calculations with provider inventory retained as supporting evidence.</p>'
         f'</div></div><div class="decision-grid">{cards}</div></section>'
     )
 
@@ -1398,11 +1686,21 @@ def _attention_html(support):
             f'<h3>{_e(item["title"])}</h3><p>{_e(item["evidence"])}</p>'
             f'<p><strong>Next action:</strong> {_e(item["action"])}</p></div></li>'
         )
+    visible_rows = rows[:2]
+    remaining_rows = rows[2:]
+    more_html = ""
+    if remaining_rows:
+        item_label = "item" if len(remaining_rows) == 1 else "items"
+        more_html = (
+            '<details class="attention-more">'
+            f'<summary>Show {len(remaining_rows)} more {item_label}</summary>'
+            f'<ol class="attention-list" start="3">{"".join(remaining_rows)}</ol></details>'
+        )
     return (
         '<section class="panel attention-panel" aria-labelledby="attention-title">'
         '<div class="panel-heading"><div><h2 id="attention-title">What needs attention</h2>'
         '<p>Deterministic evidence and a next action; ordinary movement is not called an anomaly.</p>'
-        f'</div></div><ol class="attention-list">{"".join(rows)}</ol></section>'
+        f'</div></div><ol class="attention-list">{"".join(visible_rows)}</ol>{more_html}</section>'
     )
 
 
@@ -1581,29 +1879,33 @@ def _chart_html(result, metric, site_names):
             ),
             None,
         )
-        aggregate = (
-            aggregate_row["value"]
-            if aggregate_row is not None
-            else sum(float(point["value"]) for point in points)
-        )
         aggregation = METRICS[metric].aggregation if metric in METRICS else "sum"
         coverage_status = (
             aggregate_row.get("coverage_status", "unknown")
             if aggregate_row is not None else "unknown"
         )
-        aggregate_label = (
-            "window aggregate"
-            if aggregation in {"weighted", "latest"}
-            else "observed total (partial)"
-            if coverage_status == "partial"
-            else "window total"
-        )
+        if aggregation == "daily-unique":
+            aggregate_text = "Daily uniques · no window-unique total"
+        else:
+            aggregate = (
+                aggregate_row["value"]
+                if aggregate_row is not None
+                else sum(float(point["value"]) for point in points)
+            )
+            aggregate_label = (
+                "window aggregate"
+                if aggregation in {"weighted", "latest"}
+                else "observed total (partial)"
+                if coverage_status == "partial"
+                else "window total"
+            )
+            aggregate_text = f"{_format_value(aggregate, series['unit'])} {aggregate_label}"
         first = points[0]["date"] if points else ""
         last = points[-1]["date"] if points else ""
         cards.append(
             f'<article class="chart-card" data-chart="{_e(metric)}"><div class="chart-card-head">'
             f'<h3>{_e(site_names.get(series["site_id"], series["site_id"]))}</h3>'
-            f'<span class="chart-total">{_e(_format_value(aggregate, series["unit"]))} {_e(aggregate_label)}</span></div>'
+            f'<span class="chart-total">{_e(aggregate_text)}</span></div>'
             f'<div class="chart-scroll"><div class="bar-grid {density}" role="img" aria-label="{_e(_metric_label(metric))} by day for {site_names.get(series["site_id"], series["site_id"])}">'
             + "".join(bars)
             + f'</div><div class="axis-labels"><span>{_e(first)}</span><span>{_e(last)}</span></div></div>'
@@ -1686,11 +1988,31 @@ def _warnings_html(warnings):
 def _metrics_table(result, site_names):
     rows = []
     for row in result["rows"]:
-        change = row["change_percent"]
-        lower_is_better = row["metric"] in {"search.position", "forms.pending", "forms.failed"}
+        change = row.get("change_percent")
+        lower_is_better = row["metric"] in LOWER_IS_BETTER_METRICS
         favorable = change is not None and (change < 0 if lower_is_better else change > 0)
-        change_class = "muted" if change in {None, 0} else "positive" if favorable else "negative"
-        change_text = "—" if change is None else f'{"+" if change > 0 else ""}{change}%'
+        comparison_available = bool(row.get("comparison_available", False))
+        previous = row.get("previous_value")
+        current = row.get("value")
+        if not comparison_available:
+            change_class = "muted"
+            change_text = "Prior unavailable (coverage or source not comparable)"
+        elif previous == 0 and current == 0:
+            change_class = "muted"
+            change_text = "No change (0 vs 0)"
+        elif previous == 0:
+            favorable = current < 0 if lower_is_better else current > 0
+            change_class = "positive" if favorable else "negative"
+            change_text = "New vs 0 prior"
+        elif change == 0:
+            change_class = "muted"
+            change_text = "No change (0.0%)"
+        elif change is None:
+            change_class = "muted"
+            change_text = "Comparison available; delta unavailable"
+        else:
+            change_class = "positive" if favorable else "negative"
+            change_text = f'{"+" if change is not None and change > 0 else ""}{change:.1f}%'
         rows.append(
             f'<tr><td class="metric-name">{_e(_metric_label(row["metric"]))}</td>'
             f'<td>{_e(site_names.get(row["site_id"], row["site_id"]))}</td>'
@@ -1703,6 +2025,119 @@ def _metrics_table(result, site_names):
     if not rows:
         rows.append('<tr><td colspan="7">No data in this window.</td></tr>')
     return "".join(rows)
+
+
+PERFORMANCE_BY_SITE_METRICS = (
+    "search.clicks", "umami.visits", "umami.pageviews", "forms.submissions",
+)
+
+
+def _site_metric_bucket(result, site_id, metric):
+    source = METRICS[metric].source
+    return next((
+        item for item in (result.get("coverage") or {}).get("by_site_source", [])
+        if item.get("site_id") == site_id and item.get("source") == source
+    ), None)
+
+
+def _performance_cell(result, site_id, metric):
+    matches = [
+        row for row in result.get("rows", [])
+        if row.get("site_id") == site_id and row.get("metric") == metric
+    ]
+    bucket = _site_metric_bucket(result, site_id, metric)
+    coverage_status = (
+        (bucket.get("metric_status") or {}).get(metric, "unavailable")
+        if bucket else "unavailable"
+    )
+    actual_sources = {row.get("source") for row in matches if row.get("source")}
+    evidence_by_metric = (bucket or {}).get("metric_evidence_providers") or {}
+    configured_sources = set(evidence_by_metric.get(metric, []))
+    configured_sources.update((bucket or {}).get("configured_providers") or [])
+    all_sources = actual_sources or configured_sources
+    if len(actual_sources) > 1 or (not actual_sources and len(all_sources) > 1):
+        return (
+            '<span class="performance-value">Withheld</span>'
+            '<span class="performance-meta" data-state="withheld">Multiple provider sources</span>'
+        )
+    if len(matches) > 1:
+        return (
+            '<span class="performance-value">Withheld</span>'
+            '<span class="performance-meta" data-state="withheld">Duplicate aggregate rows</span>'
+        )
+    if matches:
+        row = matches[0]
+        total = {
+            "metric": metric,
+            "value": row.get("value"),
+            "previous": row.get("previous_value"),
+            "change": row.get("change_percent"),
+            "comparison_available": bool(row.get("comparison_available", False)),
+        }
+        source = _source_label(row.get("source", METRICS[metric].source))
+        state = "partial" if coverage_status == "partial" else "observed"
+        return (
+            f'<span class="performance-value">{_e(_format_value(row.get("value"), row.get("unit", METRICS[metric].unit)))}</span>'
+            f'<span class="performance-meta" data-state="{state}">{_e(source)} · {_e(coverage_status.replace("_", " "))}</span>'
+            f'{_comparison_badge(total)}'
+        )
+    if coverage_status == "complete" and METRICS[metric].aggregation == "sum" and len(all_sources) <= 1:
+        source = _source_label(next(iter(all_sources), METRICS[metric].source))
+        return (
+            '<span class="performance-value">0</span>'
+            f'<span class="performance-meta">{_e(source)} · complete query, no value rows</span>'
+            '<span class="trend flat">Prior unavailable</span>'
+        )
+    known_metric = (
+        metric in result.get("summary_totals", {})
+        or metric in ((result.get("decision_support") or {}).get("supporting_metrics") or {})
+    )
+    labels = {
+        "not_configured": "Not configured",
+        "partial": "No complete aggregate",
+        "unavailable": (
+            "No stored observation"
+            if known_metric
+            else "Not in report"
+        ),
+    }
+    label = labels.get(coverage_status, "Not in report")
+    return (
+        f'<span class="performance-value">{_e(label)}</span>'
+        f'<span class="performance-meta" data-state="{_e(coverage_status)}">{_e(coverage_status.replace("_", " "))}</span>'
+    )
+
+
+def _performance_by_site_html(result, site_names):
+    site_ids = list(result.get("site_ids") or site_names)
+    scoped_site = result.get("site_id")
+    if scoped_site:
+        site_ids = [scoped_site]
+    rows = "".join(
+        f'<tr><th scope="row">{_e(site_names.get(site_id, site_id))}</th>'
+        + "".join(
+            f'<td data-metric="{_e(metric)}">{_performance_cell(result, site_id, metric)}</td>'
+            for metric in PERFORMANCE_BY_SITE_METRICS
+        )
+        + "</tr>"
+        for site_id in site_ids
+    )
+    if not rows:
+        rows = '<tr><td colspan="5">No configured sites are in this report scope.</td></tr>'
+    headers = "".join(
+        f'<th scope="col">{_e(_metric_label(metric))}</th>'
+        for metric in PERFORMANCE_BY_SITE_METRICS
+    )
+    return (
+        '<section class="panel table-panel performance-panel" aria-labelledby="performance-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Comparable operating view</p>'
+        '<h2 id="performance-title">Performance by site</h2>'
+        '<p>Provider-separated report rows. Missing, partial, mixed-source, and zero states remain distinct.</p>'
+        '</div></div><div class="table-scroll"><table class="performance-table">'
+        '<caption class="sr-only">Per-site Search Console clicks, Umami visits, Umami page views, and durable form leads</caption>'
+        f'<thead><tr><th scope="col">Site</th>{headers}</tr></thead><tbody>{rows}</tbody>'
+        '</table></div></section>'
+    )
 
 
 def _provider_comparisons_html(result, site_names):
@@ -1848,6 +2283,24 @@ def _available_sites_by_source(config, report) -> dict[str, set[str]]:
         elif provider in available:
             available[provider].add(binding.site_id)
     return available
+
+
+def _site_option_enabled(
+    site_id: str,
+    selected_source: str,
+    selected_search_type: str | None,
+    available_sites: dict[str, set[str]],
+    search_types_by_site: dict[str, list[str]],
+) -> bool:
+    source_supported = not selected_source or site_id in available_sites.get(
+        selected_source, set()
+    )
+    surface_supported = (
+        selected_source != "search-console"
+        or not selected_search_type
+        or selected_search_type in search_types_by_site.get(site_id, [])
+    )
+    return source_supported and surface_supported
 
 
 def _scoped_coverage(coverage, *, source: str, metric: str, site_id: str | None):
@@ -2814,7 +3267,7 @@ def _site_graph_analysis_panels(payload):
     )
 
 
-def _geography_panel(payload, api_url):
+def _geography_panel(payload, api_url, *, search_type=None):
     source_options = "".join(
         f'<option value="{_e(source)}"{" selected" if source == payload["source"] else ""}>{_e(spec["label"])}</option>'
         for source, spec in SOURCE_CONFIG.items()
@@ -2824,26 +3277,43 @@ def _geography_panel(payload, api_url):
         for row in payload["countries"]
     ) or '<tr><td colspan="3" class="geo-empty">No unsuppressed country rows are stored for this source and exact window.</td></tr>'
     suppression = payload["suppression"]
+    selected_surface = payload.get("search_type")
+    surface_title = f' ({selected_surface} search surface)' if selected_surface else ""
+    surface_scope = f'; {selected_surface} search surface' if selected_surface else ""
+    source_metric = (
+        f'{payload["label"]}; metric {payload["metric"]}; '
+        f'{payload["grain"]} aggregation{surface_scope}.'
+    )
+    region_note = (
+        f'{payload["label"]} includes provider-reported state or region values.'
+        if payload["region_support"]["status"] == "available"
+        else payload["region_support"]["reason"]
+    )
     return (
         '<section class="panel geography-panel" id="geography-map" '
         f'data-geography-api="{_e(api_url)}" data-world-map="/assets/maps/world-countries.geojson" '
+        f'data-search-type="{_e(search_type or "")}" '
         'data-us-map="/assets/maps/us-counties.json" aria-labelledby="geography-title">'
-        '<div class="panel-heading"><div><p class="eyebrow">Geographic demand</p>'
-        '<h2 id="geography-title">World visitor geography</h2>'
-        '<p>Provider-labeled choropleths from stored aggregate dimensions. Darker areas indicate more activity within the selected source; sources are never blended.</p></div>'
+        '<div class="panel-heading"><div><p class="eyebrow">Geographic activity</p>'
+        f'<h2 id="geography-title">{_e(payload["label"])} by geography{_e(surface_title)}</h2>'
+        '<p>Provider-reported aggregate geography for the selected source and metric. Darker areas show a larger value within that source; sources are never blended.</p></div>'
         '<div class="geography-controls"><label class="field"><span>Map source</span>'
         f'<select id="geography-source">{source_options}</select></label></div></div>'
         '<div class="geography-grid"><article class="map-card"><h3>Countries</h3>'
-        '<p>Select the United States to move into state and county-boundary detail.</p>'
-        '<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="World country choropleth"></svg></article>'
+        '<p>Country buckets reported for the selected source and metric.</p>'
+        f'<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="{_e(payload["label"])} world country choropleth{_e(surface_title)}"></svg></article>'
         '<article class="map-card" id="us-geography"><h3>United States</h3>'
-        '<p>State values where the provider supports region data; select a state to reveal county boundaries.</p>'
-        '<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="United States state choropleth and county boundary drilldown"></svg></article></div>'
-        '<div class="geo-status" id="geography-status" role="status">Loading local geography boundaries and stored aggregates...</div>'
-        '<div class="geo-disclosure"><p><strong>Privacy floor</strong>'
-        f'Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are currently hidden.</p>'
-        '<p><strong>County boundaries are orientation only</strong>Current providers do not expose trustworthy county aggregates. No county values are inferred from city names or IP data.</p>'
-        f'<p><strong>Method</strong>{_e(payload["methodology"])}</p></div>'
+        f'<p id="geography-region-note">{_e(region_note)}</p>'
+        f'<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="{_e(payload["label"])} United States state choropleth{_e(surface_title)}; county boundaries are orientation only"></svg></article></div>'
+        '<div class="geo-status" id="geography-status" aria-live="off">Loading local geography boundaries and stored aggregates...</div>'
+        '<p class="sr-only" id="geography-announcement" role="status" aria-live="polite"></p>'
+        '<div class="geo-disclosure"><p><strong>Source and metric</strong>'
+        f'<span id="geography-source-metric">{_e(source_metric)}</span></p>'
+        '<p><strong>Privacy suppression</strong>'
+        f'<span id="geography-suppression">Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are hidden for this payload.</span></p>'
+        '<p><strong>County boundaries are orientation only</strong>'
+        f'<span id="geography-county-note">{_e(payload["counties"]["reason"])}</span></p>'
+        f'<p><strong>Method</strong><span id="geography-method">{_e(payload["methodology"])}</span></p></div>'
         '<details class="geography-fallback"><summary>Accessible ranked country values and no-JavaScript fallback</summary>'
         '<div class="table-scroll"><table><caption class="sr-only">Geographic activity by country</caption>'
         f'<thead><tr><th scope="col">Country code</th><th scope="col">Value</th><th scope="col">Provider metric</th></tr></thead><tbody id="geography-table-body">{rows}</tbody></table></div></details></section>'
@@ -2876,19 +3346,19 @@ def _route_observation_html(payload):
         for site in payload["available_sites"]
     )
     source_options = '<option value="">All configured providers</option>' + "".join(
-        f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(source)}</option>'
+        f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(_source_label(source))}</option>'
         for source in payload["available_sources"]
     )
     metric_options = '<option value="">All accepted route metrics</option>' + "".join(
-        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(metric)}</option>'
+        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(_metric_label(metric))} ({_e(metric)})</option>'
         for metric in payload["available_metrics"]
     )
     rows = "".join(
         "<tr>"
-        f'<td>{_e(row["site_id"])}</td><td>{_e(row["source"])}</td>'
-        f'<td>{_e(row["metric"])}</td><td>{_e(row["route"] or "Provider dimension")}</td>'
+        f'<td>{_e(row["site_id"])}</td><td>{_e(_source_label(row["source"]))}</td>'
+        f'<td>{_e(_metric_label(row["metric"]))}<small class="performance-meta">{_e(row["metric"])}</small></td><td>{_e(row["route"] or "Provider dimension")}</td>'
         f'<td>{_e(", ".join(f"{key}={value}" for key, value in row["dimensions"].items()))}</td>'
-        f'<td>{_e(row["value"])} {_e(row["unit"])}</td><td>{_e(row["coverage"])}</td>'
+        f'<td>{_e(_format_value(float(row["value"]), row["unit"]))}<small class="performance-meta">{_e(row["unit"])}</small></td><td>{_e(row["coverage"])}</td>'
         f'<td>{_e(row["data_state"])}</td><td>{_e(row["freshness"])}</td>'
         f'<td>{_e(row["provider_limitation"])}</td></tr>'
         for row in payload["rows"]
@@ -2904,12 +3374,16 @@ def _route_observation_html(payload):
             ("route", filters["route"]),
         ) if value
     }
+    dimension_chips = "".join(
+        f'<span class="source-chip">{_e(dimension.replace("_", " "))}</span>'
+        for dimension in payload.get("available_dimensions", [])
+    ) or '<span class="performance-meta">No accepted dimensions in this selection</span>'
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Route observations - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to route observations</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only route observations</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a href="/site-graph">Site Graph</a><a class="active" href="/route-observations">Route observations</a></div>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only route observations</div></div></header>
+<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a href="/site-graph">Site Graph</a><a class="active" aria-current="page" href="/route-observations">Route observations</a></div>
 <section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} - end exclusive</p><h1>Route observations</h1><p class="hero-copy">Provider-separated, privacy-bounded route and acquisition facts. Search clicks are not sessions; GA4 sessions are not Umami visits.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["displayed_rows"]} of {payload["total_rows"]} rows</span></section>
 <section class="panel control-panel"><div class="panel-heading"><div><h2>Bounded filters</h2><p>Filters never trigger provider collection or alter stored facts.</p></div></div>
 <form class="filter-form" method="get" action="/route-observations"><input type="hidden" name="report" value="{_e(filters["report"])}">
@@ -2920,11 +3394,12 @@ def _route_observation_html(payload):
 <label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Exact route</span><input name="route" value="{_e(filters["route"])}" placeholder="/services/"></label>
 <button type="submit">Apply filters</button></form></section>
-<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Provider semantics remain separate</strong><br>No visitor or session identifiers, raw queries, or full external referrer URLs are exposed. Search Console completeness remains provider-limited and its provider-date basis is disclosed per row.</div></div></aside>
+<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Provider semantics remain separate</strong><br>No visitor or session identifiers, unscreened query wording, or full external referrer URLs are exposed. Opted-in query text has already passed the configured privacy screen. Search Console provider date and surface remain explicit row dimensions.</div></div></aside>
+<section class="panel section-panel"><div class="panel-heading"><div><h2>Dimension disclosure</h2><p>Only accepted, stored dimensions are displayed; provider date, Search Console surface, and dimension family are not folded into route identity.</p></div></div><div class="capability-strip">{dimension_chips}</div></section>
 <section class="panel table-panel"><div class="panel-heading"><div><h2>Accepted observations</h2><p>Complete matching-row total: {payload["total_rows"]}. Display is bounded to {payload["limit"]}; export uses the same bounded, sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
 <div class="table-scroll"><table><caption class="sr-only">Provider-separated route observations with coverage, freshness, and limitations</caption>
 <thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section>
-<footer class="footer"><span>Read-only compatibility view</span><span>No provider sync, raw query, identifier, or full external referrer data</span></footer></main></body></html>"""
+<footer class="footer"><span>Read-only compatibility view</span><span>No provider sync, unscreened query wording, identifier, or full external referrer data</span></footer></main></body></html>"""
 
 
 def handler_factory(config, store, credentials=None):
@@ -3013,10 +3488,14 @@ def handler_factory(config, store, credentials=None):
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 analytics_fields = {
                     "report", "subreport", "start", "end", "site", "metric",
-                    "source", "style", "compare", "view",
+                    "source", "style", "compare", "view", "search_type",
                 }
-                report_fields = {"report", "subreport", "start", "end", "site"}
-                geography_fields = {"report", "start", "end", "site", "source"}
+                report_fields = {
+                    "report", "subreport", "start", "end", "site", "search_type",
+                }
+                geography_fields = {
+                    "report", "start", "end", "site", "source", "search_type",
+                }
                 graph_fields = {
                     "site", "page", "graph", "layer", "edge_query", "edge_sort",
                     "edge_order", "edge_page",
@@ -3191,6 +3670,9 @@ def handler_factory(config, store, credentials=None):
                 tuple(item["dimensions"].items()), item["window"]["start"],
             ))
             total_rows = len(rows)
+            available_dimensions = sorted({
+                key for row in rows for key in row["dimensions"]
+            })
             return {
                 "schema_version": 1,
                 "read_only": True,
@@ -3210,6 +3692,7 @@ def handler_factory(config, store, credentials=None):
                 "available_sites": list(report.site_ids),
                 "available_sources": available_sources,
                 "available_metrics": list(ROUTE_OBSERVATION_METRICS),
+                "available_dimensions": available_dimensions,
                 "total_rows": total_rows,
                 "displayed_rows": min(total_rows, ROUTE_OBSERVATION_LIMIT),
                 "limit": ROUTE_OBSERVATION_LIMIT,
@@ -3219,6 +3702,7 @@ def handler_factory(config, store, credentials=None):
                 "privacy": {
                     "visitor_or_session_identifiers": False,
                     "raw_queries": False,
+                    "unscreened_query_wording": False,
                     "full_external_referrer_urls": False,
                 },
             }
@@ -3318,7 +3802,7 @@ def handler_factory(config, store, credentials=None):
                 )
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a>{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
                 return self._send(200, "text/html; charset=utf-8", page)
@@ -3376,7 +3860,7 @@ def handler_factory(config, store, credentials=None):
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a></div>
 <section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Inspect internal-link structure with exact completeness disclosures, a safe full-graph mode for small sites, bounded rendering for larger sites, and a complete paginated evidence table.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
 <div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
@@ -3423,6 +3907,7 @@ def handler_factory(config, store, credentials=None):
             )
             return reports.render(
                 report_id, window, subreport_id, site_id,
+                search_type=query.get("search_type", [None])[0],
                 include_decision_support=include_decision_support,
                 include_provider_comparisons=include_provider_comparisons,
             ), report
@@ -3440,7 +3925,16 @@ def handler_factory(config, store, credentials=None):
                 query, config.platform.default_timezone,
                 report.default_window_days, report.default_end_lag_days,
             )
-            return geography.render(report_id, window, source, site_id=site_id)
+            return geography.render(
+                report_id,
+                window,
+                source,
+                site_id=site_id,
+                search_type=(
+                    query.get("search_type", [None])[0]
+                    if source == "search-console" else None
+                ),
+            )
 
         def _geography_api(self, query):
             return self._send(
@@ -3477,9 +3971,11 @@ def handler_factory(config, store, credentials=None):
             supported_sites = available_sites.get(source, set())
             if report["site_id"] is not None and report["site_id"] not in supported_sites:
                 raise ValueError("selected site is not configured for this series source")
-            style = query.get("style", ["line" if is_plot else "area"])[0]
+            style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
+            if metric in LOWER_IS_BETTER_METRICS and style != "line":
+                raise ValueError("lower-is-better metrics require line chart style")
             compare = _compare_flag(query)
 
             def selected(items):
@@ -3563,6 +4059,13 @@ def handler_factory(config, store, credentials=None):
                 "source_label": _source_label(source),
                 "metric": metric,
                 "metric_label": _metric_label(metric) if metric else "Daily series",
+                "unit": METRICS[metric].unit if metric else "count",
+                "lower_is_better": metric in LOWER_IS_BETTER_METRICS,
+                "search_type": (
+                    report.get("search_type") if source == "search-console" else None
+                ),
+                "available_search_types": report.get("available_search_types", []),
+                "search_types_by_site": report.get("search_types_by_site", {}),
                 "style": style,
                 "compare": compare,
                 "comparison_available": comparison_available,
@@ -3641,6 +4144,9 @@ def handler_factory(config, store, credentials=None):
             start = result["window"]["start"][:10]
             end = result["window"]["end"][:10]
             site_names = {site.id: site.name for site in config.sites}
+            selected_search_type = result.get("search_type")
+            available_search_types = result.get("available_search_types", [])
+            search_types_by_site = result.get("search_types_by_site", {})
             active_definition = next(
                 (item for item in report.subreports if item.id == result["subreport_id"]),
                 None,
@@ -3679,9 +4185,11 @@ def handler_factory(config, store, credentials=None):
                 (metric for metric in CHART_PRIORITY if metric in source_metrics),
                 source_metrics[0] if source_metrics else "",
             )
-            style = query.get("style", ["line" if is_plot else "area"])[0]
+            style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
+            if selected_metric in LOWER_IS_BETTER_METRICS and style != "line":
+                raise ValueError("lower-is-better metrics require line chart style")
             compare = _compare_flag(query)
             relevant_sources = {METRICS[metric].source for metric in expected_metrics}
             site_option_sources = set(represented_sources) if is_plot else relevant_sources
@@ -3718,6 +4226,8 @@ def handler_factory(config, store, credentials=None):
 
             def route(path="/", **overrides):
                 params = {"report": report.id, "start": start, "end": end}
+                if selected_search_type:
+                    params["search_type"] = selected_search_type
                 if is_plot:
                     params["view"] = "plot"
                     params["source"] = selected_source
@@ -3737,12 +4247,20 @@ def handler_factory(config, store, credentials=None):
                         params[key] = value
                 return path + "?" + urlencode(params)
 
+            def nav_attrs(active, class_name=""):
+                classes = " ".join(item for item in (class_name, "active" if active else "") if item)
+                class_attr = f' class="{classes}"' if classes else ""
+                return class_attr + (' aria-current="page"' if active else "")
+
             report_nav = "".join(
-                f'<a class="{"active" if not is_plot and item.id == report.id else ""}" href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
+                f'<a{nav_attrs(not is_plot and item.id == report.id)} href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
                 for item in config.reports
             )
-            plot_url = "/?" + urlencode({"report": report.id, "view": "plot", "start": start, "end": end})
-            report_nav += f'<a class="plot-mode {"active" if is_plot else ""}" href="{_e(plot_url)}">Plot Builder</a>'
+            plot_params = {"report": report.id, "view": "plot", "start": start, "end": end}
+            if selected_search_type:
+                plot_params["search_type"] = selected_search_type
+            plot_url = "/?" + urlencode(plot_params)
+            report_nav += f'<a{nav_attrs(is_plot, "plot-mode")} href="{_e(plot_url)}">Plot Builder</a>'
             report_nav += '<a href="/site-graph">Site Graph</a>'
             report_nav += '<a href="/route-observations">Route observations</a>'
             if is_plot:
@@ -3754,7 +4272,7 @@ def handler_factory(config, store, credentials=None):
                     for source in represented_sources
                 }
                 subnav = "".join(
-                    f'<a class="{"active" if source == selected_source else ""}" href="{_e(route(source=source, metric=source_defaults[source]))}">{_e(_source_label(source))}</a>'
+                    f'<a{nav_attrs(source == selected_source)} href="{_e(route(source=source, metric=source_defaults[source]))}">{_e(_source_label(source))}</a>'
                     for source in represented_sources
                 )
             else:
@@ -3762,17 +4280,18 @@ def handler_factory(config, store, credentials=None):
                     (metric for metric in CHART_PRIORITY if metric in report.metric_ids and METRICS[metric].aggregation != "window"),
                     next((metric for metric in report.metric_ids if METRICS[metric].aggregation != "window"), None),
                 )
-                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
+                subnav = f'<a{nav_attrs(not result["subreport_id"])} href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
                 subnav += "".join(
-                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
+                    f'<a{nav_attrs(item.id == result["subreport_id"])} href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
                     for item in report.subreports
                 )
             all_selected = " selected" if result["site_id"] is None else ""
             site_options = f'<option value="all"{all_selected}>All sites</option>' + "".join(
                 (
                     f'<option value="{_e(site_id)}" data-sources="{_e(",".join(sorted(source for source in represented_sources if site_id in available_sites.get(source, set()))))}"'
-                    f'{" selected" if site_id == result["site_id"] else ""}'
-                    f'{"" if not selected_source or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
+                    f'{"" if _site_option_enabled(site_id, selected_source, selected_search_type, available_sites, search_types_by_site) else " hidden disabled"}'
+                    f' data-search-types="{_e(",".join(search_types_by_site.get(site_id, [])))}"'
+                    f'{" selected" if site_id == result["site_id"] else ""}>'
                     f'{_e(site_names.get(site_id, site_id))}</option>'
                 )
                 for site_id in form_site_ids
@@ -3780,12 +4299,20 @@ def handler_factory(config, store, credentials=None):
             metric_order = [metric for metric in CHART_PRIORITY if metric in available_metrics]
             metric_order += sorted(set(available_metrics) - set(metric_order))
             metric_options = "".join(
-                f'<option value="{_e(metric)}" data-source="{_e(METRICS[metric].source)}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
+                f'<option value="{_e(metric)}" data-source="{_e(METRICS[metric].source)}" data-lower-is-better="{str(metric in LOWER_IS_BETTER_METRICS).lower()}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
                 for metric in metric_order
             ) or '<option value="">No daily series</option>'
             source_options = "".join(
                 f'<option value="{_e(source)}"{" selected" if source == selected_source else ""}>{_e(_source_label(source))}</option>'
                 for source in represented_sources
+            )
+            search_type_options = "".join(
+                f'<option value="{_e(search_type)}"{" selected" if search_type == selected_search_type else ""}>{_e(search_type.replace("_", " ").title())}</option>'
+                for search_type in available_search_types
+            )
+            search_type_field = (
+                f'<label class="field"><span>Search Console surface</span><select name="search_type">{search_type_options}</select></label>'
+                if search_type_options else ""
             )
             hidden_subreport = (
                 f'<input type="hidden" name="subreport" value="{_e(result["subreport_id"])}">'
@@ -3806,6 +4333,8 @@ def handler_factory(config, store, credentials=None):
                 )
             presets = "".join(preset_links)
             export_params = {"report": report.id, "start": start, "end": end}
+            if selected_search_type:
+                export_params["search_type"] = selected_search_type
             if is_plot:
                 export_params.update({"view": "plot", "source": selected_source, "metric": selected_metric, "style": style})
                 if compare:
@@ -3820,12 +4349,15 @@ def handler_factory(config, store, credentials=None):
             export_name = "series" if is_plot else "report"
             quick_links = presets + f'<a href="{_e(csv_url)}">Download {export_name} CSV</a><a href="{_e(json_url)}">Load {export_name} JSON</a>'
             if is_plot:
-                full_report_url = "/api/v1/report?" + urlencode({"report": report.id, "start": start, "end": end})
+                full_report_params = {"report": report.id, "start": start, "end": end}
+                if selected_search_type:
+                    full_report_params["search_type"] = selected_search_type
+                full_report_url = "/api/v1/report?" + urlencode(full_report_params)
                 quick_links += f'<a href="{_e(full_report_url)}">Full report JSON</a>'
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
-            freshness_count = len(result.get("source_health", []))
+            snapshot_status = _snapshot_status_text(result)
             page_title = "Time-series Plot Builder" if is_plot else result["title"]
             hero_copy = (
                 "Select a source, metric, site, exact date window, and chart style. Every plot is built from stored local snapshots."
@@ -3841,7 +4373,7 @@ def handler_factory(config, store, credentials=None):
             style_field = ""
             if is_plot:
                 style_options = "".join(
-                    f'<option value="{item}"{" selected" if item == style else ""}>{item.title()}</option>'
+                    f'<option value="{item}"{" selected" if item == style else ""}{" disabled" if selected_metric in LOWER_IS_BETTER_METRICS and item != "line" else ""}>{item.title()}</option>'
                     for item in ("line", "area", "bar")
                 )
                 checked = " checked" if compare else ""
@@ -3856,7 +4388,11 @@ def handler_factory(config, store, credentials=None):
             if compare:
                 series_params["compare"] = "1"
             series_url = "/api/v1/series?" + urlencode(series_params)
-            summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            summary_html = "" if is_plot else _summary_cards(result, expected_metrics, site_names)
+            performance_html = "" if is_plot else _performance_by_site_html(
+                result,
+                {site_id: site_names.get(site_id, site_id) for site_id in report.site_ids},
+            )
             provider_comparison_html = (
                 "" if is_plot else _provider_comparisons_html(result, site_names)
             )
@@ -3877,12 +4413,16 @@ def handler_factory(config, store, credentials=None):
                 )
             controls_open = " open" if is_plot else ""
             coverage_summary = _coverage_summary_html(result)
+            surface_context = (
+                f' · Search Console surface {_e(selected_search_type)}'
+                if selected_search_type else ""
+            )
             chart_panel = (
                 '<section class="panel chart-panel"><div class="panel-heading"><div>'
                 f'<p class="eyebrow">Primary trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Daily trend"}</h2>'
                 f'<p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div>'
-                f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}</span></div>'
-                f'<div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
+                f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}{surface_context if selected_source == "search-console" else ""}</span></div>'
+                f'<div class="chart-stage"><div class="chart-status" id="chart-status">Loading stored series...</div><span class="sr-only" id="chart-live-status" role="status" aria-live="polite">Loading stored series...</span><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
                 '<ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>'
                 '<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p>'
                 f'<details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>'
@@ -3902,24 +4442,49 @@ def handler_factory(config, store, credentials=None):
                 geography_html = _geography_panel(
                     self._geography_payload(geography_query),
                     "/api/v1/geography?" + urlencode(geography_params),
+                    search_type=selected_search_type,
                 )
+
+            evidence_parts = (
+                supporting_html
+                if is_plot
+                else provider_comparison_html + geography_html + decision_html + supporting_html
+            )
+            evidence_html = (
+                '<details class="panel evidence-panel evidence-bundle"><summary class="panel-heading">'
+                '<div><h2>Evidence and diagnostics</h2><p>Provider comparisons, geography, decision calculations, freshness, forms, and row-level totals.</p></div>'
+                f'</summary><div class="evidence-body">{evidence_parts}</div></details>'
+                if evidence_parts else ""
+            )
+            scope_site_label = (
+                site_names.get(result["site_id"], result["site_id"])
+                if result.get("site_id") else "All configured sites"
+            )
+            scope_summary = (
+                '<p class="scope-summary">'
+                f'<span>Window: {_e(start)} to {_e(end)} (end exclusive)</span>'
+                f'<span>Scope: {_e(scope_site_label)}</span>'
+                f'<span>Primary chart: {_e(_metric_label(selected_metric)) if selected_metric else "none"}</span>'
+                + (f'<span>Search surface: {_e(selected_search_type)}</span>' if selected_search_type else "")
+                + '</p>'
+            )
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(page_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
 <body><a class="skip-link" href="#main">Skip to dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">{_e(snapshot_status)}</div></div></header>
 <main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
 <section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div>{coverage_summary}</section>
 <nav class="subnav" aria-label="Report sections">{subnav}</nav>
-<details class="panel control-panel"{controls_open}><summary class="panel-heading control-summary"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>{'Choose source, metric, scope, comparison, and chart style.' if is_plot else 'Change the window or site scope, or export the underlying evidence.'}</p></div></summary><div class="control-content">
+<details class="panel control-panel"{controls_open}><summary class="panel-heading control-summary"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>{'Choose source, metric, scope, comparison, and chart style.' if is_plot else 'Change the window or site scope, or export the underlying evidence.'}</p>{scope_summary}</div></summary><div class="control-content">
 <form class="{form_class}" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{view_input}{hidden_subreport}
 <label class="field"><span>Start date</span><input type="date" name="start" value="{_e(start)}" required></label>
 <label class="field"><span>End date</span><input type="date" name="end" value="{_e(end)}" required></label>
-{source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
-<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
+{source_field}<label class="field"><span>{'Metric' if is_plot else 'Primary chart'}</span><select name="metric">{metric_options}</select></label>
+<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{search_type_field}{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{provider_comparison_html}{geography_html}{decision_html}{supporting_html}
+{_warnings_html(result['warnings'])}{summary_html}{primary_content}{performance_html}{evidence_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

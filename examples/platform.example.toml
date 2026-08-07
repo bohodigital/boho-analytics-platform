@@ -78,7 +78,8 @@ observation_start = "2026-01-01"
 [bindings.options.route_analytics]
 enabled = false
 # Optional dimension families remain off unless named here.
-# umami_dimensions = ["title", "channel", "domain", "device", "country"]
+# Use ["all"] for every supported privacy-safe expanded aggregate, or list a subset.
+# umami_dimensions = ["all"]
 # umami_event_names = ["demo-request"]
 
 [[bindings]]
@@ -115,8 +116,19 @@ resource_id = "sc-domain:example.com"
 metric_groups = ["search"]
 [bindings.options.route_analytics]
 enabled = false
+# Search Console defaults to page_size=25000 and max_pages=3 when both are omitted,
+# allowing two full result pages plus the terminal empty exhaustion call.
+# Select one surface, or use search_types = ["all"] for web, image, video,
+# News, Discover, and Google News as separate fact/provenance scopes.
 # search_type = "web"
-# search_console_dimensions = ["device", "country"]
+# search_types = ["all"]
+# search_console_dimensions = ["all"]
+# Store privacy-screened query wording; unsafe values collapse into one redacted bucket.
+# search_console_query_text = false
+# Add page/query combinations. Requires search_console_query_text = true.
+# search_console_page_query = false
+# Add Search Console's recent hourly_all provisional feed (provider lookback is ten days).
+# search_console_hourly = false
 # query_clusters = { brand = "example" }
 
 [[bindings]]
@@ -145,7 +157,7 @@ id = "summary"
 title = "Website summary"
 client_id = "example-client"
 site_ids = ["example-site"]
-metric_ids = ["umami.pageviews", "umami.sessions", "cloudflare.requests", "google.active-users", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
+metric_ids = ["umami.pageviews", "umami.daily-visitors", "cloudflare.requests", "google.active-users", "search.clicks", "forms.submissions", "forms.inbox-deliveries", "forms.pending", "forms.failed"]
 default_window_days = 7
 # Default views stop before provider-finalization lag. Explicit start/end queries are unchanged.
 default_end_lag_days = 1

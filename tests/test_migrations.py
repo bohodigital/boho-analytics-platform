@@ -124,18 +124,30 @@ def create_schema4(path: Path) -> SQLiteMetricStore:
     return store
 
 
+def create_schema5(path: Path) -> SQLiteMetricStore:
+    store = create_schema4(path)
+    with store.connect() as db:
+        migration = (
+            files("boho_analytics_platform.migrations")
+            .joinpath(MIGRATIONS[5])
+            .read_text(encoding="utf-8")
+        )
+        _apply_migration(db, migration, 5)
+    return store
+
+
 class MigrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def test_empty_database_runs_ordered_migrations_through_schema5(self) -> None:
+    def test_empty_database_runs_ordered_migrations_through_schema6(self) -> None:
         path = self.root / "empty.db"
         store = SQLiteMetricStore(path)
         store.initialize()
-        self.assertEqual(SCHEMA_VERSION, 5)
-        self.assertEqual(schema_version(path), 5)
+        self.assertEqual(SCHEMA_VERSION, 6)
+        self.assertEqual(schema_version(path), 6)
         self.assertEqual(store.integrity_check(), "ok")
         with store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -157,6 +169,16 @@ class MigrationTests(unittest.TestCase):
                 ).fetchone()[0],
                 0,
             )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM acquisition_slices").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM metric_fact_observations"
+                ).fetchone()[0],
+                0,
+            )
         before = path.read_bytes()
         store.initialize()
         self.assertEqual(path.read_bytes(), before)
@@ -168,7 +190,7 @@ class MigrationTests(unittest.TestCase):
 
         store.initialize()
 
-        self.assertEqual(schema_version(path), 5)
+        self.assertEqual(schema_version(path), 6)
         after = table_fingerprints(path)
         self.assertEqual({name: after[name] for name in before}, before)
         self.assertEqual(store.integrity_check(), "ok")
@@ -182,9 +204,11 @@ class MigrationTests(unittest.TestCase):
                     "analytics_definition_versions",
                     "analytics_definition_activations",
                     "analytics_definition_retirements",
+                    "acquisition_slices",
+                    "metric_fact_observations",
                 )
             )
-        self.assertEqual(new_counts, (0, 0, 0))
+        self.assertEqual(new_counts, (0, 0, 0, 0, 0))
 
         migrated = path.read_bytes()
         store.initialize()
@@ -219,6 +243,105 @@ class MigrationTests(unittest.TestCase):
         self.assertNotIn("analytics_definition_activations", tables)
         self.assertNotIn("analytics_definition_retirements", tables)
 
+    def test_schema6_preserves_schema5_rows_and_adds_immutable_normalized_history(self) -> None:
+        path = self.root / "copied-schema5.db"
+        store = create_schema5(path)
+        before = table_fingerprints(path)
+
+        store.initialize()
+
+        self.assertEqual(schema_version(path), 6)
+        after = table_fingerprints(path)
+        self.assertEqual({name: after[name] for name in before}, before)
+        with store.connect() as db:
+            slice_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(acquisition_slices)")
+            }
+            observation_columns = {
+                row[1]
+                for row in db.execute("PRAGMA table_info(metric_fact_observations)")
+            }
+            self.assertTrue(
+                {
+                    "data_state",
+                    "provider_scope",
+                    "request_dimensions_json",
+                    "provider_aggregation",
+                }.issubset(slice_columns)
+            )
+            forbidden = {
+                "raw_payload",
+                "provider_payload",
+                "payload_json",
+                "response_json",
+            }
+            self.assertTrue(forbidden.isdisjoint(slice_columns))
+            self.assertTrue(forbidden.isdisjoint(observation_columns))
+            db.execute(
+                """INSERT INTO acquisition_slices(
+                     id,sync_run_id,binding_key,slice_key,metric_family,start_at,end_at,
+                     completeness,data_state,provider_scope,request_dimensions_json,
+                     provider_aggregation,pages_fetched,raw_rows,accepted_rows,
+                     rejected_rows,exhaustion_reason,recorded_at,record_hash
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    "a" * 64,
+                    "legacy-run",
+                    "binding",
+                    "fixture.slice",
+                    "fixture",
+                    "2026-07-01T00:00:00+00:00",
+                    "2026-07-02T00:00:00+00:00",
+                    "final",
+                    "final",
+                    "web",
+                    "[]",
+                    "byProperty",
+                    1,
+                    0,
+                    0,
+                    0,
+                    "empty_first_page",
+                    "2026-07-03T00:00:00+00:00",
+                    "b" * 64,
+                ),
+            )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "immutable"):
+                db.execute(
+                    "UPDATE acquisition_slices SET raw_rows=1 WHERE id=?",
+                    ("a" * 64,),
+                )
+            with self.assertRaisesRegex(sqlite3.IntegrityError, "cannot be deleted"):
+                db.execute("DELETE FROM acquisition_slices WHERE id=?", ("a" * 64,))
+
+    def test_schema6_interruption_rolls_back_both_provenance_tables(self) -> None:
+        path = self.root / "interrupted-schema6.db"
+        store = create_schema5(path)
+        before = table_fingerprints(path)
+        migration = (
+            files("boho_analytics_platform.migrations")
+            .joinpath(MIGRATIONS[6])
+            .read_text(encoding="utf-8")
+        )
+        with store.connect() as db:
+            with self.assertRaises(sqlite3.OperationalError):
+                _apply_migration(
+                    db,
+                    migration + "\nSELECT * FROM deliberately_missing_table;",
+                    6,
+                )
+        self.assertEqual(schema_version(path), 5)
+        self.assertEqual(table_fingerprints(path), before)
+        with closing(sqlite3.connect(path)) as db:
+            tables = {
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        self.assertNotIn("acquisition_slices", tables)
+        self.assertNotIn("metric_fact_observations", tables)
+
     def test_schema4_backup_restore_and_older_runtime_refusal(self) -> None:
         source = self.root / "source-schema4.db"
         store = create_schema4(source)
@@ -236,7 +359,7 @@ class MigrationTests(unittest.TestCase):
         )
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 4):
             with self.assertRaisesRegex(
-                RuntimeError, "database schema 5 is newer than supported 4"
+                RuntimeError, "database schema 6 is newer than supported 4"
             ):
                 copied_store.initialize()
 

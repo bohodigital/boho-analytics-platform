@@ -158,5 +158,76 @@ class ConfigTests(unittest.TestCase):
             ("channel", "referrer", "title"),
         )
 
+    def test_search_console_detail_capture_is_explicit_and_bounded(self):
+        configured = self._load(lambda text: text.replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+            'enabled = true\nsearch_console_query_text = true\n'
+            'search_console_page_query = true\nsearch_console_hourly = true',
+        ))
+        options = route_analytics_options(configured.bindings[0])
+        self.assertTrue(options.search_console_query_text)
+        self.assertTrue(options.search_console_page_query)
+        self.assertTrue(options.search_console_hourly)
+
+        with self.assertRaisesRegex(ConfigError, "requires search_console_query_text"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'search_console_page_query = true',
+            ))
+        with self.assertRaisesRegex(ConfigError, "must be a boolean"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'search_console_hourly = "yes"',
+            ))
+
+        all_surfaces = self._load(lambda text: text.replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+            'search_types = ["all"]\nsearch_console_dimensions = ["all"]',
+        ))
+        all_options = route_analytics_options(all_surfaces.bindings[0])
+        self.assertEqual(all_options.search_types, (
+            "web", "image", "video", "news", "discover", "googleNews",
+        ))
+        self.assertEqual(
+            all_options.search_console_dimensions,
+            ("country", "device", "searchAppearance"),
+        )
+
+        with self.assertRaisesRegex(ConfigError, "search_type or search_types"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'search_type = "web"\nsearch_types = ["image"]',
+            ))
+
+    def test_umami_all_expands_only_to_privacy_safe_aggregates(self):
+        configured = self._load(lambda text: text.replace(
+            'metric_groups = ["traffic"]',
+            'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+            'enabled = true\numami_dimensions = ["all"]',
+        ))
+        options = route_analytics_options(configured.bindings[0])
+        self.assertEqual(
+            options.umami_dimensions,
+            (
+                "browser", "channel", "country", "device", "domain", "event",
+                "hostname", "language", "os", "referrer", "region", "screen",
+                "tag", "title",
+            ),
+        )
+        self.assertNotIn("city", options.umami_dimensions)
+        self.assertNotIn("distinctId", options.umami_dimensions)
+
+        with self.assertRaisesRegex(ConfigError, "unsupported values"):
+            self._load(lambda text: text.replace(
+                'metric_groups = ["traffic"]',
+                'metric_groups = ["traffic"]\n[bindings.options.route_analytics]\n'
+                'umami_dimensions = ["all", "device"]',
+            ))
+
 
 if __name__ == "__main__": unittest.main()

@@ -23,6 +23,7 @@ from boho_analytics_platform.models import (
     validate_analytics_definition,
 )
 from boho_analytics_platform.storage import (
+    SCHEMA_VERSION,
     DefinitionCollisionError,
     DefinitionIntegrityError,
     DefinitionNotActiveError,
@@ -1675,7 +1676,7 @@ class DefinitionRegistryTests(unittest.TestCase):
             Path(self.temporary.name) / "future-schema-source.db"
         )
         with closing(sqlite3.connect(source)) as db:
-            db.execute("UPDATE schema_meta SET version=6")
+            db.execute("UPDATE schema_meta SET version=?", (SCHEMA_VERSION + 1,))
             db.commit()
         target = SQLiteMetricStore(
             Path(self.temporary.name) / "future-schema-target.db"

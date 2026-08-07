@@ -159,9 +159,10 @@ def daily_point(*, client_id: str, site_id: str, source: str, metric: str, unit:
 
 def total_point(*, client_id: str, site_id: str, source: str, metric: str, unit: str,
                 start: datetime, end: datetime, value: Any, dimensions: dict[str, str] | None = None,
-                observed_at: datetime | None = None) -> MetricPoint:
+                observed_at: datetime | None = None,
+                completeness: Completeness = Completeness.FINAL) -> MetricPoint:
     return MetricPoint(client_id, site_id, source, metric, unit, start, end, TimeGrain.TOTAL,
-        Decimal(str(value)), tuple(sorted((dimensions or {}).items())), Completeness.FINAL,
+        Decimal(str(value)), tuple(sorted((dimensions or {}).items())), completeness,
         observed_at or datetime.now(UTC))
 
 

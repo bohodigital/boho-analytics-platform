@@ -1,6 +1,6 @@
 # Data model
 
-Configuration schema and SQLite schema evolve independently. Database schema version 5 contains:
+Configuration schema and SQLite schema evolve independently. Database schema version 6 contains:
 
 - `metric_facts`: source-labeled aggregate facts with client/site scope, interval, grain, unit,
   canonical dimensions, completeness, observation time, identity version, and a deterministic
@@ -12,6 +12,11 @@ Configuration schema and SQLite schema evolve independently. Database schema ver
 - `watermarks`: binding progress. Non-empty reads retain their observed data-through instant;
   successful empty reads advance through the completed requested window.
 - `schema_meta`: installed database version.
+- `acquisition_slices`: immutable per-request evidence: binding/run, bounded request family and
+  dimensions, provider scope/aggregation/data state, interval, pages fetched, raw/accepted/rejected
+  row counts, completeness, exhaustion reason, and an integrity hash.
+- `metric_fact_observations`: immutable normalized fact versions linked to one acquisition slice.
+  It retains what a provider sync reported at each observation without storing the raw response.
 - `analytics_definition_versions`: immutable, sanitized, canonical definition versions with
   deterministic content, natural-identity, and full-record hashes.
 - `analytics_definition_activations`: retained activation history with a composite reference to its
@@ -46,17 +51,34 @@ Restore holds one read snapshot while validating and copying, validates the copi
 and only then atomically makes it authoritative. No browser or feature-specific consumer is
 included in the schema foundation.
 
+Migration 006 adds acquisition slices and fact observations without rewriting prior facts, sync
+runs, watermarks, or definition history. The current `metric_facts` table remains the read-optimized
+latest snapshot. A provenance-aware connector writes its immutable request evidence, immutable fact
+versions, and latest snapshot in one transaction. Update/delete triggers keep the new history
+append-only; raw provider payloads, credentials, and arbitrary diagnostics are not stored.
+
 ## Metric facts
 
 A fact contains no raw provider response. The natural identity is client, site, source, metric,
-unit, interval, grain, and canonical dimensions. Re-collecting the same identity updates value,
-completeness, and observation time without creating duplicates.
+unit, interval, grain, canonical dimensions, and the source's active identity version.
+Re-collecting the same identity updates the current snapshot. Provenance-aware GSC and Umami syncs
+also append an immutable observation, so corrections and revisable provider results remain auditable.
 
 Forms facts use identity version 3 after the source-retention, mailbox-observation, and synthetic-mail
 trust corrections. Schema migration preserves version-1 and version-2 rows as audit lineage, while
 normal queries expose only the active version. The version-4 schema marker prevents older code from
 silently reactivating quarantined version-2 zeroes. A source-backed forms sync is therefore required
 after upgrade; until it runs, coverage is honestly missing.
+
+Search Console and Umami use identity version 2 for this acquisition cutover. Legacy Search Console
+headline rows lack the now-required search type, provider data state, and aggregation identity.
+Legacy Umami route-pageview rows may have relied on an unsupported expanded-metrics field selector.
+Both remain in SQLite as lineage but are excluded from current reads until replaced by a fresh
+source-backed sync.
+
+Umami's pageview endpoint field named `sessions` is stored as `umami.daily-visitors`, not as an
+additive session metric. Its values are daily uniques and must not be summed to estimate the exact
+window visitor total; `umami.visitors` is the separately validated exact-window stats value.
 
 Successful data-bearing and empty sync runs also form an acquisition-coverage ledger. Reporting
 uses only successful runs from bindings that still exist in current configuration. The ledger proves
@@ -68,7 +90,8 @@ and meaning. Unknown metrics, wrong units, and wrong non-fixture sources fail in
 
 ## Route observations and privacy boundary
 
-Route analytics uses the same schema-4 deterministic metric-fact identity, upsert, provenance,
+Route analytics uses the same schema-6 deterministic metric-fact identity, latest snapshot,
+immutable acquisition provenance,
 successful-empty coverage, watermarks, locks, retention, and integrity checks as existing aggregate
 connectors. Search clicks are not GA4 sessions, GA4 sessions are not Umami visits, and a referrer
 aggregate is not an exact link-click record.
@@ -82,11 +105,17 @@ Their CTR and position definitions remain weighted by route impressions rather t
 The shared normalizer stores internal routes only: it removes fragments, strips non-allowlisted query
 parameters, canonicalizes percent encoding and trailing slashes, and rejects malformed, excluded, or
 external URLs. External GA4 referrers can contribute only an explicitly allowlisted domain. No fact
-stores raw URLs, raw Search Console queries, arbitrary event parameters, sessions, visitor/client or
+stores raw URLs, unscreened Search Console queries, arbitrary event parameters, sessions, visitor/client or
 distinct IDs, IP addresses, user agents, city locations, form payloads, email addresses, or phone
-numbers. Search Console page facts are `UNKNOWN` completeness because the provider can return top
+numbers. When query capture is explicitly enabled, bounded wording that passes the direct-identifier
+screen may be stored; unsafe wording contributes only to a single redacted aggregate bucket.
+Search Console high-dimensional facts are `UNKNOWN` completeness because the provider can return top
 rows rather than a complete high-dimensional result set; their separately stored `data_state`
-records that finalized rows were requested.
+records whether finalized or provisional rows were requested.
+Daily Search Console facts additionally retain the provider's Pacific date label and timezone.
+Their fact interval is the platform's same-named site reporting-day bucket; the linked acquisition
+slice is the exact `America/Los_Angeles` provider interval. A provisional `all`/`hourly_all` slice
+can update returned rows but cannot use an omitted row as an authoritative deletion.
 
 ## Aggregation integrity
 

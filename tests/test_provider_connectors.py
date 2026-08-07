@@ -52,6 +52,16 @@ class QueueHttp:
         return response
 
 
+def umami_stats(*, pageviews=0, visitors=0, visits=0, bounces=0, totaltime=0):
+    return {
+        "pageviews": pageviews,
+        "visitors": visitors,
+        "visits": visits,
+        "bounces": bounces,
+        "totaltime": totaltime,
+    }
+
+
 class ProviderConnectorTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup); self.root = Path(self.temporary.name)
@@ -338,7 +348,7 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         umami_http = QueueHttp([
             {"pageviews": [{"x": "2026-06-30T15:00:00Z", "y": 1}], "sessions": []},
-            {},
+            umami_stats(pageviews=1),
             [],
             [],
         ])
@@ -386,7 +396,7 @@ class ProviderConnectorTests(unittest.TestCase):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
         http = QueueHttp([
             {"pageviews": [{"x": "2026-07-01T00:00:00Z", "y": 10}], "sessions": [{"x": 1782864000000, "y": 7}]},
-            {"visitors": 5, "visits": 7, "bounces": 2, "totaltime": 120},
+            umami_stats(pageviews=10, visitors=5, visits=7, bounces=2, totaltime=120),
             [{"name": "us", "visits": 6}, {"name": "gb", "visits": 1}],
             [{"country": "us", "name": "CA", "visits": 4}, {"country": "us", "name": "TX", "visits": 2}],
         ])
@@ -1083,8 +1093,11 @@ class ProviderConnectorTests(unittest.TestCase):
             "rows": [{
                 "keys": ["2026-07-03", "https://example.com/outside"],
                 "clicks": 1,
+                "impressions": 2,
+                "ctr": 0.5,
+                "position": 3,
             }],
-        }]))
+        }, {"rows": []}, {"rows": []}]))
         points = list(connector._collect_route_observations(
             "token", "encoded", date(2026, 7, 1), date(2026, 7, 2),
             config.sites[0], route_analytics_options(config.bindings[0]),
@@ -1139,26 +1152,52 @@ class ProviderConnectorTests(unittest.TestCase):
         config = self.config("search-console"); binding = config.bindings[0]
         object.__setattr__(binding, "resource_id", "sc-domain:example.com")
         response = {"rows": [{"keys": ["2026-07-01"], "clicks": 4, "impressions": 20, "ctr": 0.2, "position": 3.1}]}
-        geography = {"rows": [{"keys": ["2026-07-01", "usa"], "clicks": 4}]}
-        http = QueueHttp([response, geography]); points = list(SearchConsoleConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(binding, self.window, ())))
-        self.assertEqual(len(points), 5); self.assertIn("sc-domain%3Aexample.com", http.calls[0][1])
+        geography = {"rows": [{
+            "keys": ["2026-07-01", "usa"],
+            "clicks": 4,
+            "impressions": 20,
+            "ctr": 0.2,
+            "position": 3.1,
+        }]}
+        http = QueueHttp([
+            response, geography, {"rows": []}, {"rows": []},
+        ]); points = list(SearchConsoleConnector(config, http).collect(config.connections[0], MemoryCredentialLease({"access_token": b"test"}), SyncRequest(binding, self.window, ())))
+        self.assertEqual(len(points), 8); self.assertIn("sc-domain%3Aexample.com", http.calls[0][1])
         geo_point = next(point for point in points if point.metric == "search.country-clicks")
-        self.assertEqual(dict(geo_point.dimensions), {"country_code": "USA", "country_code_system": "iso-alpha3"})
+        self.assertEqual(dict(geo_point.dimensions), {
+            "aggregation": "byProperty",
+            "country_code": "USA",
+            "country_code_system": "iso-alpha3",
+            "data_state": "final",
+            "provider_date": "2026-07-01",
+            "provider_timezone": "America/Los_Angeles",
+            "search_type": "web",
+        })
         self.assertEqual(http.calls[1][3]["dimensions"], ["date", "country"])
 
     def test_search_console_queries_pacific_dates_without_changing_fact_identity(self):
         config = self.config("search-console", timezone="America/Chicago")
         zone = ZoneInfo("America/Chicago")
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=zone), datetime(2026, 7, 2, tzinfo=zone), "America/Chicago")
-        response = {"rows": [{"keys": ["2026-07-01"], "clicks": 1}]}
+        response = {"rows": [{
+            "keys": ["2026-07-01"],
+            "clicks": 1,
+            "impressions": 2,
+            "ctr": 0.5,
+            "position": 3,
+        }]}
         http = QueueHttp([response, {"rows": []}])
         points = list(SearchConsoleConnector(config, http).collect(
             config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
             SyncRequest(config.bindings[0], window, ())))
         query = http.calls[0][3]
-        self.assertEqual((query["startDate"], query["endDate"]), ("2026-06-30", "2026-07-01"))
+        self.assertEqual((query["startDate"], query["endDate"]), ("2026-07-01", "2026-07-01"))
         self.assertEqual(getattr(points[0].start.tzinfo, "key", None), "America/Chicago")
-        self.assertEqual(points[0].dimensions, ())
+        self.assertEqual(dict(points[0].dimensions)["provider_date"], "2026-07-01")
+        self.assertEqual(
+            dict(points[0].dimensions)["provider_timezone"],
+            "America/Los_Angeles",
+        )
 
     def test_search_console_chicago_fact_survives_store_and_report_window(self):
         config = self.config("search-console", timezone="America/Chicago")
@@ -1166,7 +1205,13 @@ class ProviderConnectorTests(unittest.TestCase):
         zone = ZoneInfo("America/Chicago")
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=zone), datetime(2026, 7, 2, tzinfo=zone), "America/Chicago")
         points = list(SearchConsoleConnector(config, QueueHttp([
-            {"rows": [{"keys": ["2026-07-01"], "clicks": 1}]}, {"rows": []}])).collect(
+            {"rows": [{
+                "keys": ["2026-07-01"],
+                "clicks": 1,
+                "impressions": 2,
+                "ctr": 0.5,
+                "position": 3,
+            }]}, {"rows": []}])).collect(
                 config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
                 SyncRequest(config.bindings[0], window, ())))
         store = SQLiteMetricStore(self.root / "search-console-report.db"); store.initialize(); store.upsert(points)
@@ -1193,21 +1238,30 @@ class ProviderConnectorTests(unittest.TestCase):
             "enabled": True, "page_size": 10, "max_pages": 2,
         }})
         http = QueueHttp([
-            {"rows": [{"keys": ["2026-07-01"], "clicks": 2}]}, {"rows": []},
+            {"rows": [{
+                "keys": ["2026-07-01"], "clicks": 2,
+                "impressions": 10, "ctr": 0.2, "position": 3.0,
+            }]},
+            {"rows": []}, {"rows": []},
             {"rows": [{"keys": ["2026-07-01", "https://example.com/blog/?email=a@example.com"], "clicks": 2, "impressions": 10, "ctr": 0.2, "position": 3.0}]},
+            {"rows": []}, {"rows": []},
         ])
         points = list(SearchConsoleConnector(config, http).collect(
             config.connections[0], MemoryCredentialLease({"access_token": b"test"}),
             SyncRequest(config.bindings[0], self.window, ())))
         route = next(point for point in points if point.metric == "search.route-clicks")
         self.assertEqual(dict(route.dimensions), {
+            "aggregation": "byPage",
             "data_state": "final",
             "observation_scope": "page",
+            "provider_date": "2026-07-01",
+            "provider_timezone": "America/Los_Angeles",
             "route": "/blog",
+            "search_type": "web",
         })
         self.assertIs(route.completeness, Completeness.UNKNOWN)
-        self.assertEqual(http.calls[2][3]["dimensions"], ["date", "page"])
-        self.assertEqual(http.calls[2][3]["startRow"], 0)
+        self.assertEqual(http.calls[3][3]["dimensions"], ["date", "page"])
+        self.assertEqual(http.calls[3][3]["startRow"], 0)
 
     def test_umami_route_observations_issue_bounded_daily_path_queries(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
@@ -1215,10 +1269,20 @@ class ProviderConnectorTests(unittest.TestCase):
             "enabled": True, "max_days": 2, "page_size": 10, "max_pages": 2,
         }})
         responses = [
-            {"pageviews": [], "sessions": []}, {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0}, [], [],
+            {"pageviews": [], "sessions": []}, umami_stats(), [], [],
             {"startDate": "2026-01-01T00:00:00Z", "endDate": "2026-07-03T00:00:00Z"},
         ]
-        responses.extend([[], [{"name": "/pricing/?email=a@example.com", "visits": 3}]] + [[]] * 6)
+        responses.extend([
+            [{
+                "name": "/pricing/?email=a@example.com",
+                "pageviews": 4,
+                "visitors": 2,
+                "visits": 3,
+                "bounces": 1,
+                "totaltime": 12,
+            }],
+            [], [], [], [], [],
+        ])
         http = QueueHttp(responses)
         points = list(UmamiConnector(config, http).collect(
             config.connections[0], MemoryCredentialLease({"token": b"test"}),
@@ -1227,8 +1291,7 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertEqual(dict(route.dimensions), {"route": "/pricing"})
         self.assertIn("/daterange", http.calls[4][1])
         self.assertIn("type=path", http.calls[5][1])
-        self.assertIn("field=pageviews", http.calls[5][1])
-        self.assertIn("field=visits", http.calls[6][1])
+        self.assertNotIn("field=", http.calls[5][1])
         self.assertIn("startAt=", http.calls[5][1])
         self.assertFalse(any(
             f"type={item}" in call[1]
@@ -1249,17 +1312,22 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         http = QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {
                 "startDate": "2026-01-01T00:00:00Z",
                 "endDate": "2026-07-02T00:00:00Z",
             },
-            [{"name": "/pricing", "pageviews": 3, "visits": 99}],
-            [{"name": "/pricing", "visits": 2, "pageviews": 999}],
-            [],
-            [],
+            [{
+                "name": "/pricing",
+                "pageviews": 3,
+                "visitors": 1,
+                "visits": 2,
+                "bounces": 0,
+                "totaltime": 9,
+            }],
+            [], [],
         ])
 
         points = list(UmamiConnector(config, http).collect(
@@ -1280,10 +1348,9 @@ class ProviderConnectorTests(unittest.TestCase):
         self.assertEqual(route_visits.value, 2)
         self.assertIs(route_pageviews.completeness, Completeness.FINAL)
         self.assertIn("type=path", http.calls[5][1])
-        self.assertIn("field=pageviews", http.calls[5][1])
-        self.assertIn("field=visits", http.calls[6][1])
+        self.assertNotIn("field=", http.calls[5][1])
 
-    def test_umami_route_availability_skips_a_partial_first_day(self):
+    def test_umami_route_availability_retains_partial_first_day_as_unknown(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
         object.__setattr__(config.bindings[0], "options", {"route_analytics": {
             "enabled": True, "max_days": 1, "page_size": 10, "max_pages": 1,
@@ -1295,7 +1362,7 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         connector = UmamiConnector(config, QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {
@@ -1314,8 +1381,13 @@ class ProviderConnectorTests(unittest.TestCase):
             SyncRequest(config.bindings[0], one_day, ()),
         ))
 
-        self.assertFalse(any("route" in point.metric for point in points))
-        self.assertEqual(len(connector.http.calls), 5)
+        route = next(
+            point for point in points
+            if point.metric == "umami.route-pageviews"
+        )
+        self.assertEqual(route.value, 3)
+        self.assertIs(route.completeness, Completeness.UNKNOWN)
+        self.assertEqual(len(connector.http.calls), 8)
 
     def test_umami_route_availability_accepts_quiet_trailing_hours(self):
         config = self.config("umami", 'base_url = "https://analytics.example.invalid"')
@@ -1329,14 +1401,21 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         connector = UmamiConnector(config, QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {
                 "startDate": "2026-01-01T00:00:00Z",
                 "endDate": "2026-07-01T18:00:00Z",
             },
-            [{"name": "/safe", "pageviews": 3}],
+            [{
+                "name": "/safe",
+                "pageviews": 3,
+                "visitors": 2,
+                "visits": 2,
+                "bounces": 0,
+                "totaltime": 10,
+            }],
             [],
             [],
             [],
@@ -1393,7 +1472,7 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         connector = UmamiConnector(config, QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {
@@ -1436,7 +1515,7 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         http = QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {
@@ -1533,7 +1612,7 @@ class ProviderConnectorTests(unittest.TestCase):
         )
         http = QueueHttp([
             {"pageviews": [], "sessions": []},
-            {"visitors": 0, "visits": 0, "bounces": 0, "totaltime": 0},
+            umami_stats(),
             [],
             [],
             {

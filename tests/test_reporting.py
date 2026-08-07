@@ -2780,5 +2780,200 @@ timezone = "UTC"
         })
         self.assertEqual(support["attention_items"][0]["id"], "sync_failure")
 
+    def test_search_surface_selection_filters_before_aggregation_and_exports(self):
+        connection_sources = {
+            connection.id: connection.provider
+            for connection in self.config.connections
+        }
+        search_binding = next(
+            binding for binding in self.config.bindings
+            if connection_sources[binding.connection_id] == "search-console"
+        )
+        object.__setattr__(search_binding, "options", {
+            "route_analytics": {"search_types": ["all"]},
+        })
+        base_dimensions = (
+            ("aggregation", "byDate"),
+            ("data_state", "final"),
+            ("provider_date", "2026-07-01"),
+            ("provider_timezone", "America/Los_Angeles"),
+        )
+        web = metric(
+            "search.clicks", 10, 1, "count",
+            dimensions=(*base_dimensions, ("search_type", "web")),
+        )
+        image = metric(
+            "search.clicks", 4, 1, "count",
+            dimensions=(*base_dimensions, ("search_type", "image")),
+        )
+        self.store.upsert([web, image])
+        service = ReportService(self.config, self.store)
+
+        default_report = service.render(
+            "summary", self.window,
+            include_decision_support=False,
+            include_provider_comparisons=False,
+        )
+        image_report = service.render(
+            "summary", self.window, search_type="image",
+            include_decision_support=False,
+            include_provider_comparisons=False,
+        )
+
+        default_clicks = next(
+            row for row in default_report["rows"]
+            if row["metric"] == "search.clicks"
+        )
+        image_clicks = next(
+            row for row in image_report["rows"]
+            if row["metric"] == "search.clicks"
+        )
+        self.assertEqual(default_report["search_type"], "web")
+        self.assertEqual(default_report["site_ids"], ["example-site"])
+        self.assertEqual(default_clicks["value"], 10)
+        self.assertEqual(default_clicks["search_type"], "web")
+        self.assertEqual(image_clicks["value"], 4)
+        self.assertEqual(image_clicks["search_type"], "image")
+        self.assertEqual(
+            image_report["available_search_types"],
+            ["web", "image", "video", "news", "discover", "googleNews"],
+        )
+        self.assertEqual(
+            image_report["search_types_by_site"]["example-site"],
+            ["web", "image", "video", "news", "discover", "googleNews"],
+        )
+        self.assertEqual(
+            next(
+                item for item in image_report["series"]
+                if item["metric"] == "search.clicks"
+            )["search_type"],
+            "image",
+        )
+        self.assertEqual(
+            image_report["summary_totals"]["search.clicks"]["search_type"],
+            "image",
+        )
+        metric_csv = next(
+            row for row in csv.DictReader(io.StringIO(to_csv(image_report)))
+            if row["metric"] == "search.clicks"
+        )
+        series_csv = next(
+            row for row in csv.DictReader(
+                io.StringIO(to_series_csv(image_report))
+            )
+            if row["metric"] == "search.clicks"
+        )
+        self.assertEqual(metric_csv["search_type"], "image")
+        self.assertEqual(series_csv["search_type"], "image")
+        with self.assertRaisesRegex(ValueError, "search type is unavailable"):
+            service.render(
+                "summary", self.window, search_type="bogus",
+                include_decision_support=False,
+                include_provider_comparisons=False,
+            )
+
+    def test_aggregate_rejects_unfiltered_search_surfaces(self):
+        dimensions = (
+            ("aggregation", "byDate"),
+            ("data_state", "final"),
+            ("provider_date", "2026-07-01"),
+            ("provider_timezone", "America/Los_Angeles"),
+        )
+        points = [
+            metric(
+                "search.clicks", value, 1, "count",
+                dimensions=(*dimensions, ("search_type", search_type)),
+            )
+            for search_type, value in (("web", 10), ("image", 4))
+        ]
+
+        with self.assertRaisesRegex(ValueError, "filtered to one search type"):
+            ReportService(self.config, self.store)._aggregate(
+                points, self.window, ("search.clicks",)
+            )
+        with self.assertRaisesRegex(ValueError, "filtered to one search type"):
+            ReportService(self.config, self.store)._series(
+                points, self.window, ("search.clicks",)
+            )
+
+    def test_daily_unique_visitors_are_series_only_and_not_reported_missing(self):
+        report = next(item for item in self.config.reports if item.id == "summary")
+        object.__setattr__(report, "metric_ids", ("umami.daily-visitors",))
+        points = []
+        for day, value in ((1, 7), (2, 9)):
+            start = datetime(2026, 7, day, tzinfo=UTC)
+            points.append(MetricPoint(
+                "example-client", "example-site", "umami",
+                "umami.daily-visitors", "count", start,
+                start + timedelta(days=1), TimeGrain.DAY,
+                Decimal(value), (), Completeness.FINAL,
+                start + timedelta(hours=12),
+            ))
+        self.store.upsert(points)
+
+        rendered = ReportService(self.config, self.store).render(
+            "summary", self.window,
+            include_decision_support=False,
+            include_provider_comparisons=False,
+        )
+
+        self.assertFalse(any(
+            "No observations" in warning for warning in rendered["warnings"]
+        ))
+        self.assertFalse(any(
+            "Partial aggregate withheld" in warning
+            for warning in rendered["warnings"]
+        ))
+        self.assertTrue(any(
+            "not summed into window uniques" in warning
+            for warning in rendered["warnings"]
+        ))
+        self.assertEqual(rendered["rows"], [])
+        self.assertEqual(rendered["series"], [{
+            "metric": "umami.daily-visitors",
+            "site_id": "example-site",
+            "source": "umami",
+            "unit": "count",
+            "points": [
+                {"date": "2026-07-01", "value": 7},
+                {"date": "2026-07-02", "value": 9},
+            ],
+        }])
+        total = rendered["summary_totals"]["umami.daily-visitors"]
+        self.assertIsNone(total["value"])
+        self.assertTrue(total["observed"])
+        self.assertEqual(total["display_mode"], "daily-series-only")
+        self.assertTrue(total["non_additive_across_days"])
+        self.assertFalse(total["comparison_available"])
+
+    def test_dimensioned_window_buckets_are_not_arbitrary_scalar_totals(self):
+        common = {
+            "client_id": "example-client",
+            "site_id": "example-site",
+            "source": "umami",
+            "metric": "umami.country-visits",
+            "unit": "count",
+            "start": self.window.start,
+            "end": self.window.end,
+        }
+        points = [
+            MetricPoint(
+                common["client_id"], common["site_id"], common["source"],
+                common["metric"], common["unit"], common["start"],
+                common["end"], TimeGrain.TOTAL, Decimal(value),
+                tuple(sorted({
+                    "country_code": code,
+                    "country_code_system": "iso-alpha2",
+                }.items())), Completeness.FINAL, self.window.end,
+            )
+            for code, value in (("US", 8), ("GB", 2))
+        ]
+
+        rows, _freshness = ReportService(
+            self.config, self.store
+        )._aggregate(points, self.window, ("umami.country-visits",))
+
+        self.assertEqual(rows, [])
+
 
 if __name__ == "__main__": unittest.main()

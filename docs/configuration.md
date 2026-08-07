@@ -94,6 +94,37 @@ quiet-day zero facts on and after the independently verified mail-index boundary
 connector emits facts only for matching messages and does not invent quiet-day zeroes. These values remain private deployment configuration
 even though they are not credentials.
 
+## Acquisition-detail controls
+
+Detailed acquisition families are disabled per binding unless
+`bindings.options.route_analytics.enabled = true`. `max_days`, `page_size`, and `max_pages` bound
+each read. They are safety ceilings, not evidence that a provider returned every possible row.
+
+For Search Console, `search_type` selects one explicit surface (`web`, `image`, `video`, `news`,
+`discover`, or `googleNews`). Use `search_types = ["all"]` to collect all six as separate provider
+scopes; it cannot be combined with the singular setting. `search_console_dimensions = ["all"]`
+enables the device, country, and search-appearance views. `search_console_query_text` opts into
+privacy-screened query wording;
+rejected wording is counted in a single redacted bucket rather than persisted. The more expensive
+page/query view requires `search_console_page_query = true` as well. `search_console_hourly = true`
+adds Google's recent `hourly_all` provisional rows within its supported lookback. Query, page,
+country, appearance, and other high-dimensional Search Analytics reads are provider top-row views,
+not exhaustive exports. When neither pagination bound is configured, Search Console detail uses
+25,000 rows per page and three calls so two full pages plus the required terminal empty call can
+prove the API's 50,000-row ceiling. Smaller explicit bounds remain valid but fail closed at the cap.
+
+For Umami, `umami_dimensions = ["all"]` expands to every supported privacy-safe aggregate:
+browser, channel, country, device, domain, event name, hostname, language, operating system,
+referrer, region, screen, tag, and title. A subset may be listed instead. City, distinct ID, raw
+sessions, event properties, replay, and heatmap data are deliberately outside the ingestion
+contract. `umami_event_names` selects named daily event series without event properties.
+Umami's response field named `sessions` is cataloged as `umami.daily-visitors`, matching the
+provider's documented visitor semantics; exact-window unique visitors remain `umami.visitors`.
+
+Google Trends access is separate from both GA4 and Search Console. Do not broaden an existing
+Search Console credential in anticipation of Trends: the official Trends API is allowlisted and
+its approved-project setup is supplied by Google after admission.
+
 ## Reports and subreports
 
 Each report has a client, one or more sites, a metric allowlist, and a default window. Set

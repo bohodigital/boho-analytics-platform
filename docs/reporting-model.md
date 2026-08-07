@@ -23,8 +23,10 @@ requests never initiate syncs.
 
 The Plot Builder uses `/api/v1/series` and `/api/v1/series.csv`. It accepts the same report, site,
 start, and end scope plus `source`, `metric`, `style`, and optional `compare=1`. Style affects only
-presentation; the JSON and CSV values are identical across line, area, and bar views. Charts split
-line and area paths at missing calendar dates instead of implying continuity.
+presentation; the JSON and CSV values are identical across supported line, area, and bar views.
+Lower-is-better metrics are line-only so area or bar magnitude cannot encode desirability instead
+of the stated value. Their axes remain conventional numeric axes and the direction is disclosed in
+text. Charts split line and area paths at missing calendar dates instead of implying continuity.
 
 ## Output contract
 
@@ -49,12 +51,49 @@ Metric catalog rules determine aggregation. Additive counts/bytes sum; Search Co
 position are weighted; exact-window unique/summary
 metrics never sum overlapping sync windows. Cross-provider visitor measures remain separate.
 
+Umami's daily visitor series is a daily-unique measure. It may be plotted one day at a time, but it
+is never added into a report-window visitor total. The separate `umami.visitors` metric is the
+provider's unique count for one exact requested window. Likewise, GA4 daily active users may be
+summed only when the display explicitly calls the result **active-user days**; it is not a unique
+visitor count for the whole window.
+
+Search Console facts are scoped to one search surface (`web`, `image`, `video`, `news`, `discover`,
+or `googleNews`). A report selects and discloses one surface before aggregation. Surfaces are never
+silently added, averaged, or substituted for one another. Search Analytics dimension rows are
+provider-visible top rows rather than an exhaustive export, even when the platform exhausts its
+configured pagination plan.
+
 `complete = true` requires every expected configured coverage cell. A missing provider row remains
 missing unless an explicit zero fact or a successful binding-window query proves that quiet date.
 Query-proven empty additive windows aggregate to zero without manufacturing stored metric facts.
 Search Console coverage stops at its returned data-through date so normal provider latency is not
 misstated as a finalized zero. Previous values, percentage changes, comparison charts, and comparison
 CSV rows remain absent unless both periods have comparable complete coverage.
+
+## Display contract
+
+The overview is an operating view, not a composite score. Every headline number identifies its
+provider, measurement window, aggregation meaning, and coverage state. Report-cell coverage is
+shown as covered versus expected cells; it is not labeled confidence, accuracy, or trust. Partial
+additive totals may be displayed only as **observed totals** with their covered/expected cell count.
+Weighted or non-additive aggregates remain withheld when their required inputs are incomplete.
+Headline totals also disclose contributing and configured site counts so a metric configured for
+only part of a portfolio cannot imply portfolio-wide measurement.
+
+Missing, withheld, not configured, provisional, redacted, and true zero are different states and
+must remain visibly different in HTML, JSON, CSV, and chart fallbacks. Period changes are shown only
+for equal-length windows with comparable complete coverage. A valid zero prior period is labeled
+`New` when the current value is non-zero and `No change` when both values are zero; it is never
+reported as missing prior data.
+
+Provider reconciliation stays supporting evidence. GA4 sessions, Umami visits, Search Console
+clicks, Cloudflare edge estimates, and durable form submissions answer different questions and are
+never merged into a synthetic traffic or attention total.
+
+Geography titles, metric/grain labels, privacy suppression, methodology, regional support, county
+limits, and accessible map labels all come from the currently selected provider payload. Switching
+map sources clears the prior payload before rendering the next one, so Umami, GA4, Search Console,
+and Cloudflare claims cannot remain attached to one another.
 
 ## Scale path
 

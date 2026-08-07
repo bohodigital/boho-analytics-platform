@@ -6,11 +6,17 @@ All adapters are read-only and emit cataloged aggregates. `probe` verifies crede
 ## Umami
 
 V1 targets the current self-hosted API routes under `/api`. It supports API-key, bearer-token, and
-username/password login credentials. Daily pageviews/sessions come from `pageviews`; the adapter
+username/password login credentials. Daily pageviews and daily unique visitors come from
+`pageviews`; Umami names the second response array `sessions` but documents its values as visitors,
+so the platform exposes it as `umami.daily-visitors` with non-additive-across-days semantics. The
+adapter
 requires an explicit pageview series, including an explicit empty series for a quiet window. It
 queries and labels only exact whole-day windows in the configured site timezone. Exact-window
-visitors, visits, bounces, and total time come from `stats`. Exact-window metrics are never summed
-across overlapping sync intervals.
+visitors, visits, bounces, and total time come from `stats`. All five documented stats fields are
+required and the stats pageview total must reconcile exactly to the daily series. Exact-window
+metrics are never summed across overlapping sync intervals.
+Platform windows are half-open; Umami's inclusive `endAt` is sent as one millisecond before the
+exclusive boundary so adjacent days and 31-day headline chunks cannot count midnight twice.
 Country and region visit aggregates come from `metrics/expanded`. They keep the exact requested
 window identity, store only ISO codes and aggregate values, and never store IP addresses, visitor
 IDs, session IDs, coordinates, cities, or raw provider responses.
@@ -24,26 +30,31 @@ Umami Cloud and differently versioned self-hosted installations may use differen
 authentication behavior. Confirm live version compatibility during connection testing.
 
 Route observations are disabled unless a binding explicitly opts in. The connector then issues
-bounded, paginated daily aggregate requests to `metrics/expanded`. `umami.route-pageviews` is a
-distinct metric fetched with `type=path&field=pageviews`; `umami.route-visits` is fetched separately
-with `type=path&field=visits` and is never relabeled or substituted. Every request includes explicit
-`limit` and `offset` values. A short page proves exhaustion only when every raw `name` identity is
+bounded, paginated daily aggregate requests to `metrics/expanded`. One request per dimension type
+parses Umami's returned `pageviews`, `visitors`, `visits`, `bounces`, and `totaltime` fields; it does
+not send the unsupported `field` selector. `umami.route-pageviews` and `umami.route-visits` therefore
+remain distinct measures from the same validated path row. Every request includes explicit `limit`
+and `offset` values. A short page proves exhaustion only when every raw dimension identity is
 unique across and within all pages. Repeated or overlapping identities stop pagination, discard the
 overlapping page, retain prior privacy-safe rows as `UNKNOWN`, and never double-count. Reaching
 `max_pages` with a full page retains only privacy-safe returned facts, marks them `UNKNOWN`, and
-cannot establish complete route coverage or headline reconciliation. Title, channel, domain,
-device, country, and configured event
-facts remain individually disabled unless named in the binding. It never reads event payloads,
-event properties, distinct IDs, sessions, IPs, user agents, or city records. The connector checks
-the provider-reported available date range before collection and rejects a request that predates it
-rather than treating pre-instrumentation silence as zero. A request exceeding `max_days` or
+cannot establish complete route coverage or headline reconciliation. Browser, channel, country,
+device, domain, event name, hostname, language, operating system, referrer, region, screen, tag, and
+title aggregates remain individually disabled unless named in the binding; `["all"]` expands only
+to that allowlist. Configured event series include explicit day grain, timezone, and event name and
+aggregate repeated same-day rows. The connector never reads event payloads, event properties,
+distinct IDs, raw sessions, IPs, user agents, city records, replay, or heatmaps. It checks
+the provider-reported event extent before collection. A first observed calendar day that starts
+after midnight is retained as `UNKNOWN`; it is not discarded or called complete. Pre-observation
+days are not fabricated as zero. A request exceeding `max_days` or
 `page_size` fails with a sanitized diagnostic. Provider contract:
 <https://docs.umami.is/docs/api/website-stats>.
 
-The exact requested half-open interval must be contained in the provider's availability timestamps;
-matching only the site-local start and end dates is insufficient. The sync engine projects the
-requested calendar dates onto each binding's configured site timezone, so one invocation can safely
-serve sites in different zones while every provider still receives exact local-midnight boundaries.
+The requested window is intersected with the provider's observed event extent. A partially observed
+first calendar day remains visible as `UNKNOWN`, while days before the first observation are absent;
+neither is converted to a trustworthy quiet zero. The sync engine projects the requested calendar
+dates onto each binding's configured site timezone, so one invocation can safely serve sites in
+different zones while every provider still receives exact local-midnight boundaries.
 Reporting projects the same requested calendar dates per site for fact queries, coverage cells,
 series labels, and provider comparison. Headline and route pageviews accept only non-negative
 integral counts. Invalid headline pageviews
@@ -118,26 +129,55 @@ decision.
 
 ## Google Search Console
 
-V1 calls `sites/{siteUrl}/searchAnalytics/query` with daily rows, final data, and the documented
-25,000-row ceiling. Daily-only windows fit under that ceiling, but Search Console returns top rows
-rather than guaranteed exhaustive high-dimensional data. CTR is recomputed and position is weighted
-by impressions in reports. The property string must exactly match an accessible URL-prefix or domain
-property.
+V1 calls `sites/{siteUrl}/searchAnalytics/query` with an explicit search type, data state,
+aggregation type, dimensions, row limit, and start row on every request. Date-only rows are control
+totals. Every control row must contain clicks, impressions, CTR, and position; CTR is recomputed from
+clicks and impressions, and position remains impression-weighted in reporting. The property string
+must exactly match an accessible URL-prefix or domain property.
+`search_types = ["all"]` executes web, image, video, News, Discover, and Google News independently;
+search type stays in both fact identity and acquisition scope, so those surfaces are never blended.
 Request dates use Search Console's `America/Los_Angeles` provider basis. Returned provider date
-labels map into the configured site-day storage bucket to preserve the existing fact identity and
-reporting contract; the provider basis remains explicit in health and probe metadata.
-Geographic search demand is a second query grouped by provider date and ISO alpha-3 country. Search
-Console does not expose a state or county dimension, and high-dimensional results are top rows rather
-than guaranteed exhaustive data.
+labels map into the same-named configured site reporting-day bucket. Every daily fact also retains
+`provider_date` and `provider_timezone=America/Los_Angeles`, while the acquisition slice retains the
+exact Pacific request interval; reports therefore do not silently present a site-local boundary as
+Google's source boundary.
+The headline request uses `dataState=all` and parses `first_incomplete_date`. Earlier rows are final;
+that date and later rows are provisional. Settled high-dimensional requests stop before the marker,
+and an incomplete empty snapshot cannot delete an older current fact. Once Google reports the day
+settled, an authoritative empty response can retire it while immutable observation history remains.
+Geographic search demand is collected per provider day with bounded `startRow` pagination. Search
+Console does not expose a state or county dimension. Geography, page, query, page/query, device,
+country, appearance, and cluster views remain `UNKNOWN` even after pagination reaches an empty page:
+Search Analytics returns top rows, caps retrieval at roughly 50,000 rows per day and search type,
+and withholds anonymized query text, so the API cannot prove a complete high-dimensional export.
+When pagination bounds are omitted, the connector uses two 25,000-row result pages plus a third
+terminal call, covering the API's documented 50,000-row daily/type/property ceiling. Reaching that
+ceiling is still only API exhaustion, not proof that high-dimensional Google data itself is
+complete.
 
-Opt-in page observations add `date,page` Search Analytics requests with `startRow` pagination,
-`aggregationType=auto`, the configured search type, and final data only. Existing date-only facts
-remain control totals; page rows are provider-limited and stored with unknown completeness. Optional
-device, country, and search-appearance dimensions are disabled by default. Named query clusters
-persist only their configured cluster identifier and aggregate values, never a returned query value.
-Every fact also records `data_state=final` and an explicit observation scope (`page`, one named
-page-breakdown scope, or `query-cluster`) so overlapping views cannot be mistaken for one additive
-population.
+Opt-in page observations add `date,page` requests with explicit `byPage` aggregation. Optional
+device and country page breakdowns are disabled by default. Search appearance uses a discovery
+request followed by one filtered page request per discovered appearance instead of combining the
+appearance dimension with an incompatible aggregation. Named query clusters persist only their
+configured cluster identifier and aggregates. Query wording is a separate explicit opt-in:
+privacy-safe bounded text is stored with `query_visibility=safe`; unsafe text is aggregated into one
+`[redacted]` bucket. Page/query capture requires that query opt-in. All high-dimensional views are
+collected one provider day at a time to reduce top-row bias, and duplicate raw keys, a configured
+page cap, or rows beyond the provider cap fail closed.
+Pagination advances by the number of rows actually accepted, not by the requested page size, so a
+short final result page can still request the exact 50,000-row terminal offset without skipping.
+
+The optional hourly feed requests `dataState=hourly_all` for at most the provider's recent ten-day
+window. It parses `first_incomplete_hour` and labels later hours provisional; request scope remains
+part of every fact identity. The request slice stays provisional whenever Google supplies an
+incomplete-hour marker, even if no row is returned after it. Schema-6 acquisition slices retain request dimensions, search type,
+data state, aggregation, page and row counts, rejection counts, and the exhaustion reason while
+immutable fact observations preserve revisions.
+
+The Search Analytics API is not a substitute for Search Console bulk export. Complete settled
+detail requires enabling the property's BigQuery bulk export; Google does not backfill dates before
+activation. That export needs separate Google Cloud project/dataset IAM and is not unlocked by the
+Search Console read-only OAuth scope.
 Contract: <https://developers.google.com/webmaster-tools/v1/searchanalytics/query>.
 
 ## Geographic display boundary

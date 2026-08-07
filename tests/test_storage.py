@@ -12,13 +12,20 @@ from unittest.mock import patch
 
 from boho_analytics_platform.contracts import PAGEVIEW_DATA_RESULT_KIND
 from boho_analytics_platform.models import (
+    AcquisitionBatch,
+    AcquisitionSlice,
     CapabilitySnapshot,
     Completeness,
     MetricPoint,
     QueryWindow,
     TimeGrain,
 )
-from boho_analytics_platform.storage import SCHEMA_VERSION, LockBusy, SQLiteMetricStore
+from boho_analytics_platform.storage import (
+    SCHEMA_VERSION,
+    AcquisitionIntegrityError,
+    LockBusy,
+    SQLiteMetricStore,
+)
 
 
 def point(value="4"):
@@ -35,7 +42,7 @@ class StorageTests(unittest.TestCase):
     def test_initialize_enables_wal_and_integrity(self):
         with self.store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
-            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 5)
+            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 6)
             self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(
                 db.execute(
@@ -55,7 +62,21 @@ class StorageTests(unittest.TestCase):
                 ).fetchone()[0],
                 0,
             )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM acquisition_slices").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM metric_fact_observations"
+                ).fetchone()[0],
+                0,
+            )
         self.assertEqual(self.store.integrity_check(), "ok")
+        self.assertEqual(
+            self.store.verify_acquisition_integrity(),
+            {"slices": 0, "observations": 0},
+        )
 
     def test_sync_run_records_binding_window_and_result_metadata(self):
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 3, tzinfo=UTC), "UTC")
@@ -219,6 +240,363 @@ class StorageTests(unittest.TestCase):
         rows = self.store.query(client_id="client", site_ids=["site"], metric_ids=["test.views"], window=window)
         self.assertEqual(len(rows), 1); self.assertEqual(rows[0].value, Decimal("7"))
 
+    def test_record_acquisition_batches_preserves_semantics_and_fact_version(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        binding_key = "site:connection:property:demo"
+        run_id = self.store.start_run(
+            "connection",
+            "site",
+            binding_key=binding_key,
+            source="search-console",
+            window=window,
+        )
+        observed_at = datetime(2026, 7, 4, tzinfo=UTC)
+        metric_point = MetricPoint(
+            "client",
+            "site",
+            "search-console",
+            "search.clicks",
+            "count",
+            window.start,
+            window.end,
+            TimeGrain.DAY,
+            Decimal("9"),
+            (("page", "/guide"),),
+            Completeness.FINAL,
+            observed_at,
+        )
+        acquisition = AcquisitionSlice(
+            "gsc.web.page",
+            "search-performance",
+            window.start,
+            window.end,
+            Completeness.FINAL,
+            "final",
+            "web",
+            ("date", "page"),
+            "byPage",
+            2,
+            1,
+            1,
+            0,
+            "unique_short_page",
+        )
+
+        written = self.store.record_acquisition_batches(
+            run_id,
+            binding_key,
+            (AcquisitionBatch(acquisition, (metric_point,)),),
+        )
+
+        self.assertEqual(written, 1)
+        with self.store.connect(readonly=True) as db:
+            slice_row = db.execute("SELECT * FROM acquisition_slices").fetchone()
+            observation = db.execute(
+                "SELECT * FROM metric_fact_observations"
+            ).fetchone()
+            slice_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(acquisition_slices)")
+            }
+            observation_columns = {
+                row[1]
+                for row in db.execute("PRAGMA table_info(metric_fact_observations)")
+            }
+        self.assertEqual(slice_row["sync_run_id"], run_id)
+        self.assertEqual(slice_row["data_state"], "final")
+        self.assertEqual(slice_row["provider_scope"], "web")
+        self.assertEqual(slice_row["request_dimensions_json"], '["date","page"]')
+        self.assertEqual(slice_row["provider_aggregation"], "byPage")
+        self.assertEqual(observation["value"], "9")
+        self.assertEqual(observation["identity_version"], 2)
+        self.assertEqual(observation["observed_at"], observed_at.isoformat())
+        self.assertFalse(
+            any("raw" in column or "payload" in column for column in observation_columns)
+        )
+        self.assertFalse(any("payload" in column for column in slice_columns))
+        visible = self.store.query(
+            client_id="client",
+            site_ids=["site"],
+            metric_ids=["search.clicks"],
+            window=window,
+        )
+        self.assertEqual([item.value for item in visible], [Decimal("9")])
+        self.assertEqual(
+            self.store.verify_acquisition_integrity(),
+            {"slices": 1, "observations": 1},
+        )
+
+    def test_acquisition_integrity_pins_immutable_schema_and_restore_rejects_tampering(self):
+        backup = Path(self.temporary.name) / "tampered-acquisition.db"
+        self.store.backup(backup)
+        with closing(sqlite3.connect(backup)) as db:
+            db.execute("DROP TRIGGER acquisition_slices_no_update")
+            db.commit()
+
+        with self.assertRaisesRegex(
+            ValueError, "backup acquisition integrity check failed"
+        ):
+            self.store.restore(backup, confirmed=True)
+
+        with self.store.connect() as db:
+            db.execute("DROP TRIGGER acquisition_slices_no_update")
+        with self.assertRaisesRegex(
+            AcquisitionIntegrityError, "schema does not match"
+        ):
+            self.store.verify_acquisition_integrity()
+        self.assertEqual(
+            self.store.integrity_check(), "application-integrity-error"
+        )
+
+    def test_record_acquisition_batches_rejects_duplicate_points_atomically(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        binding_key = "site:connection:website:demo"
+        run_id = self.store.start_run(
+            "connection",
+            "site",
+            binding_key=binding_key,
+            source="umami",
+            window=window,
+        )
+        metric_point = MetricPoint(
+            "client",
+            "site",
+            "umami",
+            "umami.pageviews",
+            "count",
+            window.start,
+            window.end,
+            TimeGrain.DAY,
+            Decimal("4"),
+            (),
+            Completeness.FINAL,
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
+        def batch(slice_key: str) -> AcquisitionBatch:
+            return AcquisitionBatch(
+                AcquisitionSlice(
+                    slice_key,
+                    "traffic",
+                    window.start,
+                    window.end,
+                    Completeness.FINAL,
+                    "snapshot",
+                    "headline",
+                    ("date",),
+                    "timeseries",
+                    1,
+                    1,
+                    1,
+                    0,
+                    "fixed_response",
+                ),
+                (metric_point,),
+            )
+
+        with self.assertRaisesRegex(ValueError, "duplicate metric point"):
+            self.store.record_acquisition_batches(
+                run_id,
+                binding_key,
+                (batch("umami.headline"), batch("umami.stats")),
+            )
+        with self.store.connect(readonly=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM acquisition_slices").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM metric_fact_observations").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM metric_facts").fetchone()[0], 0)
+
+    def test_empty_revised_slice_retires_stale_current_fact_but_keeps_history(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        binding_key = "site:connection:website:demo"
+        metric_point = MetricPoint(
+            "client", "site", "umami", "umami.dimension-visits", "count",
+            window.start, window.end, TimeGrain.DAY, Decimal("4"),
+            (
+                ("dimension_type", "device"),
+                ("dimension_value", "mobile"),
+                ("dimension_value_kind", "device"),
+            ),
+            Completeness.FINAL,
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
+        def acquisition(raw_rows: int, accepted_rows: int) -> AcquisitionSlice:
+            return AcquisitionSlice(
+                "umami.dimension.device.20260701", "umami-dimension",
+                window.start, window.end,
+                Completeness.FINAL, "snapshot", "device", ("device",),
+                "expanded-daily", 1, raw_rows, accepted_rows, 0,
+                "short-page",
+            )
+
+        first_run = self.store.start_run(
+            "connection", "site", binding_key=binding_key,
+            source="umami", window=window,
+        )
+        self.store.record_acquisition_batches(
+            first_run, binding_key,
+            (AcquisitionBatch(acquisition(1, 1), (metric_point,)),),
+        )
+        self.store.finish_run(first_run, "success", 1, result_kind="data")
+
+        revised_run = self.store.start_run(
+            "connection", "site", binding_key=binding_key,
+            source="umami", window=window,
+        )
+        written = self.store.record_acquisition_batches(
+            revised_run, binding_key,
+            (AcquisitionBatch(acquisition(0, 0), ()),),
+        )
+
+        self.assertEqual(written, 0)
+        with self.store.connect(readonly=True) as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM metric_facts").fetchone()[0], 0
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM metric_fact_observations"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM acquisition_slices").fetchone()[0],
+                2,
+            )
+
+    def test_incomplete_fresh_snapshot_does_not_authoritatively_delete_current_fact(self):
+        window = QueryWindow(
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 2, tzinfo=UTC),
+            "UTC",
+        )
+        binding_key = "site:connection:sc-domain:example.com"
+        point = MetricPoint(
+            "client", "site", "search-console", "search.clicks", "count",
+            window.start, window.end, TimeGrain.DAY, Decimal("4"),
+            (
+                ("aggregation", "byProperty"),
+                ("data_state", "all"),
+                ("provider_date", "2026-07-01"),
+                ("provider_timezone", "America/Los_Angeles"),
+                ("search_type", "web"),
+            ),
+            Completeness.FINAL,
+            datetime(2026, 7, 3, tzinfo=UTC),
+        )
+
+        def acquisition(completeness: Completeness, rows: int) -> AcquisitionSlice:
+            return AcquisitionSlice(
+                "gsc.web.control.20260701", "search.control",
+                window.start, window.end, completeness, "all", "web:control",
+                ("date",), "byProperty", 1, rows, rows, 0,
+                "bounded-control",
+            )
+
+        first_run = self.store.start_run(
+            "connection", "site", binding_key=binding_key,
+            source="search-console", window=window,
+        )
+        self.store.record_acquisition_batches(
+            first_run, binding_key,
+            (AcquisitionBatch(acquisition(Completeness.FINAL, 1), (point,)),),
+        )
+        self.store.finish_run(first_run, "success", 1, result_kind="data")
+
+        incomplete_run = self.store.start_run(
+            "connection", "site", binding_key=binding_key,
+            source="search-console", window=window,
+        )
+        self.store.record_acquisition_batches(
+            incomplete_run, binding_key,
+            (AcquisitionBatch(
+                acquisition(Completeness.PROVISIONAL, 0), (),
+            ),),
+        )
+
+        with self.store.connect(readonly=True) as db:
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM metric_facts").fetchone()[0], 1
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM acquisition_slices").fetchone()[0],
+                2,
+            )
+
+    def test_gsc_and_umami_identity_v2_preserves_but_hides_v1_lineage(self):
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+        window = QueryWindow(start, start + timedelta(days=1), "UTC")
+        for source in ("search-console", "umami"):
+            with self.subTest(source=source):
+                metric = f"{source}.identity-test"
+                with self.store.connect() as db:
+                    db.execute(
+                        """INSERT INTO metric_facts(
+                             point_key,client_id,site_id,source,metric,unit,start_at,
+                             end_at,grain,value,dimensions_json,completeness,observed_at,
+                             updated_at,identity_version
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            f"legacy-{source}",
+                            "client",
+                            "site",
+                            source,
+                            metric,
+                            "count",
+                            start.isoformat(),
+                            (start + timedelta(days=1)).isoformat(),
+                            "day",
+                            "999",
+                            "{}",
+                            "final",
+                            (start + timedelta(days=2)).isoformat(),
+                            (start + timedelta(days=2)).isoformat(),
+                            1,
+                        ),
+                    )
+                current = MetricPoint(
+                    "client",
+                    "site",
+                    source,
+                    metric,
+                    "count",
+                    start,
+                    start + timedelta(days=1),
+                    TimeGrain.DAY,
+                    Decimal("7"),
+                    (),
+                    Completeness.FINAL,
+                    start + timedelta(days=3),
+                )
+                self.store.upsert((current,))
+                visible = self.store.query(
+                    client_id="client",
+                    site_ids=["site"],
+                    metric_ids=[metric],
+                    window=window,
+                )
+                with self.store.connect(readonly=True) as db:
+                    versions = [
+                        row[0]
+                        for row in db.execute(
+                            "SELECT identity_version FROM metric_facts WHERE source=? AND metric=? ORDER BY identity_version",
+                            (source, metric),
+                        )
+                    ]
+                self.assertEqual(versions, [1, 2])
+                self.assertEqual([item.value for item in visible], [Decimal("7")])
+
     def test_forms_identity_cutover_preserves_but_hides_prior_untrusted_facts(self):
         path = Path(self.temporary.name) / "legacy-forms.db"
         initial = files("boho_analytics_platform.migrations").joinpath("001_initial.sql").read_text(encoding="utf-8")
@@ -274,7 +652,7 @@ class StorageTests(unittest.TestCase):
 
     def test_forms_v3_schema_marker_blocks_schema_v3_runtime_rollback(self):
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 3):
-            with self.assertRaisesRegex(RuntimeError, "database schema 5 is newer than supported 3"):
+            with self.assertRaisesRegex(RuntimeError, "database schema 6 is newer than supported 3"):
                 SQLiteMetricStore(self.store.path).initialize()
 
     def test_active_lock_fails_and_stale_lock_is_recovered(self):

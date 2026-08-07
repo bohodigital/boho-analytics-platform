@@ -1386,6 +1386,110 @@ class MetricPoint:
             raise ValueError("dimension keys must be unique")
 
 
+MAX_ACQUISITION_IDENTIFIER_BYTES = 128
+MAX_ACQUISITION_DIMENSIONS = 32
+
+
+def _validate_acquisition_identifier(value: object, label: str) -> None:
+    if not isinstance(value, str) or not _SAFE_KEY.fullmatch(value):
+        raise ValueError(
+            f"{label} must use only bounded ASCII letters, digits, '.', '_', ':', and '-'"
+        )
+    if len(value.encode("ascii")) > MAX_ACQUISITION_IDENTIFIER_BYTES:
+        raise ValueError(f"{label} is too long")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionSlice:
+    """One bounded provider request whose completeness can be audited."""
+
+    slice_key: str
+    metric_family: str
+    start: datetime
+    end: datetime
+    completeness: Completeness
+    data_state: str
+    provider_scope: str
+    request_dimensions: tuple[str, ...]
+    provider_aggregation: str
+    pages_fetched: int
+    raw_rows: int
+    accepted_rows: int
+    rejected_rows: int
+    exhaustion_reason: str
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("slice_key", self.slice_key),
+            ("metric_family", self.metric_family),
+            ("data_state", self.data_state),
+            ("provider_scope", self.provider_scope),
+            ("provider_aggregation", self.provider_aggregation),
+            ("exhaustion_reason", self.exhaustion_reason),
+        ):
+            _validate_acquisition_identifier(value, label)
+        _require_aware(self.start, "start")
+        _require_aware(self.end, "end")
+        if self.start >= self.end:
+            raise ValueError("acquisition slice start must be earlier than end")
+        if not isinstance(self.completeness, Completeness):
+            raise ValueError("completeness must be a Completeness value")
+        if not isinstance(self.request_dimensions, tuple):
+            raise ValueError("request_dimensions must be an immutable tuple")
+        if len(self.request_dimensions) > MAX_ACQUISITION_DIMENSIONS:
+            raise ValueError("request_dimensions contains too many dimensions")
+        for dimension in self.request_dimensions:
+            _validate_acquisition_identifier(dimension, "request dimension")
+        if len(set(self.request_dimensions)) != len(self.request_dimensions):
+            raise ValueError("request_dimensions must be unique")
+        request_dimensions_json = json.dumps(
+            list(self.request_dimensions), separators=(",", ":"), ensure_ascii=True
+        )
+        if len(request_dimensions_json.encode("utf-8")) > 4096:
+            raise ValueError("request_dimensions exceed the storage limit")
+        for label, value in (
+            ("pages_fetched", self.pages_fetched),
+            ("raw_rows", self.raw_rows),
+            ("accepted_rows", self.accepted_rows),
+            ("rejected_rows", self.rejected_rows),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{label} must be a non-negative integer")
+        if self.pages_fetched < 1:
+            raise ValueError("pages_fetched must include at least one provider response")
+        if self.accepted_rows + self.rejected_rows != self.raw_rows:
+            raise ValueError("accepted_rows plus rejected_rows must equal raw_rows")
+        if self.completeness is Completeness.FINAL and self.rejected_rows:
+            raise ValueError("a final acquisition slice cannot contain rejected rows")
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionBatch:
+    """An acquisition slice and the normalized metric facts it owns."""
+
+    slice: AcquisitionSlice
+    points: tuple[MetricPoint, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.slice, AcquisitionSlice):
+            raise ValueError("slice must be an AcquisitionSlice")
+        if not isinstance(self.points, tuple):
+            raise ValueError("points must be an immutable tuple")
+        if any(not isinstance(point, MetricPoint) for point in self.points):
+            raise ValueError("points must contain only MetricPoint values")
+        # Discovery/control requests may accept rows without producing facts,
+        # but a fact-bearing batch must be backed by provider evidence.
+        if self.points and self.slice.accepted_rows == 0:
+            raise ValueError("metric points require an accepted provider row")
+        for point in self.points:
+            # Provider request dates and normalized fact dates can use different
+            # declared bases (notably Search Console Pacific dates mapped to a
+            # site's reporting day). The run, request slice, and fact interval
+            # are therefore retained separately instead of fabricating a union.
+            if point.start >= self.slice.end or point.end <= self.slice.start:
+                raise ValueError("metric point must overlap its acquisition slice")
+
+
 @dataclass(frozen=True, slots=True)
 class CapabilitySnapshot:
     connection_id: str

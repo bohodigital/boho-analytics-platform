@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 
+from .config import route_analytics_options
+
 
 SOURCE_CONFIG = {
     "umami": {
@@ -55,7 +57,9 @@ class GeographyService:
             raise ValueError("geography suppression threshold must be positive")
         self.config = config; self.store = store; self.suppression_threshold = suppression_threshold
 
-    def render(self, report_id, window, source, *, site_id=None):
+    def render(
+        self, report_id, window, source, *, site_id=None, search_type=None
+    ):
         if source not in SOURCE_CONFIG:
             raise ValueError("unknown geography source")
         report = next((item for item in self.config.reports if item.id == report_id), None)
@@ -64,11 +68,44 @@ class GeographyService:
         if site_id is not None and site_id not in report.site_ids:
             raise ValueError("unknown report site")
         site_ids = (site_id,) if site_id else report.site_ids
+        available_search_types = ()
+        search_types_by_site = {item: () for item in site_ids}
+        selected_search_type = None
+        if source == "search-console":
+            available_search_types, search_types_by_site = (
+                self._search_surface_scope(site_ids)
+            )
+            if (
+                search_type is not None
+                and search_type not in available_search_types
+            ):
+                raise ValueError("search type is unavailable in this geography scope")
+            selected_search_type = (
+                search_type
+                if search_type is not None
+                else "web"
+                if "web" in available_search_types
+                else available_search_types[0]
+                if available_search_types
+                else None
+            )
+        elif search_type is not None:
+            raise ValueError(
+                "search type is only available for Search Console geography"
+            )
         spec = SOURCE_CONFIG[source]
         metrics = tuple(metric for metric in (spec["country_metric"], spec["region_metric"]) if metric)
         points = self.store.query(client_id=report.client_id, site_ids=site_ids,
             metric_ids=metrics, window=window)
         points = [point for point in points if point.source in {source, "fixture"}]
+        if source == "search-console":
+            points = [
+                point for point in points
+                if selected_search_type is not None
+                and selected_search_type
+                in search_types_by_site.get(point.site_id, ())
+                and self._point_search_type(point) == selected_search_type
+            ]
         actual_scopes = {(point.site_id, point.metric) for point in points if point.source == source}
         points = [point for point in points
             if point.source == source or (point.site_id, point.metric) not in actual_scopes]
@@ -90,10 +127,17 @@ class GeographyService:
 
         country_rows, withheld_countries = self._suppress(countries, country=True)
         state_rows, withheld_states = self._suppress(states, country=False)
-        configured_sites = self._configured_sites(source, site_ids)
+        configured_sites = self._configured_sites(
+            source, site_ids, search_type=selected_search_type
+        )
         return {
             "schema_version": 1,
             "source": source,
+            "search_type": selected_search_type,
+            "available_search_types": list(available_search_types),
+            "search_types_by_site": {
+                key: list(value) for key, value in search_types_by_site.items()
+            },
             "metric": spec["country_metric"],
             "label": spec["label"],
             "grain": spec["grain"],
@@ -123,10 +167,57 @@ class GeographyService:
             "methodology": spec["methodology"],
         }
 
-    def _configured_sites(self, source, site_ids):
+    def _search_surface_scope(self, site_ids):
+        providers = {
+            connection.id: connection.provider
+            for connection in self.config.connections
+        }
+        by_site = {site_id: [] for site_id in site_ids}
+        for binding in self.config.bindings:
+            if binding.site_id not in by_site:
+                continue
+            if providers.get(binding.connection_id) not in {
+                "search-console", "fixture",
+            }:
+                continue
+            for value in route_analytics_options(binding).search_types:
+                if value not in by_site[binding.site_id]:
+                    by_site[binding.site_id].append(value)
+        available = []
+        for site_id in site_ids:
+            for value in by_site[site_id]:
+                if value not in available:
+                    available.append(value)
+        return tuple(available), {
+            site_id: tuple(values) for site_id, values in by_site.items()
+        }
+
+    @staticmethod
+    def _point_search_type(point):
+        # Identity-v2 facts carry search_type. Historical country rows without
+        # the dimension belonged to the legacy web-only feed.
+        return dict(point.dimensions).get("search_type") or "web"
+
+    def _configured_sites(self, source, site_ids, *, search_type=None):
         providers = {connection.id: connection.provider for connection in self.config.connections}
-        return sorted({binding.site_id for binding in self.config.bindings
-            if binding.site_id in site_ids and providers.get(binding.connection_id) == source})
+        configured = set()
+        for binding in self.config.bindings:
+            if binding.site_id not in site_ids:
+                continue
+            provider = providers.get(binding.connection_id)
+            if source == "search-console":
+                if provider not in {"search-console", "fixture"}:
+                    continue
+                if (
+                    search_type is None
+                    or search_type
+                    not in route_analytics_options(binding).search_types
+                ):
+                    continue
+            elif provider != source:
+                continue
+            configured.add(binding.site_id)
+        return sorted(configured)
 
     def _suppress(self, values, *, country):
         rows = []; withheld = 0

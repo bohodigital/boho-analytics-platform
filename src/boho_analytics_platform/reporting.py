@@ -278,6 +278,50 @@ class ReportService:
             by_binding_key[binding_key] = boundary
         return by_site_source, by_binding_key
 
+    def _search_surface_scope(self, site_ids):
+        """Return ordered configured Search Console surfaces for this site scope."""
+
+        connection_sources = {
+            item.id: item.provider for item in self.config.connections
+        }
+        by_site: dict[str, list[str]] = {site_id: [] for site_id in site_ids}
+        for binding in self.config.bindings:
+            if binding.site_id not in by_site:
+                continue
+            provider = connection_sources[binding.connection_id]
+            if provider not in {"search-console", "fixture"}:
+                continue
+            for search_type in route_analytics_options(binding).search_types:
+                if search_type not in by_site[binding.site_id]:
+                    by_site[binding.site_id].append(search_type)
+        available = []
+        for site_id in site_ids:
+            for search_type in by_site[site_id]:
+                if search_type not in available:
+                    available.append(search_type)
+        return tuple(available), {
+            site_id: tuple(search_types)
+            for site_id, search_types in by_site.items()
+        }
+
+    @staticmethod
+    def _point_search_type(point) -> str | None:
+        if METRICS[point.metric].source != "search-console":
+            return None
+        # Identity-v2 native facts always carry search_type. Dimensionless
+        # retained fixtures and legacy facts represented the historical web feed.
+        return dict(point.dimensions).get("search_type") or "web"
+
+    @classmethod
+    def _filter_search_type(cls, points, search_type: str | None):
+        if search_type is None:
+            return list(points)
+        return [
+            point for point in points
+            if METRICS[point.metric].source != "search-console"
+            or cls._point_search_type(point) == search_type
+        ]
+
     def _window_has_observation_boundary(
         self, site_ids, window, requested_metrics
     ) -> bool:
@@ -488,6 +532,15 @@ class ReportService:
         ]
 
     def _aggregate(self, points, window, requested_metrics):
+        search_types = {
+            self._point_search_type(point)
+            for point in points
+            if METRICS[point.metric].source == "search-console"
+        }
+        if len(search_types) > 1:
+            raise ValueError(
+                "Search Console points must be filtered to one search type before aggregation"
+            )
         output: dict[tuple[str, str, str, str], Decimal] = defaultdict(Decimal)
         pageview_output: dict[tuple[str, str, str, str], int] = defaultdict(int)
         freshness: dict[str, datetime] = {}
@@ -516,6 +569,10 @@ class ReportService:
                 ):
                     latest[key] = point
             elif definition.aggregation == "window":
+                if point.dimensions:
+                    # Dimension rows require a dimension-aware consumer. Never
+                    # let iteration order choose an arbitrary scalar bucket.
+                    continue
                 site_window = self._site_calendar_window(
                     window, point.site_id
                 )
@@ -588,6 +645,16 @@ class ReportService:
     def _series(self, points, window, requested_metrics):
         """Build compact daily series without changing provider aggregation semantics."""
 
+        search_types = {
+            self._point_search_type(point)
+            for point in points
+            if METRICS[point.metric].source == "search-console"
+        }
+        if len(search_types) > 1:
+            raise ValueError(
+                "Search Console points must be filtered to one search type before series aggregation"
+            )
+
         daily: dict[tuple[str, str, str, str, str], Decimal] = defaultdict(Decimal)
         pageview_daily: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
         latest: dict[tuple[str, str, str, str, str], object] = {}
@@ -605,7 +672,7 @@ class ReportService:
             definition = METRICS[point.metric]
             key = (point.metric, point.site_id, point.source, point.unit, day)
             if point.metric in requested:
-                if definition.aggregation == "sum":
+                if definition.aggregation in {"sum", "daily-unique"}:
                     if point.metric in PROVIDER_PAGEVIEW_METRICS:
                         pageview_daily[key] += int(point.value)
                     else:
@@ -677,7 +744,9 @@ class ReportService:
             for key, values in sorted(output.items())
         ]
 
-    def _coverage(self, site_ids, requested_metrics, points, window):
+    def _coverage(
+        self, site_ids, requested_metrics, points, window, *, search_type=None
+    ):
         site_windows = {
             site_id: self._site_calendar_window(window, site_id)
             for site_id in site_ids
@@ -718,8 +787,22 @@ class ReportService:
             )
             if provider == "fixture":
                 for source in {METRICS[metric].source for metric in requested_metrics}:
+                    if (
+                        source == "search-console"
+                        and search_type is not None
+                        and search_type
+                        not in route_analytics_options(binding).search_types
+                    ):
+                        continue
                     providers_by_site_source[(binding.site_id, source)].add(provider)
             else:
+                if (
+                    provider == "search-console"
+                    and search_type is not None
+                    and search_type
+                    not in route_analytics_options(binding).search_types
+                ):
+                    continue
                 providers_by_site_source[(binding.site_id, provider)].add(provider)
 
         provider_sources = sorted(set(connection_sources.values()))
@@ -808,7 +891,11 @@ class ReportService:
             configured_sources = configured_by_site.get(site_id, set())
             wildcard_fixture = "fixture" in configured_sources
             for source, source_metrics in sorted(metrics_by_source.items()):
-                configured = source in configured_sources or wildcard_fixture
+                configured = (
+                    bool(providers_by_site_source.get((site_id, source)))
+                    if source == "search-console" and search_type is not None
+                    else source in configured_sources or wildcard_fixture
+                )
                 configured_providers = providers_by_site_source.get((site_id, source), set())
                 expected_cells = 0
                 covered_cells = 0
@@ -1089,6 +1176,8 @@ class ReportService:
         requested_metrics,
         coverage,
         prior_coverage,
+        *,
+        observed_metrics=(),
     ):
         current_values, invalid_current_totals = cls._summary_values(
             current_rows, requested_metrics
@@ -1159,11 +1248,13 @@ class ReportService:
                 value = None
             if current_source == "mixed":
                 value = None
+            series_only = definition.aggregation == "daily-unique"
             comparison_available = (
                 coverage_status == "complete" and prior_status == "complete"
                 and current_source == prior_source and current_source != "mixed"
                 and metric not in invalid_current_totals
                 and metric not in invalid_prior_totals
+                and not series_only
             )
             previous = prior_values.get(metric) if comparison_available else None
             if (
@@ -1189,8 +1280,15 @@ class ReportService:
                 "expected_cells": coverage_cells["expected"],
                 "prior_covered_cells": prior_coverage_cells["covered"],
                 "prior_expected_cells": prior_coverage_cells["expected"],
-                "observed": any(row["metric"] == metric for row in current_rows),
+                "observed": (
+                    metric in observed_metrics
+                    or any(row["metric"] == metric for row in current_rows)
+                ),
                 "comparison_available": comparison_available,
+                "display_mode": (
+                    "daily-series-only" if series_only else "window-aggregate"
+                ),
+                "non_additive_across_days": series_only,
             }
         return output
 
@@ -2505,6 +2603,7 @@ class ReportService:
         subreport_id: str | None = None,
         site_id: str | None = None,
         *,
+        search_type: str | None = None,
         include_decision_support: bool = True,
         include_provider_comparisons: bool = True,
     ) -> dict[str, Any]:
@@ -2552,6 +2651,20 @@ class ReportService:
             *requested_query_metrics, *weighted_inputs, *decision_metrics,
             *comparison_previous_metrics,
         )))
+        available_search_types, search_types_by_site = (
+            self._search_surface_scope(site_ids)
+        )
+        if search_type is not None and search_type not in available_search_types:
+            raise ValueError("search type is unavailable in this report scope")
+        selected_search_type = (
+            search_type
+            if search_type is not None
+            else "web"
+            if "web" in available_search_types
+            else available_search_types[0]
+            if available_search_types
+            else None
+        )
         current_points = self._query_site_calendar_points(
             client_id=report.client_id,
             site_ids=site_ids,
@@ -2571,6 +2684,12 @@ class ReportService:
         )
         previous_points = self._enforce_explicit_pageview_contract(
             previous_points
+        )
+        current_points = self._filter_search_type(
+            current_points, selected_search_type
+        )
+        previous_points = self._filter_search_type(
+            previous_points, selected_search_type
         )
         provider_points = [
             point for point in current_points
@@ -2630,18 +2749,22 @@ class ReportService:
         current = [row for row in current_basis if row["metric"] in requested]
         prior = [row for row in prior_basis if row["metric"] in requested]
         coverage, source_health = self._coverage(
-            site_ids, metrics, current_points, window
+            site_ids, metrics, current_points, window,
+            search_type=selected_search_type,
         )
         prior_coverage, prior_source_health = self._coverage(
-            site_ids, metrics, previous_points, previous
+            site_ids, metrics, previous_points, previous,
+            search_type=selected_search_type,
         )
         decision_support = None
         if decision_metrics:
             insight_coverage, _insight_source_health = self._coverage(
-                site_ids, decision_metrics, current_points, window
+                site_ids, decision_metrics, current_points, window,
+                search_type=selected_search_type,
             )
             prior_insight_coverage, _prior_insight_source_health = self._coverage(
-                site_ids, decision_metrics, previous_points, previous
+                site_ids, decision_metrics, previous_points, previous,
+                search_type=selected_search_type,
             )
             insight_totals = self._summary_totals(
                 current_basis,
@@ -2649,7 +2772,11 @@ class ReportService:
                 decision_metrics,
                 insight_coverage,
                 prior_insight_coverage,
+                observed_metrics={point.metric for point in current_points},
             )
+            for metric, total in insight_totals.items():
+                if METRICS[metric].source == "search-console":
+                    total["search_type"] = selected_search_type
             selected_bindings = [
                 binding for binding in self.config.bindings
                 if binding.site_id in site_ids
@@ -2723,10 +2850,16 @@ class ReportService:
             )
 
         summary_totals = self._summary_totals(
-            current_basis, prior_basis, metrics, coverage, prior_coverage
+            current_basis, prior_basis, metrics, coverage, prior_coverage,
+            observed_metrics={point.metric for point in current_points},
         )
+        for metric, total in summary_totals.items():
+            if METRICS[metric].source == "search-console":
+                total["search_type"] = selected_search_type
         warnings = []
-        observed_metrics = {row["metric"] for row in current}
+        observed_metrics = {
+            point.metric for point in current_points if point.metric in requested
+        } | {row["metric"] for row in current}
         missing = sorted(
             metric for metric in metrics
             if metric not in observed_metrics
@@ -2736,6 +2869,12 @@ class ReportService:
         withheld = sorted(
             metric for metric in metrics
             if metric in observed_metrics and summary_totals[metric]["value"] is None
+            and not summary_totals[metric]["non_additive_across_days"]
+        )
+        series_only = sorted(
+            metric for metric in metrics
+            if metric in observed_metrics
+            and summary_totals[metric]["non_additive_across_days"]
         )
         if missing:
             warnings.append(
@@ -2746,6 +2885,11 @@ class ReportService:
             warnings.append(
                 "Partial aggregate withheld for: " + ", ".join(withheld)
                 + ". Observed site or daily values remain available below."
+            )
+        if series_only:
+            warnings.append(
+                "Daily unique metrics are shown only as daily series and are not "
+                "summed into window uniques: " + ", ".join(series_only)
             )
         if coverage["status"] != "complete":
             warnings.append(
@@ -2808,6 +2952,9 @@ class ReportService:
         )
         current_series = self._series(current_points, window, metrics)
         prior_series = self._series(previous_points, previous, metrics)
+        for item in (*current, *prior, *current_series, *prior_series):
+            if METRICS[item["metric"]].source == "search-console":
+                item["search_type"] = selected_search_type
         comparable_prior_series = [
             item for item in prior_series
             if self._coverage_status(
@@ -2828,6 +2975,12 @@ class ReportService:
             "report_id": report.id,
             "subreport_id": subreport_id,
             "site_id": site_id,
+            "site_ids": list(site_ids),
+            "search_type": selected_search_type,
+            "available_search_types": list(available_search_types),
+            "search_types_by_site": {
+                key: list(value) for key, value in search_types_by_site.items()
+            },
             "title": title,
             "window": {
                 "start": window.start.isoformat(),
@@ -2865,6 +3018,7 @@ REPORT_CONTEXT_FIELDS = [
     "report_id",
     "subreport_id",
     "scope_site_id",
+    "search_type",
     "window_start",
     "window_end",
     "timezone",
@@ -2937,6 +3091,11 @@ def _context(
         "report_id": report["report_id"],
         "subreport_id": report.get("subreport_id"),
         "scope_site_id": report.get("site_id"),
+        "search_type": (
+            report.get("search_type")
+            if definition.source == "search-console"
+            else None
+        ),
         "window_start": window["start"],
         "window_end": window["end"],
         "timezone": report["window"]["timezone"],
