@@ -38,6 +38,7 @@ ALLOWED_DIRECTORIES = {
     ("scripts",),
     ("src",),
     ("src", "boho_analytics_platform"),
+    ("src", "boho_analytics_platform", "bulk_export"),
     ("src", "boho_analytics_platform", "connectors"),
     ("src", "boho_analytics_platform", "migrations"),
     ("src", "boho_analytics_platform", "site_graph"),

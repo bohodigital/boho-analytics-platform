@@ -2,12 +2,15 @@
 
 ## Local and private-server shape
 
-Use one virtual environment, one private TOML file, one SQLite state file, and two execution lanes:
+Use one reviewed release environment and three isolated execution lanes:
 
 - a timer invokes `boho-analytics sync` with a bounded window;
-- a long-running service invokes `boho-analytics serve` on loopback.
+- a long-running service invokes `boho-analytics serve` on loopback; and
+- a separate timer invokes `boho-analytics gsc-bulk sync` with its own private YAML, dedicated
+  credential, cost limit, and Seagate-backed lake.
 
-The web process never contacts providers. The sync process never needs to bind a public port.
+The web process never contacts providers. Neither sync process needs to bind a public port. The
+bulk lane does not read or write SQLite and the web lane does not read the bulk lake.
 
 Recommended private-server controls:
 
@@ -75,6 +78,26 @@ version-1 rows remain retained lineage and are not rewritten. Verify the pinned 
 tables, indexes, immutability triggers, record hashes, foreign keys, and a known report window before
 re-enabling the timer. This repository change does not authorize that production migration or the
 separate Search Console BigQuery export setup.
+
+Install the optional `bigquery` dependency group only in a release intended to run the bulk lane.
+Before enabling its timer, complete the separately authorized Google setup and run:
+
+```bash
+boho-analytics gsc-bulk validate --manifest /private/gsc-bulk.yaml
+boho-analytics gsc-bulk probe --manifest /private/gsc-bulk.yaml
+boho-analytics gsc-bulk sync --manifest /private/gsc-bulk.yaml --days 1 --end-lag-days 3
+boho-analytics gsc-bulk status --manifest /private/gsc-bulk.yaml
+boho-analytics gsc-bulk verify --manifest /private/gsc-bulk.yaml
+```
+
+The bulk unit must add `RequiresMountsFor` and `ConditionPathIsMountPoint` for the Seagate and grant
+write access only to its lake subtree. It must remain unprivileged with an empty capability set,
+protected system/home paths, a restrictive umask, bounded memory/tasks, and encrypted systemd
+credential delivery. Unlike the ordinary web and SQLite-sync units, do not set
+`PrivateDevices=yes`: the application deliberately requires direct visibility of the configured
+`/dev/disk/by-uuid/<uuid>` identity and fails closed without it. The complete activation, storage,
+acceptance, and rollback contract is in the
+[Search Console bulk-export runbook](gsc-bigquery-bulk-export.md).
 
 Before any package build or release handoff, run `python scripts/verify_release.py` from the exact
 reviewed Git checkout. The verifier requires a clean tracked and untracked status and independently

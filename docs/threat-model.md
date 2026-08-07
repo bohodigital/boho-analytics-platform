@@ -3,9 +3,10 @@
 ## Assets and boundaries
 
 Assets are provider credentials, client/site mappings, normalized analytics, form-delivery state,
-saved reports, route observations, repository-derived graph evidence, exports, and authorization
-decisions. Trust boundaries are browser-to-web, web-to-
-SQLite, sync-to-credential-provider, sync-to-provider, analytics-to-read-only-mail-index, and
+saved reports, route observations, repository-derived graph evidence, private BigQuery reader
+configuration, Search Console bulk manifests and Parquet rows, exports, and authorization
+decisions. Trust boundaries are browser-to-web, web-to-SQLite, sync-to-credential-provider,
+sync-to-provider, analytics-to-read-only-mail-index, BigQuery-to-bulk-reader-to-external-lake, and
 public-package-to-private-deployment.
 
 ## V1 threats and controls
@@ -62,6 +63,32 @@ Any remote deployment requires an authenticated HTTPS proxy and additional appli
 
 An administrator can intentionally configure an Umami URL on an internal network. Treat private
 configuration write access as privileged and review changes before service restart.
+
+### Search Console bulk-export exposure and cost
+
+- The bulk reader uses a dedicated service account with project job-user and dataset data-viewer
+  access only; it does not reuse Search Console or GA4 credentials.
+- A strict private manifest rejects inline credentials, unknown fields, duplicate dataset mappings,
+  unbounded windows, and queries without a per-job bytes ceiling.
+- Every property is proven against an operator-selected nonempty date in both exported data tables,
+  preventing a wrong site-to-dataset mapping from masquerading as a legitimate zero.
+- Query and URL dimensions remain only in the private lake. CLI output and logs contain bounded
+  identities, counts, dates, revisions, and byte totals, never row values or provider responses.
+- Publication requires paired successful `ExportLog` evidence, a stable revision during the read,
+  matching BigQuery controls, Parquet footer totals, a checksum, and an atomic success marker.
+- The lake verifies the exact filesystem UUID through `/dev/disk/by-uuid`, a private on-disk marker,
+  ownership, modes, devices, and symlink-free paths. Any ambiguity, missing mount, low-space floor,
+  unexpected file, corruption, or identity mismatch fails closed without falling back to the Pi
+  root filesystem.
+- Immutable revisions and full successful `ExportLog` history preserve provider corrections.
+  Staging and quarantine usage, missing namespace pairs, continuity, freshness, free space, query
+  bytes, and provider export health require monitoring.
+
+Service-account theft can expose sensitive aggregate query and URL evidence and consume billable
+query capacity. Disk theft or an over-broad backup can expose the same data. Production acceptance
+therefore requires encrypted credential delivery, restrictive IAM, private modes, physical and
+at-rest disk controls, a defined backup/retention/deletion policy, and tested revocation. The bulk
+lake is intentionally absent from the browser plane and from SQLite backups.
 
 ### Corruption and misleading reporting
 

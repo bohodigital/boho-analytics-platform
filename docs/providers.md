@@ -182,10 +182,15 @@ incomplete-hour marker, even if no row is returned after it. Schema-6 acquisitio
 data state, aggregation, page and row counts, rejection counts, and the exhaustion reason while
 immutable fact observations preserve revisions.
 
-The Search Analytics API is not a substitute for Search Console bulk export. Complete settled
-detail requires enabling the property's BigQuery bulk export; Google does not backfill dates before
-activation. That export needs separate Google Cloud project/dataset IAM and is not unlocked by the
-Search Console read-only OAuth scope.
+The Search Analytics API and Search Console bulk export serve different lanes. The API supplies
+timely bounded operational facts for SQLite and the dashboard, but high-dimensional results remain
+top-row and anonymization constrained. BigQuery supplies the settled complete aggregate export for
+private analysis. It is mirrored separately under the
+[bulk-export runbook](gsc-bigquery-bulk-export.md), never treated as a dashboard connector or raw
+browser source. A provider date is present only when `ExportLog` has successful evidence for both
+site- and URL-impression namespaces; absent log evidence is export incompleteness, not zero traffic.
+Google does not backfill dates before activation. The export requires separate Google Cloud
+project/dataset IAM and is not unlocked by the Search Console read-only OAuth scope.
 Contract: <https://developers.google.com/webmaster-tools/v1/searchanalytics/query>.
 
 ## Geographic display boundary

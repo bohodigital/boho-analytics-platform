@@ -548,26 +548,30 @@ class SearchConsoleFeedTests(unittest.TestCase):
             dict(cluster.points[0].dimensions)["query_cluster"], "brand_terms"
         )
 
-    def test_query_clusters_are_not_requested_for_discover(self):
-        config = self.config(
-            'enabled = true\nsearch_type = "discover"\n'
-            'page_size = 10\nmax_pages = 4\n'
-            '[bindings.options.route_analytics.query_clusters]\n'
-            'brand_terms = "boho|biscuit"'
-        )
-        options = route_analytics_options(config.bindings[0])
-        http = QueueHttp([
-            {"responseAggregationType": "byPage", "rows": []},
-        ])
+    def test_query_clusters_are_not_requested_for_non_search_surfaces(self):
+        for search_type in ("discover", "googleNews"):
+            with self.subTest(search_type=search_type):
+                config = self.config(
+                    f'enabled = true\nsearch_type = "{search_type}"\n'
+                    'page_size = 10\nmax_pages = 4\n'
+                    '[bindings.options.route_analytics.query_clusters]\n'
+                    'brand_terms = "boho|biscuit"'
+                )
+                options = route_analytics_options(config.bindings[0])
+                http = QueueHttp([
+                    {"responseAggregationType": "byPage", "rows": []},
+                ])
 
-        batches = list(SearchConsoleConnector(config, http)._collect_route_batches(
-            "token", "encoded", date(2026, 7, 1), date(2026, 7, 1),
-            config.sites[0], options,
-        ))
+                batches = list(
+                    SearchConsoleConnector(config, http)._collect_route_batches(
+                        "token", "encoded", date(2026, 7, 1),
+                        date(2026, 7, 1), config.sites[0], options,
+                    )
+                )
 
-        self.assertEqual(len(batches), 1)
-        self.assertEqual(len(http.calls), 1)
-        self.assertNotIn("dimensionFilterGroups", http.calls[0][3])
+                self.assertEqual(len(batches), 1)
+                self.assertEqual(len(http.calls), 1)
+                self.assertNotIn("dimensionFilterGroups", http.calls[0][3])
 
     def test_discover_appearance_routes_do_not_require_position(self):
         config = self.config(

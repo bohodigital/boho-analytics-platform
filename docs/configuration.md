@@ -1,6 +1,6 @@
 # Configuration
 
-V1 uses strict schema-v2 TOML. Unknown fields, duplicate identifiers, invalid references, invalid
+The normalized dashboard plane uses strict schema-v2 TOML. Unknown fields, duplicate identifiers, invalid references, invalid
 timezones, non-loopback unauthenticated binding, and secret-like keys are errors. Start with
 [`examples/platform.example.toml`](../examples/platform.example.toml); keep the real copy outside
 the public repository.
@@ -39,6 +39,27 @@ Supported credential fields are:
 Google service accounts require `pip install 'boho-analytics-platform[google]'`. Short-lived access
 tokens and refresh-token exchange work without the optional SDK. Inline keys including `password`,
 `token`, `api_key`, `client_secret`, and `refresh_token` are rejected anywhere in TOML.
+
+## Search Console bulk manifest
+
+The optional private BigQuery lane uses a separate strict schema-v1 YAML manifest; it is not a TOML
+connection and never opens SQLite. Start with
+[`examples/gsc-bulk.example.yaml`](../examples/gsc-bulk.example.yaml) and keep the populated file
+outside Git. It defines:
+
+- one billed query project, exact BigQuery location, dedicated reader `credential_ref`, per-query
+  bytes ceiling, and optional Storage API use;
+- an external lake root, exact mountpoint and filesystem UUID, free-space floor, Parquet
+  compression, and Arrow batch target; and
+- each exact Search Console property, unique `searchconsole*` dataset, earliest paired
+  `first_export_date`, and a non-empty `identity_proof_date` used on every sync to prevent a wrong
+  property/dataset mapping from becoming a plausible zero.
+
+Install `boho-analytics-platform[bigquery]`. The reader credential must be canonical service-account
+JSON, preferably loaded through `systemd:`; a wrapper with a string-valued `service_account_json`
+field is also accepted. The lane rejects OAuth user/refresh tokens. It does not require another
+Search Console OAuth scope and is unrelated to Google Trends access. Full setup, IAM, storage, and
+command details are in the [bulk-export runbook](gsc-bigquery-bulk-export.md).
 
 ## Provider options and binding resources
 

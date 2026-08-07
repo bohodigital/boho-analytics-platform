@@ -4,7 +4,12 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from boho_analytics_platform.catalog import METRICS, SOURCE_SEMANTICS, validate_points
+from boho_analytics_platform.catalog import (
+    METRICS,
+    SOURCE_SEMANTICS,
+    search_console_metric_supported,
+    validate_points,
+)
 from boho_analytics_platform.models import Completeness, MetricPoint, TimeGrain
 
 
@@ -33,6 +38,28 @@ class CatalogTests(unittest.TestCase):
             ("search.impressions", "search.position"),
         )
         self.assertFalse(METRICS["search.route-ctr"].reportable)
+
+    def test_position_support_contract_covers_every_gsc_metric_family(self):
+        position_metrics = (
+            "search.position",
+            "search.country-position",
+            "search.route-position",
+            "search.query-position",
+            "search.page-query-position",
+            "search.hourly-position",
+        )
+        for metric in position_metrics:
+            with self.subTest(metric=metric):
+                self.assertTrue(search_console_metric_supported(metric, "web"))
+                self.assertFalse(
+                    search_console_metric_supported(metric, "discover")
+                )
+                self.assertFalse(
+                    search_console_metric_supported(metric, "googleNews")
+                )
+        self.assertTrue(
+            search_console_metric_supported("search.route-impressions", "discover")
+        )
 
     def test_route_metrics_reject_ambiguous_or_unapproved_dimension_sets(self):
         valid = self.point(

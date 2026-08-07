@@ -1,8 +1,10 @@
 # Boho Analytics Platform
 
 Boho Analytics Platform is a lightweight, public-first website analytics dashboard for Umami,
-Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
-Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
+Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. Its normalized
+reporting plane runs on Python 3.11+ with SQLite and a dependency-free server-rendered web
+interface. An optional POSIX-only Search Console bulk lane mirrors private BigQuery evidence to
+Parquet on separately verified storage.
 
 > **Status: v0.2.0 is the latest public source release.** Each installation must use
 account-specific least-privilege credentials, verify the configured provider resources, and treat
@@ -24,6 +26,9 @@ cannot be initiated from the browser.
 
 - Read-only connectors for self-hosted Umami, Cloudflare GraphQL traffic analytics, GA4 Data API,
   Search Console, Cloudflare D1 form state, and the existing comms-platform SQLite mail index.
+- An optional, separate `gsc-bulk` command mirrors both Search Console data tables, full successful
+  `ExportLog` history for each revision, and all exported query/URL dimensions to an immutable
+  private Parquet lake. It never writes those raw rows to SQLite or exposes them to the dashboard.
 - Configurable form monitoring that compares durable D1 submissions and notification state with
   independently observed inbox delivery counts. It never ingests form payloads or message bodies.
 - Strict schema-v2 TOML configuration with environment, systemd, and no-credential references.
@@ -113,8 +118,8 @@ boho-analytics --config /private/platform.toml sync --connection example-umami -
 ```
 
 See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md),
-[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live
-data.
+[provider behavior](docs/providers.md), [deployment](docs/deployment.md), and the
+[Search Console BigQuery runbook](docs/gsc-bigquery-bulk-export.md) before connecting live data.
 
 ## Metric ownership
 

@@ -7,6 +7,11 @@ the first stable release.
 
 ### Added
 
+- Added a separate Search Console BigQuery bulk-export reader and private immutable Parquet lake.
+  Strict property/dataset identity proofs, paired and complete `ExportLog` revision history,
+  bounded query costs, streaming Arrow reads, control-total and checksum verification, atomic
+  publication, and hard UUID-mounted external-storage checks keep complete query/URL aggregates out
+  of SQLite and browser exports.
 - Added provider-correct route pageview acquisition: GA4 uses `pagePath` with
   `screenPageViews`, while Umami parses the pageview and visit fields returned together by one
   paginated `metrics/expanded?type=path` request. Safe rows from an unproven pagination boundary
@@ -24,7 +29,7 @@ the first stable release.
 - Added schema-6 immutable acquisition slices and normalized fact observations. Provider scope,
   request dimensions, aggregation, data state, page/row/rejection counts, and exhaustion evidence
   are retained alongside a read-optimized current fact snapshot; raw provider payloads remain out
-  of storage.
+  of SQLite acquisition storage.
 - Added GA4/Umami pageview comparisons over mature complete overlapping dates only, with separate
   provider coverage, source-only dates, paired totals, difference, ratio, low-volume and evidence
   states, exact route-to-headline reconciliation, and explicit withholding reasons. HTML, JSON,

@@ -2,9 +2,10 @@
 
 ## Decision summary
 
-Boho Analytics Platform starts as a modular monolith: one Python package, one sync command, one
-web process, and one database. The modules have explicit contracts so providers, storage, and the
-web surface can evolve independently without paying the operational cost of microservices.
+Boho Analytics Platform is one modular Python package with two deliberately independent data lanes.
+The normalized reporting lane uses SQLite; the private Search Console bulk lane uses Parquet. The
+modules have explicit contracts so providers, storage, and the web surface can evolve independently
+without paying the operational cost of microservices.
 
 The browser reads the local analytics store. It never queries providers directly.
 
@@ -12,6 +13,8 @@ The browser reads the local analytics store. It never queries providers directly
 provider APIs -> explicit sync -> connectors -> catalog validation -> SQLite -> reports -> web/API
                        ^                ^               ^
                  credentials       sync ledger       absolute windows
+
+Search Console -> BigQuery datasets -> gsc-bulk -> private external-disk Parquet lake
 ```
 
 ## Public core and private deployment
@@ -31,6 +34,8 @@ A private deployment owns:
 - Client and property mappings.
 - Provider resource identifiers when they reveal private account structure.
 - Credential references and the credential-provider choice.
+- The private bulk-export YAML, property/dataset mappings, first-export and identity-proof dates,
+  dedicated reader identity, external storage root, schedules, retention, and backup policy.
 - Local ports, hostnames, schedules, retention, backup destinations, and access policies.
 - Private saved reports and generated report artifacts.
 
@@ -79,6 +84,13 @@ SQLite in WAL mode is the first storage adapter. It uses a single writer, indexe
 and migration-controlled schema changes. PostgreSQL becomes appropriate when measured write
 contention, report concurrency, or dataset size exceeds the SQLite operating envelope. Provider
 connectors and reporting code do not depend on SQLite-specific SQL.
+
+Search Console bulk export is not a connector or SQLite storage adapter. `gsc-bulk` reads the two
+property-specific data tables plus their successful `ExportLog` histories and writes revision-aware
+immutable Parquet under a verified external filesystem. Unscreened query and URL dimensions remain
+in that private lake; the report engine and web process have no reader for it. See
+[`gsc-bigquery-bulk-export.md`](gsc-bigquery-bulk-export.md) and
+[ADR 0006](adr/0006-search-console-private-bulk-lake.md).
 
 ### Reporting
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import http.client
+import io
 import json
 import tempfile
 import threading
@@ -999,6 +1001,19 @@ metric_groups = ["traffic"]
         self.assertEqual(
             payload["rows"][0]["dimensions"]["search_type"], "web"
         )
+
+        status, _headers, body = self.request(
+            "/api/v1/route-observations.csv?report=summary&site=example-site"
+            "&source=search-console&metric=search.route-position"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        exported = list(csv.DictReader(io.StringIO(body)))
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(
+            json.loads(exported[0]["dimensions"])["search_type"], "web"
+        )
+        self.assertNotIn("discover", body)
 
     def test_forms_cards_preserve_unknown_pipeline_values(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]

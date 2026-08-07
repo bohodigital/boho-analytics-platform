@@ -1,6 +1,7 @@
 # Data model
 
-Configuration schema and SQLite schema evolve independently. Database schema version 6 contains:
+Configuration schema and the normalized SQLite schema evolve independently. Database schema version
+6 contains:
 
 - `metric_facts`: source-labeled aggregate facts with client/site scope, interval, grain, unit,
   canonical dimensions, completeness, observation time, identity version, and a deterministic
@@ -55,7 +56,28 @@ Migration 006 adds acquisition slices and fact observations without rewriting pr
 runs, watermarks, or definition history. The current `metric_facts` table remains the read-optimized
 latest snapshot. A provenance-aware connector writes its immutable request evidence, immutable fact
 versions, and latest snapshot in one transaction. Update/delete triggers keep the new history
-append-only; raw provider payloads, credentials, and arbitrary diagnostics are not stored.
+append-only; raw provider payloads, credentials, and arbitrary diagnostics are not stored in SQLite.
+
+## Private Search Console bulk lake
+
+The bulk-export lake is deliberately outside the SQLite schema. Its immutable identity is
+`(site, table, provider_date, epoch_version)` under:
+
+```text
+raw/v1/site=<site>/table=<namespace>/provider_date=<date>/epoch_version=<n>/
+```
+
+Each non-empty revision has one Parquet file plus `manifest.json` and `_SUCCESS`; a genuine empty
+revision has the manifest and success marker without a fake row. The manifest records the complete
+successful `ExportLog` sequence from epoch zero through the current epoch, exact query-result
+schema, three BigQuery job audits, BigQuery/local control totals, file size, and SHA-256 checksum.
+`current.json` selects the newest verified epoch without deleting older revisions. Publication uses
+private staging and atomic rename; failures enter private quarantine.
+
+Unlike SQLite facts, the Parquet rows intentionally retain every exported aggregate field,
+including unscreened query strings, URLs, anonymization flags, and dynamic `is_*` search-appearance
+columns. No report, API, CSV, or browser route currently reads this lake. See
+[`gsc-bigquery-bulk-export.md`](gsc-bigquery-bulk-export.md).
 
 ## Metric facts
 
@@ -102,7 +124,7 @@ site, source, and unit and would erase route/scope distinctions. Search Console 
 query-cluster facts retain an explicit observation scope and must never be summed across scopes.
 Their CTR and position definitions remain weighted by route impressions rather than additive.
 
-The shared normalizer stores internal routes only: it removes fragments, strips non-allowlisted query
+Within SQLite, the shared normalizer stores internal routes only: it removes fragments, strips non-allowlisted query
 parameters, canonicalizes percent encoding and trailing slashes, and rejects malformed, excluded, or
 external URLs. External GA4 referrers can contribute only an explicitly allowlisted domain. No fact
 stores raw URLs, unscreened Search Console queries, arbitrary event parameters, sessions, visitor/client or

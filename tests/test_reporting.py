@@ -2909,23 +2909,29 @@ timezone = "UTC"
             item for item in self.config.reports if item.id == "summary"
         )
         object.__setattr__(summary_config, "metric_ids", ("search.position",))
-        unsupported_only = service.render(
-            "summary", self.window, search_type="discover"
-        )
-        unsupported_bucket = next(
-            item for item in unsupported_only["coverage"]["by_site_source"]
-            if item["source"] == "search-console"
-        )
-        self.assertEqual(unsupported_bucket["status"], "unavailable")
-        self.assertEqual(unsupported_only["coverage"]["status"], "unavailable")
-        self.assertFalse(any(
-            "Coverage is incomplete" in warning
-            for warning in unsupported_only["warnings"]
-        ))
-        self.assertFalse(any(
-            item["id"] == "data_coverage"
-            for item in unsupported_only["decision_support"]["attention_items"]
-        ))
+        for search_type in ("discover", "googleNews"):
+            with self.subTest(search_type=search_type):
+                unsupported_only = service.render(
+                    "summary", self.window, search_type=search_type
+                )
+                unsupported_bucket = next(
+                    item
+                    for item in unsupported_only["coverage"]["by_site_source"]
+                    if item["source"] == "search-console"
+                )
+                self.assertEqual(unsupported_bucket["status"], "unavailable")
+                self.assertEqual(
+                    unsupported_only["coverage"]["status"], "unavailable"
+                )
+                self.assertFalse(any(
+                    "Coverage is incomplete" in warning
+                    for warning in unsupported_only["warnings"]
+                ))
+                self.assertFalse(any(
+                    item["id"] == "data_coverage"
+                    for item
+                    in unsupported_only["decision_support"]["attention_items"]
+                ))
         with self.assertRaisesRegex(ValueError, "search type is unavailable"):
             service.render(
                 "summary", self.window, search_type="bogus",
