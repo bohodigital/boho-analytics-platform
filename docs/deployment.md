@@ -89,7 +89,7 @@ before enabling a timer:
 
 ```bash
 boho-analytics --config /private/platform.toml index-coverage sync \
-  --per-property-limit 1900 --pause-seconds 0.12
+  --per-property-limit 1900 --pause-seconds 0.12 --workers 16
 boho-analytics --config /private/platform.toml index-coverage status
 ```
 

@@ -48,6 +48,7 @@ def _build_parser() -> argparse.ArgumentParser:
     index_sync.add_argument("--site", action="append")
     index_sync.add_argument("--per-property-limit", type=int, default=1900)
     index_sync.add_argument("--pause-seconds", type=float, default=0.12)
+    index_sync.add_argument("--workers", type=int, default=16)
     index_sync.add_argument("--refresh-days", type=int, default=21)
     index_sync.add_argument("--freshness-days", type=int, default=30)
     index_status = index_commands.add_parser(
@@ -322,6 +323,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     selected or None,
                     per_property_limit=args.per_property_limit,
                     pause_seconds=args.pause_seconds,
+                    workers=args.workers,
                     refresh_days=args.refresh_days,
                     freshness_days=args.freshness_days,
                 )

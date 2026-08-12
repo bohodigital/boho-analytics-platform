@@ -408,6 +408,20 @@ class SQLiteMetricStore:
             if cursor.rowcount != 1:
                 raise ValueError("index coverage run is not active")
 
+    def mark_abandoned_index_coverage_runs(
+        self, finished_at: datetime | None = None
+    ) -> int:
+        """Close runs left active after a process interruption."""
+
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE index_coverage_runs
+                      SET finished_at=?,status='partial',error_category='interrupted'
+                    WHERE status='running'""",
+                (_iso(finished_at or datetime.now(UTC)),),
+            )
+            return cursor.rowcount
+
     def query_index_coverage(
         self,
         site_ids: Sequence[str],
@@ -2124,6 +2138,18 @@ class SQLiteMetricStore:
     def release_lock(self, name: str, owner: str) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM sync_locks WHERE lock_name=? AND owner_id=?", (name, owner))
+
+    def renew_lock(self, name: str, owner: str, lease_seconds: int = 900) -> None:
+        now = datetime.now(UTC)
+        expires = now + timedelta(seconds=lease_seconds)
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE sync_locks SET expires_at=?
+                    WHERE lock_name=? AND owner_id=? AND expires_at>?""",
+                (_iso(expires), name, owner, _iso(now)),
+            )
+            if cursor.rowcount != 1:
+                raise LockBusy(f"lock lease was lost: {name}")
 
     def set_watermark(self, binding_key: str, value: datetime) -> None:
         with self.connect() as db:

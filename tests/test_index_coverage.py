@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +35,27 @@ class _InspectionHttp:
         self.urls.append(body["inspectionUrl"])
         verdict = "PASS" if body["inspectionUrl"].endswith("/a/") else "FAIL"
         return {"inspectionResult": {"indexStatusResult": {"verdict": verdict}}}
+
+
+class _ConcurrentInspectionHttp:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.active = 0
+        self.maximum_active = 0
+
+    def request(self, method, url, *, headers=None, body=None):
+        with self.lock:
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+        time.sleep(0.02)
+        with self.lock:
+            self.active -= 1
+        return {"inspectionResult": {"indexStatusResult": {"verdict": "PASS"}}}
+
+
+class _ManySitemaps:
+    def fetch(self, _canonical_url):
+        return tuple(f"https://example.com/page-{index}/" for index in range(8))
 
 
 class _MemorySitemapClient(SitemapInventoryClient):
@@ -102,6 +125,25 @@ class IndexCoverageTests(unittest.TestCase):
         summary = self.store.query_index_coverage(["example-site"])[0]
         self.assertEqual(summary["inspection_progress"], {"inspected": 1, "total": 2})
 
+    def test_census_uses_bounded_concurrency(self):
+        http = _ConcurrentInspectionHttp()
+        engine = IndexCoverageEngine(
+            self.config,
+            self.store,
+            credential_provider=_Credentials(),
+            http=http,
+            sitemaps=_ManySitemaps(),
+            sleeper=lambda _seconds: None,
+            now=lambda: self.now,
+        )
+        result = engine.sync(
+            per_property_limit=8, pause_seconds=0, workers=4
+        )[0]
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.inspected_this_run, 8)
+        self.assertGreater(http.maximum_active, 1)
+        self.assertLessEqual(http.maximum_active, 4)
+
     def test_sitemap_index_recurses_and_deduplicates_same_host_urls(self):
         root = "https://example.com/sitemap.xml"
         child = "https://example.com/posts.xml"
@@ -119,6 +161,20 @@ class IndexCoverageTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(ValueError, "outside"):
             client.fetch("https://example.com")
+
+    def test_interrupted_run_is_closed_before_a_new_census(self):
+        run_id = self.store.start_index_coverage_run(
+            "example-site", "example-connection", self.now
+        )
+        self.assertEqual(self.store.mark_abandoned_index_coverage_runs(self.now), 1)
+        with self.store.connect(readonly=True) as db:
+            row = db.execute(
+                "SELECT status,error_category,finished_at FROM index_coverage_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "partial")
+        self.assertEqual(row["error_category"], "interrupted")
+        self.assertEqual(row["finished_at"], self.now.isoformat())
 
 
 if __name__ == "__main__":

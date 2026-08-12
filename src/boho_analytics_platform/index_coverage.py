@@ -11,8 +11,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from threading import Lock
 
 from .connectors.google import _access_token
 from .credentials import ReferenceCredentialProvider
@@ -272,6 +274,7 @@ class IndexCoverageEngine:
         *,
         per_property_limit: int = 1_900,
         pause_seconds: float = 0.12,
+        workers: int = 16,
         refresh_days: int = 21,
         freshness_days: int = 30,
     ) -> list[IndexCoverageResult]:
@@ -279,12 +282,16 @@ class IndexCoverageEngine:
             raise ValueError("per-property limit must be from 1 to 2000")
         if not 0 <= pause_seconds <= 10:
             raise ValueError("pause seconds must be from 0 to 10")
+        if not 1 <= workers <= 32:
+            raise ValueError("workers must be from 1 to 32")
         if not 1 <= refresh_days < freshness_days <= 365:
             raise ValueError("refresh days must be positive and less than freshness days")
         bindings = self._bindings(selected_sites)
         sites = {item.id: item for item in self.config.sites}
         owner = hashlib.sha256(f"{self.now().isoformat()}:{id(self)}".encode()).hexdigest()
-        self.store.acquire_lock("index-coverage-sync", owner)
+        self.store.acquire_lock("index-coverage-sync", owner, lease_seconds=300)
+        self.store.mark_abandoned_index_coverage_runs(self.now())
+        next_lease_renewal = time.monotonic() + 60
         results = []
         try:
             for binding, connection in bindings:
@@ -311,20 +318,53 @@ class IndexCoverageEngine:
                     )
                     with self.credentials.acquire(connection.credential_ref) as credential:
                         token = _access_token(credential)
-                        for index, url_hash in enumerate(pending):
-                            verdict = self._inspect(
+                        pace_lock = Lock()
+                        next_start = [time.monotonic()]
+
+                        def inspect_one(url_hash: str) -> tuple[str, str]:
+                            delay = 0.0
+                            if pause_seconds:
+                                with pace_lock:
+                                    current = time.monotonic()
+                                    scheduled = max(current, next_start[0])
+                                    next_start[0] = scheduled + pause_seconds
+                                    delay = scheduled - current
+                            if delay:
+                                self.sleep(delay)
+                            return url_hash, self._inspect(
                                 token, binding.resource_id, by_hash[url_hash]
                             )
-                            self.store.record_index_coverage_inspection(
-                                site.id,
-                                inventory_hash,
-                                url_hash,
-                                verdict,
-                                self.now(),
-                            )
-                            inspected_this_run += 1
-                            if pause_seconds and index + 1 < len(pending):
-                                self.sleep(pause_seconds)
+
+                        with ThreadPoolExecutor(
+                            max_workers=min(workers, len(pending) or 1),
+                            thread_name_prefix="gsc-index",
+                        ) as executor:
+                            futures = {
+                                executor.submit(inspect_one, url_hash): url_hash
+                                for url_hash in pending
+                            }
+                            try:
+                                for future in as_completed(futures):
+                                    url_hash, verdict = future.result()
+                                    self.store.record_index_coverage_inspection(
+                                        site.id,
+                                        inventory_hash,
+                                        url_hash,
+                                        verdict,
+                                        self.now(),
+                                    )
+                                    inspected_this_run += 1
+                                    if time.monotonic() >= next_lease_renewal:
+                                        self.store.renew_lock(
+                                            "index-coverage-sync",
+                                            owner,
+                                            lease_seconds=300,
+                                        )
+                                        next_lease_renewal = time.monotonic() + 60
+                            except Exception:
+                                for future in futures:
+                                    future.cancel()
+                                raise
                     summary = self.store.query_index_coverage(
                         [site.id],
                         fresh_after=self.now() - timedelta(days=freshness_days),
