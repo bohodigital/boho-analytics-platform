@@ -421,7 +421,11 @@ GEOGRAPHY_CSS = """
 @media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
 @media(max-width:560px){.geography-panel{padding:16px}.geography-controls{display:grid;grid-template-columns:1fr}.geography-controls .field{min-width:0}.geo-svg{min-height:210px}.map-card{padding:10px}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
+INDEX_COVERAGE_CSS = """
+.index-coverage-panel{margin-bottom:12px}.index-coverage-panel .panel-heading{padding:18px 18px 0}.index-coverage-table td{vertical-align:middle}.index-value{display:block;color:var(--ink);font-size:16px;font-weight:850}.index-note{display:block;max-width:320px;white-space:normal;color:var(--muted);font-size:10px;font-weight:700}.index-pct{font-size:20px;font-weight:900;color:var(--green)}.index-pending{color:var(--amber);font-size:12px;font-weight:800}.index-meter{width:130px;height:6px;margin-top:5px;overflow:hidden;border-radius:999px;background:#e5ebe7}.index-meter>span{display:block;height:100%;border-radius:inherit;background:#e7a94e}.index-coverage-table tr[data-state="complete"] .index-meter>span{background:#4caf88}.index-method{margin:0;padding:12px 18px 16px;border-top:1px solid #ecebe6;color:var(--muted);font-size:11px}.index-method strong{color:var(--ink-2)}
+@media(max-width:760px){.index-coverage-table{min-width:760px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
 
 JS = r"""
 (() => {
@@ -2165,6 +2169,56 @@ def _performance_by_site_html(result, site_names):
     )
 
 
+def _index_coverage_html(result, site_names):
+    coverage = result.get("index_coverage") or {}
+    properties = coverage.get("properties") or []
+    if not properties:
+        return ""
+    rows = []
+    for item in properties:
+        published = item.get("published_pages")
+        indexed = item.get("indexed_pages")
+        percentage = item.get("indexed_percentage")
+        progress = item.get("inspection_progress") or {}
+        inspected = int(progress.get("inspected") or 0)
+        total = progress.get("total")
+        total_label = f"{int(total):,}" if total is not None else "—"
+        progress_pct = (
+            min(100, round(inspected * 100 / int(total))) if total else 0
+        )
+        if published is None:
+            published_html = '<span class="index-pending">Not collected</span>'
+        else:
+            published_html = f'<span class="index-value">{int(published):,}</span><span class="index-note">Unique URLs in the current sitemap tree</span>'
+        if indexed is None:
+            indexed_html = (
+                '<span class="index-pending">Pending full census</span>'
+                f'<span class="index-note">{int(item.get("confirmed_indexed_so_far") or 0):,} confirmed indexed so far; not presented as the property total</span>'
+            )
+            percentage_html = '<span class="index-pending">Withheld</span><span class="index-note">Requires every current sitemap URL</span>'
+        else:
+            indexed_html = f'<span class="index-value">{int(indexed):,}</span><span class="index-note">Fresh URL Inspection verdict PASS</span>'
+            percentage_html = f'<span class="index-pct">{float(percentage):.2f}%</span><span class="index-note">Indexed ÷ published × 100</span>'
+        inventory_time = item.get("inventory_observed_at")
+        freshness = inventory_time[:10] if isinstance(inventory_time, str) else "Never"
+        rows.append(
+            f'<tr data-state="{_e(item.get("status", "unknown"))}"><th scope="row">{_e(site_names.get(item["site_id"], item["site_id"]))}</th>'
+            f'<td>{published_html}</td><td>{indexed_html}</td><td>{percentage_html}</td>'
+            f'<td><span class="index-value">{inspected:,} / {total_label}</span>'
+            f'<div class="index-meter" role="img" aria-label="{progress_pct}% of current sitemap URLs inspected"><span class="p-{progress_pct}"></span></div>'
+            f'<span class="index-note">Fresh verdict progress</span></td><td><span class="index-value">{_e(freshness)}</span><span class="index-note">Sitemap inventory observed</span></td></tr>'
+        )
+    return (
+        '<section class="panel table-panel index-coverage-panel" aria-labelledby="index-coverage-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Search discoverability</p>'
+        '<h2 id="index-coverage-title">Published pages and Google index coverage</h2>'
+        '<p>One property at a time, using public sitemap membership and Google URL Inspection—not impressions or deprecated sitemap estimates.</p>'
+        '</div></div><div class="table-scroll"><table class="index-coverage-table">'
+        '<caption class="sr-only">Published sitemap pages, Google-indexed pages, index percentage, and inspection progress by property</caption>'
+        '<thead><tr><th scope="col">Property</th><th scope="col">Published pages</th><th scope="col">Indexed pages</th><th scope="col">Indexed percentage</th><th scope="col">Inspection progress</th><th scope="col">Inventory date</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table></div>'
+        '<p class="index-method"><strong>Definition:</strong> published pages are unique same-host URLs in the current sitemap tree. Indexed pages are URLs whose fresh Google URL Inspection verdict is PASS. The percentage is withheld until the current inventory is fully inspected; Google can lag live changes.</p></section>'
+    )
 def _provider_comparisons_html(result, site_names):
     comparisons = result.get("provider_comparisons", [])
     if not comparisons:
@@ -4437,6 +4491,10 @@ def handler_factory(config, store, credentials=None):
                 result,
                 {site_id: site_names.get(site_id, site_id) for site_id in report.site_ids},
             )
+            index_coverage_html = "" if is_plot else _index_coverage_html(
+                result,
+                {site_id: site_names.get(site_id, site_id) for site_id in report.site_ids},
+            )
             provider_comparison_html = (
                 "" if is_plot else _provider_comparisons_html(result, site_names)
             )
@@ -4528,7 +4586,7 @@ def handler_factory(config, store, credentials=None):
 {source_field}<label class="field"><span>{'Metric' if is_plot else 'Primary chart'}</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{search_type_field}{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{performance_html}{evidence_html}
+{_warnings_html(result['warnings'])}{summary_html}{index_coverage_html}{primary_content}{performance_html}{evidence_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

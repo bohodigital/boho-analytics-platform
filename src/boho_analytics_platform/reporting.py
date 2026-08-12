@@ -3055,6 +3055,17 @@ class ReportService:
             "forms_pipeline": forms,
             "decision_support": decision_support,
             "provider_comparisons": provider_comparisons,
+            "index_coverage": {
+                "schema_version": 1,
+                "definition": "Google indexed pages divided by published URLs discovered in the current sitemap inventory.",
+                "freshness_days": 30,
+                "properties": self.store.query_index_coverage(site_ids),
+                "limitations": [
+                    "Indexed totals and percentages are withheld until every current sitemap URL has a fresh Google URL Inspection verdict.",
+                    "Published pages means unique same-host URLs in the site's sitemap tree; it is not a crawl count or a Search Console traffic count.",
+                    "Google URL Inspection reports the indexed version known to Google and can lag live site changes.",
+                ],
+            },
             "warnings": warnings,
             "complete": coverage["status"] == "complete",
         }

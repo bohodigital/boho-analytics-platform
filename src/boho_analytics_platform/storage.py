@@ -49,7 +49,7 @@ from .models import (
 )
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 MIGRATIONS = {
     1: "001_initial.sql",
     2: "002_site_graph.sql",
@@ -57,6 +57,7 @@ MIGRATIONS = {
     4: "004_forms_evidence_v3.sql",
     5: "005_analytics_definitions.sql",
     6: "006_acquisition_provenance.sql",
+    7: "007_index_coverage.sql",
 }
 CURRENT_IDENTITY_VERSIONS = {
     "cloudflare-forms": 3,
@@ -271,6 +272,248 @@ class SQLiteMetricStore:
             for version in range(current + 1, SCHEMA_VERSION + 1):
                 migration = files("boho_analytics_platform.migrations").joinpath(MIGRATIONS[version]).read_text(encoding="utf-8")
                 _apply_migration(db, migration, version)
+
+    def begin_index_coverage_inventory(
+        self,
+        site_id: str,
+        inventory_hash: str,
+        url_hashes: Sequence[str],
+        observed_at: datetime,
+    ) -> None:
+        """Replace current sitemap membership without retaining URL text."""
+
+        unique_hashes = tuple(sorted(set(url_hashes)))
+        if len(unique_hashes) != len(url_hashes):
+            raise ValueError("index inventory contains duplicate URL hashes")
+        if not re.fullmatch(r"[0-9a-f]{64}", inventory_hash):
+            raise ValueError("invalid index inventory hash")
+        if any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in unique_hashes):
+            raise ValueError("invalid index inventory URL hash")
+        observed = _iso(observed_at)
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO index_coverage_inventories(
+                         site_id,inventory_hash,published_pages,observed_at
+                       ) VALUES (?,?,?,?)
+                       ON CONFLICT(site_id) DO UPDATE SET
+                         inventory_hash=excluded.inventory_hash,
+                         published_pages=excluded.published_pages,
+                         observed_at=excluded.observed_at""",
+                (site_id, inventory_hash, len(unique_hashes), observed),
+            )
+            db.executemany(
+                """INSERT INTO index_coverage_url_status(
+                         site_id,url_hash,inventory_hash,last_seen_at
+                       ) VALUES (?,?,?,?)
+                       ON CONFLICT(site_id,url_hash) DO UPDATE SET
+                         inventory_hash=excluded.inventory_hash,
+                         last_seen_at=excluded.last_seen_at""",
+                (
+                    (site_id, url_hash, inventory_hash, observed)
+                    for url_hash in unique_hashes
+                ),
+            )
+
+    def pending_index_coverage_hashes(
+        self,
+        site_id: str,
+        inventory_hash: str,
+        *,
+        refresh_before: datetime,
+        limit: int,
+    ) -> tuple[str, ...]:
+        if limit < 0:
+            raise ValueError("index inspection limit cannot be negative")
+        with self.connect(readonly=True) as db:
+            rows = db.execute(
+                """SELECT url_hash
+                     FROM index_coverage_url_status
+                    WHERE site_id=? AND inventory_hash=?
+                      AND (inspected_at IS NULL OR inspected_at < ?)
+                    ORDER BY inspected_at IS NOT NULL, inspected_at, url_hash
+                    LIMIT ?""",
+                (site_id, inventory_hash, _iso(refresh_before), limit),
+            ).fetchall()
+        return tuple(row["url_hash"] for row in rows)
+
+    def record_index_coverage_inspection(
+        self,
+        site_id: str,
+        inventory_hash: str,
+        url_hash: str,
+        verdict: str,
+        inspected_at: datetime,
+    ) -> None:
+        if verdict not in {
+            "PASS", "FAIL", "NEUTRAL", "UNKNOWN", "VERDICT_UNSPECIFIED"
+        }:
+            raise ValueError("invalid URL Inspection verdict")
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE index_coverage_url_status
+                      SET verdict=?,indexed=?,inspected_at=?
+                    WHERE site_id=? AND inventory_hash=? AND url_hash=?""",
+                (
+                    verdict,
+                    1 if verdict == "PASS" else 0,
+                    _iso(inspected_at),
+                    site_id,
+                    inventory_hash,
+                    url_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("URL is not in the current index inventory")
+
+    def start_index_coverage_run(
+        self, site_id: str, connection_id: str, started_at: datetime | None = None
+    ) -> str:
+        run_id = uuid.uuid4().hex
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO index_coverage_runs(
+                         id,site_id,connection_id,started_at,status
+                       ) VALUES (?,?,?,?, 'running')""",
+                (run_id, site_id, connection_id, _iso(started_at or datetime.now(UTC))),
+            )
+        return run_id
+
+    def finish_index_coverage_run(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        published_pages: int | None = None,
+        inspected_this_run: int = 0,
+        error_category: str | None = None,
+        finished_at: datetime | None = None,
+    ) -> None:
+        if status not in {"complete", "partial", "failed"}:
+            raise ValueError("invalid index coverage run status")
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE index_coverage_runs
+                      SET finished_at=?,status=?,published_pages=?,
+                          inspected_this_run=?,error_category=?
+                    WHERE id=? AND status='running'""",
+                (
+                    _iso(finished_at or datetime.now(UTC)),
+                    status,
+                    published_pages,
+                    inspected_this_run,
+                    error_category,
+                    run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("index coverage run is not active")
+
+    def query_index_coverage(
+        self,
+        site_ids: Sequence[str],
+        *,
+        fresh_after: datetime | None = None,
+    ) -> list[dict[str, object]]:
+        """Return current census facts; totals are withheld until fully inspected."""
+
+        if not site_ids:
+            return []
+        cutoff = fresh_after or datetime.now(UTC) - timedelta(days=30)
+        placeholders = ",".join("?" for _ in site_ids)
+        with self.connect(readonly=True) as db:
+            inventories = {
+                row["site_id"]: row
+                for row in db.execute(
+                    f"""SELECT site_id,inventory_hash,published_pages,observed_at
+                          FROM index_coverage_inventories
+                         WHERE site_id IN ({placeholders})""",
+                    tuple(site_ids),
+                ).fetchall()
+            }
+            counts = {
+                row["site_id"]: row
+                for row in db.execute(
+                    f"""SELECT s.site_id,
+                                COUNT(*) AS inventory_rows,
+                                SUM(CASE WHEN s.inspected_at >= ? THEN 1 ELSE 0 END)
+                                  AS fresh_inspected,
+                                SUM(CASE WHEN s.inspected_at >= ? AND s.indexed=1 THEN 1 ELSE 0 END)
+                                  AS fresh_indexed,
+                                MIN(CASE WHEN s.inspected_at >= ? THEN s.inspected_at END)
+                                  AS oldest_fresh_inspection,
+                                MAX(s.inspected_at) AS latest_inspection
+                           FROM index_coverage_url_status AS s
+                           JOIN index_coverage_inventories AS i
+                             ON i.site_id=s.site_id AND i.inventory_hash=s.inventory_hash
+                          WHERE s.site_id IN ({placeholders})
+                          GROUP BY s.site_id""",
+                    (_iso(cutoff), _iso(cutoff), _iso(cutoff), *site_ids),
+                ).fetchall()
+            }
+            latest_runs = {
+                row["site_id"]: row
+                for row in db.execute(
+                    f"""SELECT r.site_id,r.status,r.finished_at,r.error_category,
+                                r.inspected_this_run
+                           FROM index_coverage_runs AS r
+                           JOIN (
+                             SELECT site_id,MAX(started_at) AS started_at
+                               FROM index_coverage_runs
+                              WHERE site_id IN ({placeholders})
+                              GROUP BY site_id
+                           ) AS latest
+                             ON latest.site_id=r.site_id
+                            AND latest.started_at=r.started_at""",
+                    tuple(site_ids),
+                ).fetchall()
+            }
+        result = []
+        for site_id in site_ids:
+            inventory = inventories.get(site_id)
+            count = counts.get(site_id)
+            run = latest_runs.get(site_id)
+            if inventory is None:
+                result.append({
+                    "site_id": site_id,
+                    "status": "not_collected",
+                    "published_pages": None,
+                    "indexed_pages": None,
+                    "indexed_percentage": None,
+                    "inspection_progress": {"inspected": 0, "total": None},
+                    "inventory_observed_at": None,
+                    "oldest_fresh_inspection": None,
+                    "latest_inspection": None,
+                    "last_run": None,
+                })
+                continue
+            published = int(inventory["published_pages"])
+            inventory_rows = int(count["inventory_rows"] or 0) if count else 0
+            inspected = int(count["fresh_inspected"] or 0) if count else 0
+            indexed_so_far = int(count["fresh_indexed"] or 0) if count else 0
+            complete = published > 0 and inventory_rows == published and inspected == published
+            result.append({
+                "site_id": site_id,
+                "status": "complete" if complete else "empty" if published == 0 else "partial",
+                "published_pages": published,
+                "indexed_pages": indexed_so_far if complete else None,
+                "indexed_percentage": (
+                    round(indexed_so_far * 100 / published, 2) if complete else None
+                ),
+                "confirmed_indexed_so_far": indexed_so_far,
+                "inspection_progress": {"inspected": inspected, "total": published},
+                "inventory_observed_at": inventory["observed_at"],
+                "oldest_fresh_inspection": (
+                    count["oldest_fresh_inspection"] if count else None
+                ),
+                "latest_inspection": count["latest_inspection"] if count else None,
+                "last_run": ({
+                    "status": run["status"],
+                    "finished_at": run["finished_at"],
+                    "error_category": run["error_category"],
+                    "inspected": int(run["inspected_this_run"]),
+                } if run else None),
+            })
+        return result
 
     @staticmethod
     def _version_from_row(row: sqlite3.Row) -> DefinitionVersion:

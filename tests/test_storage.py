@@ -42,7 +42,7 @@ class StorageTests(unittest.TestCase):
     def test_initialize_enables_wal_and_integrity(self):
         with self.store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
-            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 6)
+            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 7)
             self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(
                 db.execute(
@@ -652,7 +652,7 @@ class StorageTests(unittest.TestCase):
 
     def test_forms_v3_schema_marker_blocks_schema_v3_runtime_rollback(self):
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 3):
-            with self.assertRaisesRegex(RuntimeError, "database schema 6 is newer than supported 3"):
+            with self.assertRaisesRegex(RuntimeError, "database schema 7 is newer than supported 3"):
                 SQLiteMetricStore(self.store.path).initialize()
 
     def test_active_lock_fails_and_stale_lock_is_recovered(self):

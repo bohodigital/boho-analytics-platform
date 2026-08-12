@@ -34,6 +34,10 @@ cannot be initiated from the browser.
 - Strict schema-v2 TOML configuration with environment, systemd, and no-credential references.
 - SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
   retention, integrity checks, online backup, and guarded restore.
+- A privacy-bounded Search Console index census inventories each property's public sitemap tree,
+  stores URL fingerprints rather than URL text, advances within URL Inspection quotas, and reports
+  published pages, indexed pages, and indexed percentage only when the current inventory is fully
+  inspected.
 - Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
   windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
 - A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
@@ -115,6 +119,8 @@ Then initialize, probe, and sync one connection at a time:
 boho-analytics --config /private/platform.toml db init
 boho-analytics --config /private/platform.toml probe --connection example-umami
 boho-analytics --config /private/platform.toml sync --connection example-umami --days 30
+boho-analytics --config /private/platform.toml index-coverage sync
+boho-analytics --config /private/platform.toml index-coverage status
 ```
 
 See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md),

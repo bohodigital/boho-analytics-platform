@@ -38,6 +38,22 @@ def _build_parser() -> argparse.ArgumentParser:
     restore = db_commands.add_parser("restore"); restore.add_argument("source"); restore.add_argument("--confirm", action="store_true")
     probe = commands.add_parser("probe", help="test configured read-only capabilities"); probe.add_argument("--connection", action="append")
     sync = commands.add_parser("sync", help="collect a bounded window"); _window_args(sync); sync.add_argument("--connection", action="append")
+    index_coverage = commands.add_parser(
+        "index-coverage", help="census sitemap pages with Google URL Inspection"
+    )
+    index_commands = index_coverage.add_subparsers(dest="index_coverage_command")
+    index_sync = index_commands.add_parser(
+        "sync", help="advance the quota-bounded per-property index census"
+    )
+    index_sync.add_argument("--site", action="append")
+    index_sync.add_argument("--per-property-limit", type=int, default=1900)
+    index_sync.add_argument("--pause-seconds", type=float, default=0.12)
+    index_sync.add_argument("--refresh-days", type=int, default=21)
+    index_sync.add_argument("--freshness-days", type=int, default=30)
+    index_status = index_commands.add_parser(
+        "status", help="show the current per-property index census"
+    )
+    index_status.add_argument("--site", action="append")
     report = commands.add_parser("report", help="render a saved report"); report.add_argument("report_id"); report.add_argument("--subreport"); _window_args(report)
     report.add_argument("--format", choices=("json", "csv"), default="json"); report.add_argument("--output")
     commands.add_parser("serve", help="run the configured read-only web dashboard")
@@ -282,6 +298,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.db_command == "restore": store.restore(args.source, confirmed=args.confirm); _emit({"ok": True}); return 0
             return 2
         store.initialize()
+        if args.command == "index-coverage":
+            configured_sites = {item.id for item in config.sites}
+            selected = set(args.site or [])
+            unknown = selected - configured_sites
+            if unknown:
+                raise ValueError(f"unknown site id(s): {', '.join(sorted(unknown))}")
+            site_ids = tuple(
+                item.id for item in config.sites if not selected or item.id in selected
+            )
+            if args.index_coverage_command == "status":
+                _emit({
+                    "schema_version": 1,
+                    "metric": "Google indexed pages / published sitemap URLs",
+                    "freshness_days": 30,
+                    "properties": store.query_index_coverage(site_ids),
+                })
+                return 0
+            if args.index_coverage_command == "sync":
+                from .index_coverage import IndexCoverageEngine
+
+                results = IndexCoverageEngine(config, store).sync(
+                    selected or None,
+                    per_property_limit=args.per_property_limit,
+                    pause_seconds=args.pause_seconds,
+                    refresh_days=args.refresh_days,
+                    freshness_days=args.freshness_days,
+                )
+                _emit([item.json_value() for item in results])
+                return 0 if all(item.status != "failed" for item in results) else 1
+            return 2
         if args.command == "probe":
             results = SyncEngine(config, store).probe(set(args.connection or [])); _emit([{"connection_id": r.connection_id, "site_id": r.site_id, "status": r.status, "points": r.points, "error_category": r.error_category} for r in results])
             return 0 if all(item.status == "success" for item in results) else 1

@@ -5,6 +5,8 @@
 Use one reviewed release environment and three isolated execution lanes:
 
 - a timer invokes `boho-analytics sync` with a bounded window;
+- a daily timer invokes `boho-analytics index-coverage sync` to advance a quota-bounded sitemap and
+  URL Inspection census;
 - a long-running service invokes `boho-analytics serve` on loopback; and
 - a separate timer invokes `boho-analytics gsc-bulk sync` with its own private YAML, dedicated
   credential, cost limit, and Seagate-backed lake.
@@ -78,6 +80,25 @@ version-1 rows remain retained lineage and are not rewritten. Verify the pinned 
 tables, indexes, immutability triggers, record hashes, foreign keys, and a known report window before
 re-enabling the timer. This repository change does not authorize that production migration or the
 separate Search Console BigQuery export setup.
+
+The schema-7 index-coverage upgrade adds only derived inventory, URL-fingerprint, and run-status
+tables. Back up schema 6 before cutover, initialize the reviewed runtime, and verify integrity before
+the first census. The census uses the existing Search Console read-only OAuth credential. It does
+not require a BigQuery scope and does not store URL text or provider responses. Run it manually
+before enabling a timer:
+
+```bash
+boho-analytics --config /private/platform.toml index-coverage sync \
+  --per-property-limit 1900 --pause-seconds 0.12
+boho-analytics --config /private/platform.toml index-coverage status
+```
+
+The default limit deliberately stays below Google's 2,000 inspection requests per property per
+day. A property with more URLs completes across multiple daily runs. Until every current sitemap
+URL has a verdict no older than 30 days, the dashboard shows inspection progress and withholds the
+indexed total and percentage. Schedule refresh at 21 days so a completed census can be renewed
+before it becomes stale. Sitemap count means unique same-host URLs in the current sitemap tree; it
+does not mean crawled pages, rendered pages, or pages with search impressions.
 
 Install the optional `bigquery` dependency group only in a release intended to run the bulk lane.
 Before enabling its timer, complete the separately authorized Google setup and run:

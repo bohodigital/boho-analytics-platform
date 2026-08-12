@@ -7,6 +7,11 @@ the first stable release.
 
 ### Added
 
+- Added a schema-7 per-property Google index census. Public sitemap trees define the published URL
+  denominator, Google URL Inspection supplies the indexed verdict, raw URLs are reduced to durable
+  SHA-256 fingerprints at rest, daily quotas are bounded, and the dashboard withholds indexed totals
+  and percentages until the current inventory is completely and freshly inspected.
+
 - Added a separate Search Console BigQuery bulk-export reader and private immutable Parquet lake.
   Strict property/dataset identity proofs, paired and complete `ExportLog` revision history,
   bounded query costs, streaming Arrow reads, control-total and checksum verification, atomic
