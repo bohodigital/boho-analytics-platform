@@ -185,6 +185,11 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(">0 paired dates<", body)
         self.assertIn("Core feeds 100%", body)
         self.assertIn("Page views over time", body)
+        self.assertGreaterEqual(body.count('data-area-fill="true"'), 1)
+        self.assertEqual(
+            body.count('data-area-fill="true"'),
+            body.count('<canvas class="time-series-chart"'),
+        )
         self.assertIn("Traffic by property", body)
         self.assertIn("Index coverage", body)
         self.assertIn("Data details", body)
@@ -837,6 +842,12 @@ metric_groups = ["traffic"]
         self.assertIn('unit === "bytes"', body)
         self.assertIn("lowerIsBetter", body)
         self.assertIn('const effectiveStyle = lowerIsBetter ? "line" : payload.style', body)
+        self.assertIn('canvas.dataset.areaFill === "true"', body)
+        self.assertIn("function fillArea(item, color)", body)
+        self.assertIn('configuredColor("--chart-grid", "#e4e4de")', body)
+        self.assertIn('const defaultColors = ["#e86d3d"', body)
+        self.assertIn("--chart-area-alpha:.1", self.request("/assets/app.css")[2])
+        self.assertIn("--series-1:#37e6ff", self.request("/assets/app.css")[2])
         self.assertIn('selectedSource !== "search-console"', body)
         self.assertIn("updateStyleOptions", body)
         self.assertIn("canvas.onpointermove = null", body)

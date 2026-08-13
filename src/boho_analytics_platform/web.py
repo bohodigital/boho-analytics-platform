@@ -449,11 +449,23 @@ ALL_IN_ONE_CSS = """
 @media(max-width:940px){.dashboard-header{align-items:flex-start;flex-direction:column}.dashboard-controls{width:100%;justify-content:space-between}.property-field select{width:min(64vw,320px)}.trend-grid{grid-template-columns:1fr}.dashboard-app .visual-grid{grid-template-columns:1fr}}
 @media(max-width:620px){.dashboard-app .topbar-inner,.dashboard-app .shell{padding-left:14px;padding-right:14px}.dashboard-app .live-state{display:none}.dashboard-controls{align-items:flex-end}.property-form{flex:1}.property-field{flex:1}.property-field select{width:100%}.window-bar{align-items:flex-start;flex-wrap:wrap}.custom-window-form{position:fixed;left:14px;right:14px;top:110px;grid-template-columns:1fr}.overview-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-metric{padding:13px 12px}.overview-metric strong{font-size:27px}.trend-grid{display:block}.trend-grid .series-panel{margin-bottom:12px}.series-panel .chart-stage{min-height:255px}.series-panel .time-series-chart{height:255px}.source-reading-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.source-reading,.source-reading:nth-child(3){border-right:1px solid #e0e7e3;border-bottom:1px solid #e0e7e3}.source-reading:nth-child(even){border-right:0}.source-reading:nth-last-child(-n+2){border-bottom:0}.dashboard-app .rank-row{grid-template-columns:minmax(88px,.7fr) minmax(90px,1.3fr) auto}.index-legend{margin-top:8px}.compact-heading{flex-wrap:wrap}.tool-menu-items{position:fixed;left:14px;right:14px;top:70px;width:auto}.search-funnel>div{grid-template-columns:66px minmax(80px,1fr) auto}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
+HYPERPUNK_CSS = """
+.dashboard-app{color-scheme:dark;--ink:#d8e2e0;--ink-2:#b8c7c4;--paper:#050607;--surface:#0b0e12;--line:#202a34;--muted:#899895;--accent:#37e6ff;--accent-soft:rgba(55,230,255,.11);--green:#6ee7b7;--green-soft:rgba(110,231,183,.1);--amber:#ffc268;--amber-soft:rgba(255,194,104,.1);--red:#ff7c91;--red-soft:rgba(255,124,145,.1);--shadow:0 16px 40px rgba(0,0,0,.42);--shadow-soft:0 8px 24px rgba(0,0,0,.32);--series-1:#37e6ff;--series-2:#ff4fd8;--series-3:#9b8cff;--series-4:#b8f34a;--series-5:#ffb44d;--series-6:#ff6b7a;--chart-grid:#202a34;--chart-axis:#83928f;--chart-area-alpha:.1;background:#050607;color:var(--ink);accent-color:var(--accent)}
+.dashboard-app .topbar{background:#050607;border-bottom:1px solid #19232d;box-shadow:0 8px 26px rgba(0,0,0,.38)}.dashboard-app .brand-mark{border:1px solid rgba(55,230,255,.34);background:#090d12;color:#70ecff;box-shadow:0 0 18px rgba(55,230,255,.12)}.dashboard-app .brand strong{color:#edf5f3}.dashboard-app .brand span,.dashboard-app .live-state{color:#8e9d9a}
+.dashboard-app .panel,.dashboard-app .overview-metric,.dashboard-app .window-bar,.dashboard-app .source-readings{border-color:#202a34;background:#0b0e12;box-shadow:var(--shadow-soft)}.dashboard-app .overview-metric{border-top:2px solid rgba(55,230,255,.72)}.dashboard-app .overview-metric:nth-child(3),.dashboard-app .overview-metric:nth-child(4),.dashboard-app .overview-metric:nth-child(5){border-top-color:rgba(255,79,216,.72)}.dashboard-app .overview-metric:nth-child(6){border-top-color:rgba(184,243,74,.72)}.dashboard-app .overview-metric[data-state="unavailable"]{background:#090c10}.dashboard-app .overview-metric-head,.dashboard-app .overview-metric small,.dashboard-app .dashboard-meta,.dashboard-app .property-field span,.dashboard-app .compact-heading span,.dashboard-app .compact-heading small{color:#899895}.dashboard-app .overview-metric strong,.dashboard-app .search-summary-row b,.dashboard-app .performance-value,.dashboard-app .index-value{color:#e3ecea}
+.dashboard-app input,.dashboard-app select,.dashboard-app .check-field,.dashboard-app .layer-picker{border-color:#293641;background:#090c10;color:#d8e2e0}.dashboard-app input:focus,.dashboard-app select:focus,.dashboard-app button:focus,.dashboard-app a:focus,.dashboard-app summary:focus{outline-color:rgba(55,230,255,.34);border-color:#37e6ff}.dashboard-app button,.dashboard-app .scope-apply{border-color:#37e6ff;background:#10252b;color:#bff7ff}.dashboard-app button:hover{background:#16323a}.dashboard-app .tool-menu>summary{border-color:#293641;background:#0b0f14;color:#c8d5d2}.dashboard-app .tool-menu[open]>summary{border-color:#37e6ff}.dashboard-app .tool-menu-items,.dashboard-app .custom-window-form{border-color:#293641;background:#0b0e12;box-shadow:0 18px 50px rgba(0,0,0,.58)}.dashboard-app .tool-menu-items a,.dashboard-app .tool-menu-items button{color:#c8d5d2}.dashboard-app .tool-menu-items a:hover{background:#131a21}.dashboard-app .tool-menu-items hr{background:#202a34}
+.dashboard-app .window-links a,.dashboard-app .custom-window>summary{color:#91a09d}.dashboard-app .window-links a:hover,.dashboard-app .window-links a.active{background:rgba(55,230,255,.11);color:#70ecff}.dashboard-app .coverage-state:before{background:#6ee7b7;box-shadow:0 0 12px rgba(110,231,183,.38)}.dashboard-app .coverage-state[data-state="partial"]:before,.dashboard-app .coverage-state[data-state="unknown"]:before{background:#ffc268;box-shadow:0 0 12px rgba(255,194,104,.32)}
+.dashboard-app .metric-delta{background:#151b21;color:#94a39f}.dashboard-app .metric-delta.up{background:rgba(110,231,183,.11);color:#7cebbe}.dashboard-app .metric-delta.down{background:rgba(255,124,145,.11);color:#ff91a2}.dashboard-app .series-panel .chart-stage{background:#07090c}.dashboard-app .chart-legend{color:#a5b3b0}.dashboard-app .legend-tone-0{background:var(--series-1)}.dashboard-app .legend-tone-1{background:var(--series-2)}.dashboard-app .legend-tone-2{background:var(--series-3)}.dashboard-app .legend-tone-3{background:var(--series-4)}.dashboard-app .legend-tone-4{background:var(--series-5)}.dashboard-app .legend-tone-5{background:var(--series-6)}.dashboard-app .chart-fallback>summary{color:#899895}
+.dashboard-app .rank-track,.dashboard-app .capture-track,.dashboard-app .funnel-track,.dashboard-app .country-track{background:#171e25}.dashboard-app .rank-fill,.dashboard-app .country-track>span{background:#37e6ff}.dashboard-app .capture-track>span,.dashboard-app .funnel-track i{background:#ff4fd8}.dashboard-app .index-stack{background:#4a391f}.dashboard-app .index-stack .indexed,.dashboard-app .index-legend .indexed{background:#b8f34a}.dashboard-app .index-stack .unindexed,.dashboard-app .index-legend .unindexed{background:#ffb44d}.dashboard-app .capture-meta span,.dashboard-app .rank-value small,.dashboard-app .search-summary-row,.dashboard-app .source-reading span,.dashboard-app .source-reading small{color:#899895}.dashboard-app .search-summary-row{border-top-color:#202a34}
+.dashboard-app .source-reading-grid{border-color:#202a34}.dashboard-app .source-reading{border-color:#202a34}.dashboard-app .data-details>summary{color:#b8c7c4}.dashboard-app .data-details>summary:after{color:#70ecff}.dashboard-app .data-details-body{border-top:1px solid #171f27}.dashboard-app .source-chip,.dashboard-app .capability-chip,.dashboard-app .graph-meta span{background:#151c23;color:#aebdba}
+.dashboard-app .health-item,.dashboard-app .pipeline-item,.dashboard-app .operation-card,.dashboard-app .decision-card,.dashboard-app .engagement-card,.dashboard-app .roadmap-card,.dashboard-app .attention-item,.dashboard-app .signal-item,.dashboard-app .chart-card,.dashboard-app .graph-disclosure,.dashboard-app .distance-item{border-color:#202a34;background:#0e1217}.dashboard-app .pipeline-value,.dashboard-app .decision-value,.dashboard-app .graph-disclosure strong{color:#d8e2e0!important}.dashboard-app .data-notices{border-color:#4a391f;background:#110e09}.dashboard-app .data-notices>summary{color:#ffc268}.dashboard-app .data-notices .alert,.dashboard-app .alert{border-color:#4a391f;background:#151006;color:#e9c994}.dashboard-app .alert-mark{background:#9d6828}.dashboard-app .attention-item[data-severity="clear"],.dashboard-app .signal-item[data-severity="clear"]{border-color:#24493b;background:#0b1713}.dashboard-app .attention-item[data-severity="review"],.dashboard-app .signal-item[data-severity="review"]{border-color:#4a391f;background:#151006}.dashboard-app .attention-item[data-severity="immediate"],.dashboard-app .signal-item[data-severity="immediate"]{border-color:#4a2931;background:#170c10}
+.dashboard-app table{color:#cdd8d5}.dashboard-app th,.dashboard-app td{border-bottom-color:#1b242c}.dashboard-app th{color:#81908d}.dashboard-app tbody tr:hover{background:#10161c}.dashboard-app .performance-table th:first-child,.dashboard-app .performance-table td:first-child,.dashboard-app .matrix-table th:first-child,.dashboard-app .matrix-table td:first-child{background:#0b0e12}.dashboard-app .positive{color:#6ee7b7}.dashboard-app .negative{color:#ff7c91}.dashboard-app .index-pct{color:#b8f34a}.dashboard-app .index-pending,.dashboard-app .geo-suppressed{color:#ffc268}.dashboard-app .index-meter{background:#171e25}.dashboard-app .index-coverage-table tr[data-state="complete"] .index-meter>span{background:#b8f34a}.dashboard-app .index-meter>span{background:#ffb44d}.dashboard-app .index-method{border-top-color:#202a34}.dashboard-app .empty-state{border-color:#293641;color:#899895}.dashboard-app ::selection{background:rgba(255,79,216,.28);color:#fff}.dashboard-app *{scrollbar-color:#34434f #080a0d}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
-  const colors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
+  const defaultColors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
   const integerFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
 
@@ -550,6 +562,12 @@ JS = r"""
   }
 
   function drawChart(canvas, payload) {
+    const pageStyle = getComputedStyle(document.body);
+    const configuredColor = (name, fallback) => pageStyle.getPropertyValue(name).trim() || fallback;
+    const colors = defaultColors.map((fallback, index) => configuredColor(`--series-${index + 1}`, fallback));
+    const chartGrid = configuredColor("--chart-grid", "#e4e4de");
+    const chartAxis = configuredColor("--chart-axis", "#727974");
+    const areaAlpha = Number.parseFloat(pageStyle.getPropertyValue("--chart-area-alpha")) || .14;
     const series = payload.series || [];
     const comparison = payload.comparison_series || [];
     const unit = payload.unit || series[0]?.unit || "count";
@@ -609,8 +627,8 @@ JS = r"""
 
     ctx.font = "11px system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    ctx.strokeStyle = "#e4e4de";
-    ctx.fillStyle = "#727974";
+    ctx.strokeStyle = chartGrid;
+    ctx.fillStyle = chartAxis;
     ctx.lineWidth = 1;
     const gridIntervals = unit === "count" ? Math.max(1, Math.round(max / niceCountStep(max))) : 4;
     for (let step = 0; step <= gridIntervals; step++) {
@@ -638,7 +656,24 @@ JS = r"""
       return segments;
     }
 
-    function path(item, color, dashed, fill) {
+    function fillArea(item, color) {
+      if (item.points.length < 2) return;
+      const startMs = currentStart;
+      for (const segment of contiguousSegments(item.points)) {
+        if (segment.length < 2) continue;
+        ctx.beginPath();
+        segment.forEach((point, index) => {
+          const px = xPoint(point, startMs), py = y(Number(point.value));
+          if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
+        ctx.lineTo(xPoint(segment[0], startMs), y(min));
+        ctx.closePath();
+        ctx.save(); ctx.fillStyle = color; ctx.globalAlpha = areaAlpha; ctx.fill(); ctx.restore();
+      }
+    }
+
+    function path(item, color, dashed) {
       if (!item.points.length) return;
       const startMs = dashed ? comparisonStart : currentStart;
       for (const segment of contiguousSegments(item.points)) {
@@ -647,17 +682,6 @@ JS = r"""
           const px = xPoint(point, startMs), py = y(Number(point.value));
           if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         });
-        if (fill && segment.length > 1) {
-          const baseline = min;
-          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(baseline));
-          ctx.lineTo(xPoint(segment[0], startMs), y(baseline)); ctx.closePath();
-          ctx.save(); ctx.fillStyle = color; ctx.globalAlpha = .14; ctx.fill(); ctx.restore();
-          ctx.beginPath();
-          segment.forEach((point, index) => {
-            const px = xPoint(point, startMs), py = y(Number(point.value));
-            if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-          });
-        }
         ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
         ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       }
@@ -680,10 +704,12 @@ JS = r"""
           ctx.fillRect(xPoint(point,currentStart) - groupWidth / 2 + seriesIndex * barWidth, Math.min(valueY, zeroY), barWidth - 1, Math.max(1, Math.abs(zeroY - valueY)));
         });
       });
-      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true));
     } else {
-      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
-      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false, effectiveStyle === "area"));
+      const fillCurves = effectiveStyle === "area" || canvas.dataset.areaFill === "true";
+      if (fillCurves) series.forEach((item, seriesIndex) => fillArea(item, colors[seriesIndex % colors.length]));
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true));
+      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false));
     }
 
     if (legend) {
@@ -5084,7 +5110,7 @@ def handler_factory(config, store, credentials=None):
                         '<div class="chart-stage">'
                         f'<div class="chart-status" data-chart-status{status_id}>Loading series</div>'
                         f'<span class="sr-only" data-chart-live-status{live_id} role="status" aria-live="polite">Loading series</span>'
-                        f'<canvas class="time-series-chart"{canvas_id} data-series-url="{_e(overview_series_url(metric, source))}" '
+                        f'<canvas class="time-series-chart"{canvas_id} data-series-url="{_e(overview_series_url(metric, source))}" data-area-fill="true" '
                         f'role="img" aria-label="{_e(title)}"></canvas></div>'
                         f'<ul class="chart-legend" data-chart-legend{legend_id} aria-label="Property legend"></ul>'
                         f'<details class="chart-fallback"><summary>Daily values</summary>{_chart_html(result, metric, site_names)}</details>'
