@@ -190,6 +190,10 @@ class WebTests(unittest.TestCase):
             body.count('data-area-fill="true"'),
             body.count('<canvas class="time-series-chart"'),
         )
+        self.assertEqual(
+            body.count('tabindex="0"'),
+            body.count('<canvas class="time-series-chart"'),
+        )
         self.assertIn("Traffic by property", body)
         self.assertIn("Index coverage", body)
         self.assertIn("Data details", body)
@@ -829,6 +833,10 @@ metric_groups = ["traffic"]
         self.assertIn("contiguousSegments", body)
         self.assertIn("comparison unavailable", body)
         self.assertIn("formatMetricValue", body)
+        self.assertIn("formatTooltipValue", body)
+        self.assertIn("tooltip.replaceChildren", body)
+        self.assertIn('event.key === "ArrowLeft"', body)
+        self.assertIn('event.key === "Escape"', body)
         self.assertIn("formatCountValue", body)
         self.assertIn("niceCountStep", body)
         self.assertIn('if (unit === "count") return formatCountValue(number)', body)
@@ -846,8 +854,11 @@ metric_groups = ["traffic"]
         self.assertIn("function fillArea(item, color)", body)
         self.assertIn('configuredColor("--chart-grid", "#e4e4de")', body)
         self.assertIn('const defaultColors = ["#e86d3d"', body)
-        self.assertIn("--chart-area-alpha:.1", self.request("/assets/app.css")[2])
-        self.assertIn("--series-1:#37e6ff", self.request("/assets/app.css")[2])
+        css_body = self.request("/assets/app.css")[2]
+        self.assertIn("--chart-area-alpha:.1", css_body)
+        self.assertIn("--series-1:#37e6ff", css_body)
+        self.assertIn(".chart-tooltip{", css_body)
+        self.assertIn(".dashboard-app .chart-tooltip{", css_body)
         self.assertIn('selectedSource !== "search-console"', body)
         self.assertIn("updateStyleOptions", body)
         self.assertIn("canvas.onpointermove = null", body)

@@ -384,7 +384,7 @@ BASE_CSS = """
 .operation-card[data-state="never_run"],.operation-card[data-state="running"]{border-color:#e0b16d;background:var(--amber-soft)}
 .pulse-source{display:block;color:var(--muted);font-size:10px;font-weight:700}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
-.plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
+.plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.time-series-chart:focus-visible{outline:3px solid rgba(232,109,61,.32);outline-offset:-3px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-tooltip{position:absolute;z-index:5;min-width:170px;max-width:min(260px,calc(100% - 16px));padding:10px 11px;border:1px solid #d5d9d5;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 12px 30px rgba(24,34,30,.17);color:var(--ink);font-size:11px;line-height:1.35;pointer-events:none}.chart-tooltip[hidden],.chart-tooltip-guide[hidden]{display:none}.chart-tooltip-date{display:block;margin-bottom:7px;color:var(--ink);font-size:12px;font-weight:850}.chart-tooltip-values{display:grid;gap:5px}.chart-tooltip-row{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:7px;align-items:center}.chart-tooltip-swatch{width:7px;height:7px;border-radius:50%;background:var(--accent)}.chart-tooltip-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.chart-tooltip-value{padding-left:5px;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:800}.chart-tooltip-guide{position:absolute;z-index:3;top:52px;bottom:42px;width:1px;background:rgba(82,90,85,.28);pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-0{background:#e86d3d}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
 .graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 .graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
 .graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{position:relative;min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.graph-canvas-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}.graph-canvas-toolbar button{min-height:32px;padding:5px 9px;border-color:#c8c9c3;background:rgba(255,255,255,.88);color:var(--ink-2);font-size:12px;font-weight:800}.graph-canvas-toolbar button:hover{background:#fff;color:var(--ink)}.graph-zoom-status{padding:4px 7px;border-radius:999px;background:#efefeb;color:var(--muted);font-size:11px;font-weight:800}.site-graph-svg{min-height:430px;cursor:grab;touch-action:none;user-select:none}.graph-map.is-panning .site-graph-svg{cursor:grabbing}.graph-viewport{transform-origin:0 0}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{stroke-width:3}.graph-edge.is-related{stroke-width:2.2}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
@@ -455,7 +455,7 @@ HYPERPUNK_CSS = """
 .dashboard-app .panel,.dashboard-app .overview-metric,.dashboard-app .window-bar,.dashboard-app .source-readings{border-color:#202a34;background:#0b0e12;box-shadow:var(--shadow-soft)}.dashboard-app .overview-metric{border-top:2px solid rgba(55,230,255,.72)}.dashboard-app .overview-metric:nth-child(3),.dashboard-app .overview-metric:nth-child(4),.dashboard-app .overview-metric:nth-child(5){border-top-color:rgba(255,79,216,.72)}.dashboard-app .overview-metric:nth-child(6){border-top-color:rgba(184,243,74,.72)}.dashboard-app .overview-metric[data-state="unavailable"]{background:#090c10}.dashboard-app .overview-metric-head,.dashboard-app .overview-metric small,.dashboard-app .dashboard-meta,.dashboard-app .property-field span,.dashboard-app .compact-heading span,.dashboard-app .compact-heading small{color:#899895}.dashboard-app .overview-metric strong,.dashboard-app .search-summary-row b,.dashboard-app .performance-value,.dashboard-app .index-value{color:#e3ecea}
 .dashboard-app input,.dashboard-app select,.dashboard-app .check-field,.dashboard-app .layer-picker{border-color:#293641;background:#090c10;color:#d8e2e0}.dashboard-app input:focus,.dashboard-app select:focus,.dashboard-app button:focus,.dashboard-app a:focus,.dashboard-app summary:focus{outline-color:rgba(55,230,255,.34);border-color:#37e6ff}.dashboard-app button,.dashboard-app .scope-apply{border-color:#37e6ff;background:#10252b;color:#bff7ff}.dashboard-app button:hover{background:#16323a}.dashboard-app .tool-menu>summary{border-color:#293641;background:#0b0f14;color:#c8d5d2}.dashboard-app .tool-menu[open]>summary{border-color:#37e6ff}.dashboard-app .tool-menu-items,.dashboard-app .custom-window-form{border-color:#293641;background:#0b0e12;box-shadow:0 18px 50px rgba(0,0,0,.58)}.dashboard-app .tool-menu-items a,.dashboard-app .tool-menu-items button{color:#c8d5d2}.dashboard-app .tool-menu-items a:hover{background:#131a21}.dashboard-app .tool-menu-items hr{background:#202a34}
 .dashboard-app .window-links a,.dashboard-app .custom-window>summary{color:#91a09d}.dashboard-app .window-links a:hover,.dashboard-app .window-links a.active{background:rgba(55,230,255,.11);color:#70ecff}.dashboard-app .coverage-state:before{background:#6ee7b7;box-shadow:0 0 12px rgba(110,231,183,.38)}.dashboard-app .coverage-state[data-state="partial"]:before,.dashboard-app .coverage-state[data-state="unknown"]:before{background:#ffc268;box-shadow:0 0 12px rgba(255,194,104,.32)}
-.dashboard-app .metric-delta{background:#151b21;color:#94a39f}.dashboard-app .metric-delta.up{background:rgba(110,231,183,.11);color:#7cebbe}.dashboard-app .metric-delta.down{background:rgba(255,124,145,.11);color:#ff91a2}.dashboard-app .series-panel .chart-stage{background:#07090c}.dashboard-app .chart-legend{color:#a5b3b0}.dashboard-app .legend-tone-0{background:var(--series-1)}.dashboard-app .legend-tone-1{background:var(--series-2)}.dashboard-app .legend-tone-2{background:var(--series-3)}.dashboard-app .legend-tone-3{background:var(--series-4)}.dashboard-app .legend-tone-4{background:var(--series-5)}.dashboard-app .legend-tone-5{background:var(--series-6)}.dashboard-app .chart-fallback>summary{color:#899895}
+.dashboard-app .metric-delta{background:#151b21;color:#94a39f}.dashboard-app .metric-delta.up{background:rgba(110,231,183,.11);color:#7cebbe}.dashboard-app .metric-delta.down{background:rgba(255,124,145,.11);color:#ff91a2}.dashboard-app .series-panel .chart-stage{background:#07090c}.dashboard-app .time-series-chart:focus-visible{outline-color:rgba(55,230,255,.45)}.dashboard-app .chart-tooltip{border-color:#34434f;background:rgba(8,11,15,.97);box-shadow:0 16px 38px rgba(0,0,0,.58);color:#d8e2e0}.dashboard-app .chart-tooltip-date,.dashboard-app .chart-tooltip-value{color:#edf5f3}.dashboard-app .chart-tooltip-label{color:#a5b3b0}.dashboard-app .chart-tooltip-guide{background:rgba(112,236,255,.25)}.dashboard-app .chart-legend{color:#a5b3b0}.dashboard-app .legend-tone-0{background:var(--series-1)}.dashboard-app .legend-tone-1{background:var(--series-2)}.dashboard-app .legend-tone-2{background:var(--series-3)}.dashboard-app .legend-tone-3{background:var(--series-4)}.dashboard-app .legend-tone-4{background:var(--series-5)}.dashboard-app .legend-tone-5{background:var(--series-6)}.dashboard-app .chart-fallback>summary{color:#899895}
 .dashboard-app .rank-track,.dashboard-app .capture-track,.dashboard-app .funnel-track,.dashboard-app .country-track{background:#171e25}.dashboard-app .rank-fill,.dashboard-app .country-track>span{background:#37e6ff}.dashboard-app .capture-track>span,.dashboard-app .funnel-track i{background:#ff4fd8}.dashboard-app .index-stack{background:#4a391f}.dashboard-app .index-stack .indexed,.dashboard-app .index-legend .indexed{background:#b8f34a}.dashboard-app .index-stack .unindexed,.dashboard-app .index-legend .unindexed{background:#ffb44d}.dashboard-app .capture-meta span,.dashboard-app .rank-value small,.dashboard-app .search-summary-row,.dashboard-app .source-reading span,.dashboard-app .source-reading small{color:#899895}.dashboard-app .search-summary-row{border-top-color:#202a34}
 .dashboard-app .source-reading-grid{border-color:#202a34}.dashboard-app .source-reading{border-color:#202a34}.dashboard-app .data-details>summary{color:#b8c7c4}.dashboard-app .data-details>summary:after{color:#70ecff}.dashboard-app .data-details-body{border-top:1px solid #171f27}.dashboard-app .source-chip,.dashboard-app .capability-chip,.dashboard-app .graph-meta span{background:#151c23;color:#aebdba}
 .dashboard-app .health-item,.dashboard-app .pipeline-item,.dashboard-app .operation-card,.dashboard-app .decision-card,.dashboard-app .engagement-card,.dashboard-app .roadmap-card,.dashboard-app .attention-item,.dashboard-app .signal-item,.dashboard-app .chart-card,.dashboard-app .graph-disclosure,.dashboard-app .distance-item{border-color:#202a34;background:#0e1217}.dashboard-app .pipeline-value,.dashboard-app .decision-value,.dashboard-app .graph-disclosure strong{color:#d8e2e0!important}.dashboard-app .data-notices{border-color:#4a391f;background:#110e09}.dashboard-app .data-notices>summary{color:#ffc268}.dashboard-app .data-notices .alert,.dashboard-app .alert{border-color:#4a391f;background:#151006;color:#e9c994}.dashboard-app .alert-mark{background:#9d6828}.dashboard-app .attention-item[data-severity="clear"],.dashboard-app .signal-item[data-severity="clear"]{border-color:#24493b;background:#0b1713}.dashboard-app .attention-item[data-severity="review"],.dashboard-app .signal-item[data-severity="review"]{border-color:#4a391f;background:#151006}.dashboard-app .attention-item[data-severity="immediate"],.dashboard-app .signal-item[data-severity="immediate"]{border-color:#4a2931;background:#170c10}
@@ -468,6 +468,8 @@ JS = r"""
   const defaultColors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
   const integerFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+  const exactFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 4});
+  const tooltipDateFormat = new Intl.DateTimeFormat(undefined, {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"});
 
   function formatCountValue(number) {
     const magnitude = Math.abs(number);
@@ -515,6 +517,16 @@ JS = r"""
     }
     if (unit === "count") return formatCountValue(number);
     return format.format(number);
+  }
+
+  function formatTooltipValue(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "No value";
+    if (unit === "count") return integerFormat.format(Math.round(number));
+    if (unit === "ratio") return `${exactFormat.format(number * 100)}%`;
+    if (unit === "bytes") return `${integerFormat.format(Math.round(number))} B`;
+    if (unit === "seconds") return `${exactFormat.format(number)} s`;
+    return exactFormat.format(number);
   }
 
   function updateMetricOptions() {
@@ -576,12 +588,37 @@ JS = r"""
     const status = panel.querySelector("[data-chart-status]") || document.getElementById("chart-status");
     const liveStatus = panel.querySelector("[data-chart-live-status]") || document.getElementById("chart-live-status");
     const legend = panel.querySelector("[data-chart-legend]") || document.getElementById("chart-legend");
+    const stage = canvas.closest(".chart-stage");
+    let tooltip = stage?.querySelector("[data-chart-tooltip]");
+    let tooltipGuide = stage?.querySelector("[data-chart-tooltip-guide]");
+    if (stage && !tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.className = "chart-tooltip";
+      tooltip.dataset.chartTooltip = "";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.hidden = true;
+      stage.append(tooltip);
+    }
+    if (stage && !tooltipGuide) {
+      tooltipGuide = document.createElement("span");
+      tooltipGuide.className = "chart-tooltip-guide";
+      tooltipGuide.dataset.chartTooltipGuide = "";
+      tooltipGuide.setAttribute("aria-hidden", "true");
+      tooltipGuide.hidden = true;
+      stage.append(tooltipGuide);
+    }
     if (!series.length) {
       const context = canvas.getContext("2d");
       if (context) context.clearRect(0, 0, canvas.width, canvas.height);
       if (legend) legend.replaceChildren();
       canvas.onpointermove = null;
       canvas.onpointerleave = null;
+      canvas.onpointerdown = null;
+      canvas.onfocus = null;
+      canvas.onblur = null;
+      canvas.onkeydown = null;
+      if (tooltip) tooltip.hidden = true;
+      if (tooltipGuide) tooltipGuide.hidden = true;
       if (status) status.textContent = payload.availability_note || "No stored daily values match this selection.";
       if (liveStatus) liveStatus.textContent = status?.textContent || "No stored daily values match this selection.";
       canvas.dataset.rendered = "empty";
@@ -736,17 +773,89 @@ JS = r"""
       liveStatus.textContent = statusText;
     }
     canvas.dataset.rendered = "true";
+    const hideTooltip = () => {
+      if (tooltip) tooltip.hidden = true;
+      if (tooltipGuide) tooltipGuide.hidden = true;
+      if (status) status.textContent = statusText;
+      if (liveStatus) liveStatus.textContent = statusText;
+    };
+    const showTooltip = (index, pointerY) => {
+      index = Math.max(0, Math.min(dayCount - 1, index));
+      canvas._tooltipIndex = index;
+      const selectedDate = dateAt(index);
+      const values = series.map((item, seriesIndex) => {
+        const point = item.points.find(candidate => candidate.date === selectedDate);
+        return {
+          colorIndex: seriesIndex % colors.length,
+          label: payload.site_names[item.site_id] || item.site_id,
+          value: point ? formatTooltipValue(point.value, unit) : "No value",
+        };
+      });
+      const accessibleText = `${selectedDate} - ${values.map(item => `${item.label}: ${item.value}`).join(" - ")}`;
+      if (status) status.textContent = accessibleText;
+      if (liveStatus) liveStatus.textContent = accessibleText;
+      if (!tooltip || !tooltipGuide || !stage) return;
+
+      const dateLabel = document.createElement("strong");
+      dateLabel.className = "chart-tooltip-date";
+      dateLabel.textContent = tooltipDateFormat.format(new Date(`${selectedDate}T00:00:00Z`));
+      const valueList = document.createElement("div");
+      valueList.className = "chart-tooltip-values";
+      values.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "chart-tooltip-row";
+        const swatch = document.createElement("i");
+        swatch.className = `chart-tooltip-swatch legend-tone-${item.colorIndex}`;
+        swatch.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "chart-tooltip-label";
+        label.textContent = item.label;
+        const value = document.createElement("strong");
+        value.className = "chart-tooltip-value";
+        value.textContent = item.value;
+        row.append(swatch, label, value);
+        valueList.append(row);
+      });
+      tooltip.replaceChildren(dateLabel, valueList);
+      tooltip.hidden = false;
+      tooltipGuide.hidden = false;
+
+      const stageBounds = stage.getBoundingClientRect();
+      const canvasBounds = canvas.getBoundingClientRect();
+      const pointX = canvasBounds.left - stageBounds.left + xIndex(index);
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      const roomRight = stageBounds.width - pointX;
+      const preferredLeft = roomRight >= tooltipWidth + 24 ? pointX + 12 : pointX - tooltipWidth - 12;
+      const maxLeft = Math.max(8, stageBounds.width - tooltipWidth - 8);
+      const centeredTop = (pointerY ?? stageBounds.height / 2) - tooltipHeight / 2;
+      tooltip.style.left = `${Math.max(8, Math.min(maxLeft, preferredLeft))}px`;
+      tooltip.style.top = `${Math.max(8, Math.min(stageBounds.height - tooltipHeight - 8, centeredTop))}px`;
+      tooltipGuide.style.left = `${Math.max(margin.left, Math.min(stageBounds.width - margin.right, pointX))}px`;
+    };
     canvas.onpointermove = event => {
       const bounds = canvas.getBoundingClientRect();
-      const index = Math.max(0, Math.min(dayCount - 1, Math.round((event.clientX - bounds.left - margin.left) / plotWidth * (dayCount - 1))));
-      const selectedDate = dateAt(index);
-      const values = series.map(item => {
-        const point = item.points.find(candidate => candidate.date === selectedDate);
-        return `${payload.site_names[item.site_id] || item.site_id}: ${point ? formatMetricValue(point.value, unit) : "no value"}`;
-      });
-      if (status) status.textContent = `${selectedDate} - ${values.join(" - ")}`;
+      const index = Math.round((event.clientX - bounds.left - margin.left) / plotWidth * (dayCount - 1));
+      showTooltip(index, event.clientY - (stage?.getBoundingClientRect().top || bounds.top));
     };
-    canvas.onpointerleave = () => { if (status) status.textContent = statusText; };
+    canvas.onpointerdown = canvas.onpointermove;
+    canvas.onpointerleave = hideTooltip;
+    canvas.onfocus = () => showTooltip(canvas._tooltipIndex ?? dayCount - 1);
+    canvas.onblur = hideTooltip;
+    canvas.onkeydown = event => {
+      const currentIndex = canvas._tooltipIndex ?? dayCount - 1;
+      const nextIndex = event.key === "ArrowLeft" ? currentIndex - 1
+        : event.key === "ArrowRight" ? currentIndex + 1
+        : event.key === "Home" ? 0
+        : event.key === "End" ? dayCount - 1
+        : null;
+      if (nextIndex !== null) {
+        event.preventDefault();
+        showTooltip(nextIndex);
+      } else if (event.key === "Escape") {
+        hideTooltip();
+      }
+    };
   }
 
   async function loadChart(canvas) {
@@ -4991,7 +5100,7 @@ def handler_factory(config, store, credentials=None):
                 f'<p class="eyebrow">Daily trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Attention over time"}</h2>'
                 f'<p class="metric-description">{_e(description)}</p></div>'
                 f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}{surface_context if selected_source == "search-console" else ""}</span></div>'
-                f'<div class="chart-stage"><div class="chart-status" id="chart-status">Loading stored series...</div><span class="sr-only" id="chart-live-status" role="status" aria-live="polite">Loading stored series...</span><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
+                f'<div class="chart-stage"><div class="chart-status" id="chart-status">Loading stored series...</div><span class="sr-only" id="chart-live-status" role="status" aria-live="polite">Loading stored series...</span><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" tabindex="0" aria-describedby="chart-live-status" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
                 '<ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>'
                 '<p class="plot-note">Missing provider dates remain blank.</p>'
                 f'<details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>'
@@ -5111,7 +5220,7 @@ def handler_factory(config, store, credentials=None):
                         f'<div class="chart-status" data-chart-status{status_id}>Loading series</div>'
                         f'<span class="sr-only" data-chart-live-status{live_id} role="status" aria-live="polite">Loading series</span>'
                         f'<canvas class="time-series-chart"{canvas_id} data-series-url="{_e(overview_series_url(metric, source))}" data-area-fill="true" '
-                        f'role="img" aria-label="{_e(title)}"></canvas></div>'
+                        f'role="img" tabindex="0" aria-label="{_e(title)}"></canvas></div>'
                         f'<ul class="chart-legend" data-chart-legend{legend_id} aria-label="Property legend"></ul>'
                         f'<details class="chart-fallback"><summary>Daily values</summary>{_chart_html(result, metric, site_names)}</details>'
                         '</section>'
