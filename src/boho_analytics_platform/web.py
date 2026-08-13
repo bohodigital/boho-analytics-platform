@@ -341,24 +341,24 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
-    ("Search Console clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
     ("Umami page views", ("umami.pageviews",), "Page views recorded by Umami"),
-    ("Durable leads", ("forms.submissions",), "Accepted records in the forms database"),
+    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
+    ("Search impressions", ("search.impressions",), "Google Search Console result impressions"),
+    ("Search clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
 )
 
 TRAFFIC_SUMMARY = (
     ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
-    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
-    ("Umami visitors", ("umami.visitors",), "Unique within each exact provider window; summed by site"),
-    ("GA active-user days", ("google.active-users",), "Daily active users summed; not unique across days"),
+    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
+    ("Umami visitors", ("umami.visitors",), "Unique visitors within each provider window"),
+    ("GA4 sessions", ("google.sessions",), "Sessions recorded by Google Analytics"),
 )
 
 SEARCH_SUMMARY = (
-    ("Search Console impressions", ("search.impressions",), "Search result visibility on the selected Search Console surface"),
-    ("Search Console clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("Search Console CTR", ("search.ctr",), "Clicks divided by impressions"),
-    ("Search Console average position", ("search.position",), "Impression-weighted result position; lower is better"),
+    ("Impressions", ("search.impressions",), "Search result visibility on the selected Search Console surface"),
+    ("Clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
+    ("CTR", ("search.ctr",), "Clicks divided by impressions"),
+    ("Average position", ("search.position",), "Impression-weighted result position; lower is better"),
 )
 
 FORMS_SUMMARY = (
@@ -416,6 +416,10 @@ body{background:#f2f5f3;font-size:14px}.topbar{position:sticky;top:0;z-index:10;
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
 WIDTH_CLASSES = "".join(f".p-{level}{{width:{level}%}}" for level in range(101))
+HEATMAP_CLASSES = "".join(
+    f".heatmap-grid.days-{days}{{grid-template-columns:minmax(112px,auto) repeat({days},minmax(24px,1fr))}}"
+    for days in range(1, 367)
+)
 GEOGRAPHY_CSS = """
 .geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
 @media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
@@ -425,7 +429,12 @@ INDEX_COVERAGE_CSS = """
 .index-coverage-panel{margin-bottom:12px}.index-coverage-panel .panel-heading{padding:18px 18px 0}.index-coverage-table td{vertical-align:middle}.index-value{display:block;color:var(--ink);font-size:16px;font-weight:850}.index-note{display:block;max-width:320px;white-space:normal;color:var(--muted);font-size:10px;font-weight:700}.index-pct{font-size:20px;font-weight:900;color:var(--green)}.index-pending{color:var(--amber);font-size:12px;font-weight:800}.index-meter{width:130px;height:6px;margin-top:5px;overflow:hidden;border-radius:999px;background:#e5ebe7}.index-meter>span{display:block;height:100%;border-radius:inherit;background:#e7a94e}.index-coverage-table tr[data-state="complete"] .index-meter>span{background:#4caf88}.index-method{margin:0;padding:12px 18px 16px;border-top:1px solid #ecebe6;color:var(--muted);font-size:11px}.index-method strong{color:var(--ink-2)}
 @media(max-width:760px){.index-coverage-table{min-width:760px}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
+DASHBOARD_VISUAL_CSS = """
+.visual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}.visual-panel{padding:18px}.visual-panel .panel-heading{margin-bottom:16px}.visual-panel .panel-heading p{max-width:620px}.rank-list{display:grid;gap:13px}.rank-row{display:grid;grid-template-columns:minmax(125px,.7fr) minmax(170px,1.3fr) auto;gap:12px;align-items:center}.rank-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:800}.rank-track{height:12px;overflow:hidden;border-radius:999px;background:#e9eeeb}.rank-fill{display:block;height:100%;border-radius:inherit;background:#277962}.rank-fill.search{background:#e96d3c}.rank-fill.indexed{background:#277962}.rank-fill.unindexed{background:#e6b15e}.rank-value{text-align:right;font-size:12px;font-weight:850}.rank-value small{display:block;color:var(--muted);font-size:10px;font-weight:700}.heatmap{overflow-x:auto}.heatmap-grid{display:grid;gap:4px;align-items:center;min-width:520px}.heat-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800}.heat-date{color:var(--muted);font-size:9px;text-align:center}.heat-cell{display:block;aspect-ratio:1.1;border-radius:5px;background:#edf2ef}.heat-1{background:#d6ebe2}.heat-2{background:#a9d7c5}.heat-3{background:#70b99d}.heat-4{background:#378c70}.heat-5{background:#146149}.visual-legend{display:flex;justify-content:flex-end;gap:4px;align-items:center;margin-top:10px;color:var(--muted);font-size:10px}.visual-legend i{width:14px;height:8px;border-radius:3px;background:#edf2ef}.visual-legend i:nth-of-type(2){background:#a9d7c5}.visual-legend i:nth-of-type(3){background:#146149}.capture-row{display:grid;gap:7px}.capture-meta{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.capture-meta b{font-size:12px}.capture-meta span{color:var(--muted);font-size:10px;font-weight:750}.capture-track{height:10px;overflow:hidden;border-radius:999px;background:#f0eee8}.capture-track>span{display:block;height:100%;border-radius:inherit;background:#e96d3c}.index-stack{display:flex;height:13px;overflow:hidden;border-radius:999px;background:#e6b15e}.index-stack .indexed{height:100%;background:#277962}.index-stack .unindexed{height:100%;background:#e6b15e}.visual-footnote{margin:14px 0 0;color:var(--muted);font-size:10px}.signal-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}.signal-item{min-width:0;padding:11px 13px;border:1px solid #dce4df;border-radius:12px;background:#fff}.signal-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.signal-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.signal-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.signal-item span{display:block;color:var(--muted);font-size:9px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}.signal-item b{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:12px}.attention-panel{display:none}.index-coverage-panel{display:none}.performance-panel{display:none}.kpi-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kpi-note .sr-only{white-space:normal}.evidence-body>.index-coverage-panel,.evidence-body>.performance-panel{display:block}.evidence-bundle>summary h2{font-size:15px}.evidence-bundle>summary p{font-size:11px}.chart-panel .plot-note{margin-top:8px}.chart-panel .metric-description{font-size:12px}.chart-panel .panel-heading{margin-bottom:12px}
+@media(max-width:900px){.visual-grid{grid-template-columns:1fr}.signal-strip{grid-template-columns:1fr 1fr}.signal-item:last-child:nth-child(odd){grid-column:1/-1}}
+@media(max-width:620px){.visual-panel{padding:15px}.rank-row{grid-template-columns:minmax(92px,.75fr) minmax(100px,1.25fr) auto;gap:8px}.signal-strip{grid-template-columns:1fr}.signal-item:last-child:nth-child(odd){grid-column:auto}.kpi-note{font-size:10px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
@@ -1569,11 +1578,25 @@ def _summary_cards(result, expected_metrics, site_names=None):
         comparison_state = (
             "available" if total and total.get("comparison_available") else "unavailable"
         )
+        context_parts = []
+        if total and total.get("source") and total.get("source") != "mixed":
+            context_parts.append(_source_label(total["source"]))
+        elif observed:
+            context_parts.append("Stored data")
+        if selected_metric.startswith("search.") and result.get("search_type"):
+            context_parts.append(_search_type_label(result["search_type"]))
+        if partial:
+            context_parts.append("partial coverage")
+        elif observed:
+            context_parts.append("complete coverage")
+        else:
+            context_parts.append("not observed")
+        visible_context = " · ".join(context_parts)
         cards.append(
             f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}" '
             f'data-unit="{_e(unit)}" data-source="{_e(source_id or "unavailable")}" '
             f'data-comparison="{comparison_state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
-            f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
+            f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(visible_context)}<span class="sr-only">. {_e(detail)}</span></p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
 
@@ -2219,6 +2242,168 @@ def _index_coverage_html(result, site_names):
         f'<tbody>{"".join(rows)}</tbody></table></div>'
         '<p class="index-method"><strong>Definition:</strong> published pages are unique same-host URLs in the current sitemap tree. Indexed pages are URLs whose fresh Google URL Inspection verdict is PASS. The percentage is withheld until the current inventory is fully inspected; Google can lag live changes.</p></section>'
     )
+
+
+def _site_metric_row(result, site_id, metric):
+    matches = [
+        row for row in result.get("rows", [])
+        if row.get("site_id") == site_id and row.get("metric") == metric
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _ranked_metric_visual(result, site_names, metric, *, title, subtitle, fill_class=""):
+    items = []
+    for site_id in result.get("site_ids", []):
+        row = _site_metric_row(result, site_id, metric)
+        if row is not None and row.get("value") is not None:
+            items.append((site_id, float(row["value"]), row.get("unit", "count")))
+    if not items:
+        return ""
+    items.sort(key=lambda item: item[1], reverse=True)
+    maximum = max((item[1] for item in items), default=0) or 1
+    total = sum(item[1] for item in items)
+    rows = []
+    for site_id, value, unit in items:
+        width = max(1, min(100, round(value / maximum * 100))) if value else 0
+        share = value / total * 100 if total else 0
+        rows.append(
+            '<div class="rank-row">'
+            f'<span class="rank-name" title="{_e(site_names.get(site_id, site_id))}">{_e(site_names.get(site_id, site_id))}</span>'
+            f'<span class="rank-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {_e(_format_value(value, unit))}"><span class="rank-fill {_e(fill_class)} p-{width}"></span></span>'
+            f'<span class="rank-value">{_e(_format_value(value, unit))}<small>{share:.1f}% share</small></span></div>'
+        )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="property-attention-title">'
+        f'<div class="panel-heading"><div><h2 id="property-attention-title">{_e(title)}</h2><p>{_e(subtitle)}</p></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
+    )
+
+
+def _search_capture_visual(result, site_names):
+    items = []
+    for site_id in result.get("site_ids", []):
+        impressions = _site_metric_row(result, site_id, "search.impressions")
+        clicks = _site_metric_row(result, site_id, "search.clicks")
+        if impressions is None or impressions.get("value") is None:
+            continue
+        impression_value = float(impressions["value"])
+        click_value = float(clicks["value"]) if clicks and clicks.get("value") is not None else 0
+        ctr = click_value / impression_value * 100 if impression_value else 0
+        items.append((site_id, impression_value, click_value, ctr))
+    if not items:
+        return ""
+    items.sort(key=lambda item: item[1], reverse=True)
+    maximum = max((item[1] for item in items), default=0) or 1
+    rows = []
+    for site_id, impressions, clicks, ctr in items:
+        width = max(1, min(100, round(impressions / maximum * 100))) if impressions else 0
+        rows.append(
+            '<div class="capture-row">'
+            '<div class="capture-meta">'
+            f'<b>{_e(site_names.get(site_id, site_id))}</b>'
+            f'<span>{impressions:,.0f} impressions · {clicks:,.0f} clicks · {ctr:.2f}% CTR</span></div>'
+            f'<span class="capture-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {impressions:,.0f} search impressions and {clicks:,.0f} clicks"><span class="p-{width}"></span></span></div>'
+        )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
+        '<div class="panel-heading"><div><h2 id="search-capture-title">Search demand &amp; capture</h2>'
+        '<p>Google visibility ranked by property, with clicks and CTR shown on the same row.</p></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div>'
+        '<p class="visual-footnote">Bar length compares impressions. CTR is clicks divided by impressions for the selected Search Console surface.</p></section>'
+    )
+
+
+def _daily_attention_heatmap(result, site_names, metric="umami.pageviews"):
+    series = [item for item in result.get("series", []) if item.get("metric") == metric]
+    if not series:
+        return ""
+    dates = sorted({point["date"] for item in series for point in item.get("points", [])})
+    if not dates:
+        return ""
+    values = [float(point["value"]) for item in series for point in item.get("points", [])]
+    maximum = max(values, default=0) or 1
+    by_site = {item["site_id"]: {point["date"]: float(point["value"]) for point in item.get("points", [])} for item in series}
+    cells = ['<span class="heat-label" aria-hidden="true"></span>']
+    cells.extend(f'<span class="heat-date">{_e(date[5:])}</span>' for date in dates)
+    for site_id in result.get("site_ids", []):
+        if site_id not in by_site:
+            continue
+        name = site_names.get(site_id, site_id)
+        cells.append(f'<span class="heat-label" title="{_e(name)}">{_e(name)}</span>')
+        for date in dates:
+            value = by_site[site_id].get(date)
+            level = 0 if value is None or value <= 0 else max(1, min(5, round(value / maximum * 5)))
+            label = "not reported" if value is None else _format_value(value)
+            cells.append(
+                f'<span class="heat-cell heat-{level}" role="img" aria-label="{_e(name)}, {_e(date)}: {_e(label)}" title="{_e(name)} · {_e(date)} · {_e(label)}"></span>'
+            )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="attention-heatmap-title">'
+        '<div class="panel-heading"><div><h2 id="attention-heatmap-title">Daily attention</h2>'
+        '<p>Umami page-view intensity by property and day. Blank cells are not reported.</p></div></div>'
+        f'<div class="heatmap"><div class="heatmap-grid days-{len(dates)}">{"".join(cells)}</div></div>'
+        '<div class="visual-legend"><span>Lower</span><i></i><i></i><i></i><span>Higher</span></div></section>'
+    )
+
+
+def _index_coverage_visual(result, site_names):
+    properties = (result.get("index_coverage") or {}).get("properties") or []
+    if not properties:
+        return ""
+    rows = []
+    for item in sorted(properties, key=lambda value: float(value.get("indexed_percentage") or -1), reverse=True):
+        published = item.get("published_pages")
+        indexed = item.get("indexed_pages")
+        percentage = item.get("indexed_percentage")
+        if published is None or indexed is None or percentage is None:
+            value_html = '<span class="rank-value">Pending<small>census incomplete</small></span>'
+            bar_html = '<span class="index-stack" role="img" aria-label="Index percentage withheld"></span>'
+        else:
+            indexed_width = max(0, min(100, round(float(percentage))))
+            unindexed_width = 100 - indexed_width
+            value_html = f'<span class="rank-value">{float(percentage):.2f}%<small>{int(indexed):,} / {int(published):,} pages</small></span>'
+            bar_html = (
+                f'<span class="index-stack" role="img" aria-label="{int(indexed):,} of {int(published):,} published pages indexed">'
+                f'<span class="indexed p-{indexed_width}"></span><span class="unindexed p-{unindexed_width}"></span></span>'
+            )
+        name = site_names.get(item["site_id"], item["site_id"])
+        rows.append(f'<div class="rank-row"><span class="rank-name" title="{_e(name)}">{_e(name)}</span>{bar_html}{value_html}</div>')
+    return (
+        '<section class="panel visual-panel" aria-labelledby="index-visual-title">'
+        '<div class="panel-heading"><div><h2 id="index-visual-title">Google index coverage</h2>'
+        '<p>Indexed and unindexed pages in each property’s current sitemap inventory.</p></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div>'
+        '<p class="visual-footnote">Green = indexed. Gold = published but not indexed. Complete URL Inspection census only.</p></section>'
+    )
+
+
+def _signal_strip_html(support):
+    if not support:
+        return ""
+    items = support.get("attention_items", [])[:3]
+    if not items:
+        return ""
+    cards = "".join(
+        f'<div class="signal-item" data-severity="{_e(item.get("severity", "review"))}"><span>{_e(item.get("severity", "review"))}</span><b title="{_e(item.get("evidence", ""))}">{_e(item.get("title", "Review data"))}</b></div>'
+        for item in items
+    )
+    return f'<section class="signal-strip" aria-label="Current data signals">{cards}</section>'
+
+
+def _dashboard_visuals_html(result, site_names):
+    traffic = _ranked_metric_visual(
+        result, site_names, "umami.pageviews",
+        title="Attention by property",
+        subtitle="Umami page views and each property’s share of the portfolio total.",
+    )
+    search = _search_capture_visual(result, site_names)
+    heatmap = _daily_attention_heatmap(result, site_names)
+    index = _index_coverage_visual(result, site_names)
+    panels = [item for item in (traffic, search, heatmap, index) if item]
+    return f'<div class="visual-grid">{"".join(panels)}</div>' if panels else ""
+
+
 def _provider_comparisons_html(result, site_names):
     comparisons = result.get("provider_comparisons", [])
     if not comparisons:
@@ -4502,6 +4687,12 @@ def handler_factory(config, store, credentials=None):
                 "" if is_plot
                 else _decision_overview_html(result.get("decision_support"))
             )
+            signal_html = (
+                "" if is_plot else _signal_strip_html(result.get("decision_support"))
+            )
+            visuals_html = (
+                "" if is_plot else _dashboard_visuals_html(result, site_names)
+            )
             decision_html = (
                 "" if is_plot
                 else _decision_support_html(result.get("decision_support"), site_names)
@@ -4521,17 +4712,17 @@ def handler_factory(config, store, credentials=None):
             )
             chart_panel = (
                 '<section class="panel chart-panel"><div class="panel-heading"><div>'
-                f'<p class="eyebrow">Primary trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Daily trend"}</h2>'
-                f'<p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div>'
+                f'<p class="eyebrow">Daily trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Attention over time"}</h2>'
+                f'<p class="metric-description">{_e(description)}</p></div>'
                 f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}{surface_context if selected_source == "search-console" else ""}</span></div>'
                 f'<div class="chart-stage"><div class="chart-status" id="chart-status">Loading stored series...</div><span class="sr-only" id="chart-live-status" role="status" aria-live="polite">Loading stored series...</span><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
                 '<ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>'
-                '<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p>'
+                '<p class="plot-note">Missing provider dates remain blank.</p>'
                 f'<details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>'
             )
             primary_content = (
                 chart_panel if is_plot
-                else f'<div class="dashboard-primary">{chart_panel}{attention_html}</div>'
+                else f'{signal_html}<div class="dashboard-primary">{chart_panel}{attention_html}</div>{visuals_html}'
             )
             geography_html = ""
             if not is_plot:
@@ -4550,11 +4741,11 @@ def handler_factory(config, store, credentials=None):
             evidence_parts = (
                 supporting_html
                 if is_plot
-                else provider_comparison_html + geography_html + decision_html + supporting_html
+                else performance_html + index_coverage_html + provider_comparison_html + geography_html + decision_html + supporting_html
             )
             evidence_html = (
                 '<details class="panel evidence-panel evidence-bundle"><summary class="panel-heading">'
-                '<div><h2>Evidence and diagnostics</h2><p>Provider comparisons, geography, decision calculations, freshness, forms, and row-level totals.</p></div>'
+                '<div><h2>Data quality &amp; detail</h2><p>Definitions, provider checks, geography, freshness, and row-level totals.</p></div>'
                 f'</summary><div class="evidence-body">{evidence_parts}</div></details>'
                 if evidence_parts else ""
             )
@@ -4586,7 +4777,7 @@ def handler_factory(config, store, credentials=None):
 {source_field}<label class="field"><span>{'Metric' if is_plot else 'Primary chart'}</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{search_type_field}{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{index_coverage_html}{primary_content}{performance_html}{evidence_html}
+{_warnings_html(result['warnings'])}{summary_html}{primary_content}{evidence_html}
 <footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 

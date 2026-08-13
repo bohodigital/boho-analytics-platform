@@ -27,6 +27,7 @@ from boho_analytics_platform.web import (
     _chart_html,
     _coverage_summary_html,
     _decision_badge,
+    _dashboard_visuals_html,
     _forms_html,
     _metrics_table,
     _performance_by_site_html,
@@ -184,12 +185,46 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("sources reporting", body)
         self.assertNotIn('<span class="live-dot">', body)
         self.assertIn("Performance by site", body)
+        self.assertIn("Attention by property", body)
+        self.assertIn("Daily attention", body)
+        self.assertIn("Data quality &amp; detail", body)
+        self.assertLess(body.index("Attention by property"), body.index("Performance by site"))
         self.assertIn('class="panel evidence-panel evidence-bundle"', body)
         self.assertIn('aria-current="page"', body)
         self.assertIn('<span>Primary chart: Umami page views</span>', body)
         self.assertIn('name="search_type"', body)
         self.assertIn('data-search-type="web"', body)
         self.assertNotIn("source=umami&amp;search_type=", body)
+
+    def test_dashboard_visuals_state_exact_metric_definitions(self):
+        result = {
+            "site_ids": ["one", "two"],
+            "rows": [
+                {"site_id": "one", "metric": "umami.pageviews", "value": 80, "unit": "count"},
+                {"site_id": "two", "metric": "umami.pageviews", "value": 20, "unit": "count"},
+                {"site_id": "one", "metric": "search.impressions", "value": 1000, "unit": "count"},
+                {"site_id": "one", "metric": "search.clicks", "value": 25, "unit": "count"},
+            ],
+            "series": [{
+                "site_id": "one", "metric": "umami.pageviews", "unit": "count",
+                "points": [{"date": "2026-07-01", "value": 80}],
+            }],
+            "index_coverage": {"properties": [{
+                "site_id": "one", "published_pages": 200,
+                "indexed_pages": 150, "indexed_percentage": 75.0,
+            }]},
+        }
+
+        html = _dashboard_visuals_html(result, {"one": "One", "two": "Two"})
+
+        self.assertIn("Attention by property", html)
+        self.assertIn("80.0% share", html)
+        self.assertIn("Daily attention", html)
+        self.assertIn("Search demand &amp; capture", html)
+        self.assertIn("1,000 impressions · 25 clicks · 2.50% CTR", html)
+        self.assertIn("Google index coverage", html)
+        self.assertIn("150 / 200 pages", html)
+        self.assertIn("Green = indexed. Gold = published but not indexed", html)
 
     def test_geography_source_switch_refreshes_claims_and_limits_live_region_noise(self):
         status, _headers, body = self.request(
@@ -875,13 +910,13 @@ metric_groups = ["traffic"]
         result = {
             "subreport_id": "traffic",
             "rows": [{
-                "metric": "google.active-users", "site_id": "example-site",
+                "metric": "google.sessions", "site_id": "example-site",
                 "source": "google-analytics", "unit": "count", "value": 7,
                 "previous_value": None,
             }],
             "summary_totals": {
-                "google.active-users": {
-                    "metric": "google.active-users", "source": "google-analytics",
+                "google.sessions": {
+                    "metric": "google.sessions", "source": "google-analytics",
                     "unit": "count", "aggregation": "sum", "value": 7,
                     "previous_value": None, "change_percent": None,
                     "coverage_status": "complete", "comparison_available": False,
@@ -889,11 +924,11 @@ metric_groups = ["traffic"]
             },
             "forms_pipeline": None,
         }
-        html = _summary_cards(result, ("umami.visitors", "google.active-users"))
+        html = _summary_cards(result, ("umami.visitors", "google.sessions"))
         self.assertIn("Umami visitors", html)
-        self.assertIn("GA active-user days", html)
+        self.assertIn("GA4 sessions", html)
         self.assertIn('data-metric="umami.visitors" data-state="unknown"', html)
-        self.assertIn('data-metric="google.active-users" data-state="observed"', html)
+        self.assertIn('data-metric="google.sessions" data-state="observed"', html)
 
     def test_search_cards_use_weighted_portfolio_totals_not_summed_site_rates(self):
         result = {
