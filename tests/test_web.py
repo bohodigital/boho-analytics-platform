@@ -30,6 +30,7 @@ from boho_analytics_platform.web import (
     _dashboard_visuals_html,
     _forms_html,
     _metrics_table,
+    _overview_cards_html,
     _performance_by_site_html,
     _provider_comparisons_html,
     _snapshot_status_text,
@@ -165,35 +166,31 @@ class WebTests(unittest.TestCase):
 
     def test_dashboard_is_server_rendered_and_has_security_headers(self):
         status, headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
-        self.assertEqual(status, 200); self.assertIn("Forms delivery", body); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertEqual(status, 200); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
         self.assertIn("camera=()", headers["Permissions-Policy"]); self.assertIn("microphone=()", headers["Permissions-Policy"])
-        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
+        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn('src="/assets/app.js"', body)
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
-        self.assertIn('id="geography-map"', body)
-        self.assertIn("Umami visits by geography", body)
-        self.assertNotIn("World visitor geography", body)
-        self.assertIn("County boundaries are orientation only", body)
+        self.assertIn('class="dashboard-app"', body)
+        self.assertIn('<h1>All properties</h1>', body)
+        self.assertIn('id="property-selector" name="site"', body)
+        self.assertIn('<option value="all" selected>All properties</option>', body)
+        self.assertNotIn('class="report-nav"', body)
+        self.assertNotIn('class="subnav"', body)
+        self.assertNotIn("Forms delivery", body)
+        self.assertNotIn('id="geography-map"', body)
         self.assertIn("Provider pageview comparison", body)
         self.assertIn('aria-label="GA4 and Umami pageview comparability"', body)
         self.assertIn("Non comparable", body)
         self.assertNotIn(">0 paired dates<", body)
-        self.assertIn("Report coverage", body)
-        self.assertIn("3 of 3 expected cells", body)
-        self.assertNotIn("Data confidence", body)
-        self.assertNotIn("Trusted window", body)
-        self.assertNotIn("sources reporting", body)
-        self.assertNotIn('<span class="live-dot">', body)
-        self.assertIn("Performance by site", body)
-        self.assertIn("Attention by property", body)
-        self.assertIn("Daily attention", body)
-        self.assertIn("Data quality &amp; detail", body)
-        self.assertLess(body.index("Attention by property"), body.index("Performance by site"))
-        self.assertIn('class="panel evidence-panel evidence-bundle"', body)
-        self.assertIn('aria-current="page"', body)
-        self.assertIn('<span>Primary chart: Umami page views</span>', body)
+        self.assertIn("Core feeds 100%", body)
+        self.assertIn("Page views over time", body)
+        self.assertIn("Traffic by property", body)
+        self.assertIn("Index coverage", body)
+        self.assertIn("Data details", body)
+        self.assertIn('data-metric="umami.visits" data-state="unavailable"', body)
+        self.assertIn("No exact-window total stored", body)
         self.assertIn('name="search_type"', body)
-        self.assertIn('data-search-type="web"', body)
         self.assertNotIn("source=umami&amp;search_type=", body)
 
     def test_dashboard_visuals_state_exact_metric_definitions(self):
@@ -217,36 +214,52 @@ class WebTests(unittest.TestCase):
 
         html = _dashboard_visuals_html(result, {"one": "One", "two": "Two"})
 
-        self.assertIn("Attention by property", html)
+        self.assertIn("Traffic by property", html)
         self.assertIn("80.0% share", html)
-        self.assertIn("Daily attention", html)
-        self.assertIn("Search demand &amp; capture", html)
-        self.assertIn("1,000 impressions · 25 clicks · 2.50% CTR", html)
-        self.assertIn("Google index coverage", html)
-        self.assertIn("150 / 200 pages", html)
-        self.assertIn("Green = indexed. Gold = published but not indexed", html)
+        self.assertNotIn("Daily attention", html)
+        self.assertIn("Search performance", html)
+        self.assertIn("<strong>1,000</strong>", html)
+        self.assertIn("<b>2.50%</b> CTR", html)
+        self.assertIn("Index coverage", html)
+        self.assertIn("150 indexed / 200 pages", html)
+        self.assertIn(">Indexed</span>", html)
+        self.assertIn(">Not indexed</span>", html)
+
+    def test_overview_cards_do_not_confuse_missing_prior_with_missing_current_value(self):
+        result = {
+            "summary_totals": {
+                "umami.visits": {
+                    "metric": "umami.visits", "source": "umami", "unit": "count",
+                    "value": 215, "previous_value": None, "change_percent": None,
+                    "coverage_status": "complete", "comparison_available": False,
+                },
+            },
+            "index_coverage": {"properties": []},
+        }
+
+        html = _overview_cards_html(result)
+
+        self.assertIn('data-metric="umami.visits" data-state="observed"', html)
+        self.assertIn('<strong>215</strong><small>Umami</small>', html)
+        self.assertNotIn("Prior unavailable", html)
+        self.assertNotIn("Unknown", html)
 
     def test_geography_source_switch_refreshes_claims_and_limits_live_region_noise(self):
+        self.store.upsert([total_point(
+            client_id="example-client", site_id="example-site", source="umami",
+            metric="umami.country-visits", unit="count",
+            start=datetime(2026, 7, 1, tzinfo=UTC), end=datetime(2026, 7, 2, tzinfo=UTC),
+            value=7, dimensions={"country_code": "US", "country_code_system": "iso-alpha2"},
+        )])
         status, _headers, body = self.request(
             "/?report=summary&start=2026-07-01&end=2026-07-02"
         )
 
         self.assertEqual(status, 200)
-        self.assertIn('id="geography-source-metric"', body)
-        self.assertIn('id="geography-suppression"', body)
-        self.assertIn('id="geography-method"', body)
-        self.assertIn('id="geography-county-note"', body)
-        self.assertIn('id="geography-region-note"', body)
-        self.assertIn('id="geography-status" aria-live="off"', body)
-        self.assertNotIn('id="geography-status" role="status"', body)
-        self.assertIn(
-            'id="geography-announcement" role="status" aria-live="polite"',
-            body,
-        )
-        self.assertIn(
-            "Umami visits; metric umami.country-visits; exact-window aggregation.",
-            body,
-        )
+        self.assertIn("Audience by country", body)
+        self.assertIn("Umami visits", body)
+        self.assertIn('aria-label="US: 7 Umami visits"', body)
+        self.assertNotIn('id="geography-map"', body)
 
         script = self.request("/assets/app.js")[2]
         self.assertIn("function updateGeographyDisclosures(payload)", script)
@@ -293,31 +306,24 @@ class WebTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 200)
-        self.assertIn("Decision summary", body)
-        self.assertIn("What needs attention", body)
-        self.assertIn("Engagement and lead health", body)
-        self.assertIn("Site pulse", body)
-        self.assertIn("Data operations", body)
-        self.assertIn("Measurement roadmap", body)
-        self.assertIn("not attribution", body)
-        self.assertIn("Scope: Example Site", body)
-        self.assertIn("Qualified leads and revenue", body)
-        self.assertIn("Core Web Vitals and errors", body)
+        self.assertNotIn("Decision summary", body)
+        self.assertNotIn("What needs attention", body)
+        self.assertNotIn("Measurement roadmap", body)
+        self.assertNotIn("Qualified leads and revenue", body)
+        self.assertIn("All properties", body)
+        self.assertIn("Current window summary", body)
+        self.assertIn("Page views over time", body)
+        self.assertIn("Traffic by property", body)
         self.assertIn('<th scope="row" class="metric-name">Example Site</th>', body)
-        self.assertIn('<caption class="sr-only">Per-site decision metrics and data coverage</caption>', body)
-        self.assertIn('<th scope="col">Umami visits</th>', body)
-        self.assertIn('class="attention-severity">Review</p>', body)
-        self.assertIn("no capability snapshot", body)
-        self.assertIn('class="dashboard-primary"', body)
-        self.assertIn('class="trust-card" data-state="complete"', body)
-        self.assertIn('class="panel attention-panel"', body)
-        self.assertIn('class="panel control-panel"', body)
-        self.assertNotIn('class="panel control-panel" open', body)
-        self.assertIn('class="panel decision-panel evidence-panel"', body)
+        self.assertNotIn('<caption class="sr-only">Per-site decision metrics and data coverage</caption>', body)
+        self.assertNotIn('class="attention-severity">Review</p>', body)
+        self.assertNotIn("no capability snapshot", body)
+        self.assertNotIn('class="dashboard-primary"', body)
+        self.assertNotIn('class="panel control-panel"', body)
+        self.assertIn('class="panel data-details"', body)
         self.assertIn('style=line', body)
         self.assertIn('id="chart-live-status" role="status"', body)
         self.assertNotIn('id="chart-status" role="status"', body)
-        self.assertIn('<details class="data-notices">', body)
         payload = json.loads(self.request(
             "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
         )[2])
@@ -351,7 +357,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("Private provider detail", repr(support))
         self.assertEqual(support["capabilities"][0]["warning_count"], 1)
 
-    def test_portfolio_summary_uses_loaded_decision_metrics(self):
+    def test_portfolio_summary_does_not_pull_metrics_outside_report_definition(self):
         self.store.upsert([MetricPoint(
             "example-client", "example-site", "fixture", "umami.visits",
             "count", datetime(2026, 7, 1, tzinfo=UTC),
@@ -366,10 +372,10 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertIn(
-            '<article class="kpi-card" data-metric="umami.visits" data-state="observed"',
+            '<article class="overview-metric" data-metric="umami.visits" data-state="unavailable"',
             body,
         )
-        self.assertIn('<strong class="kpi-value">7</strong>', body)
+        self.assertIn("No exact-window total stored", body)
 
     def test_complete_kpi_discloses_configured_subset_of_report_sites(self):
         result = {
@@ -525,17 +531,16 @@ class WebTests(unittest.TestCase):
     def test_decision_support_mobile_css_collapses_without_page_overflow(self):
         css = self.request("/assets/app.css")[2]
 
-        self.assertIn(".decision-grid", css)
-        self.assertIn(".attention-list", css)
-        self.assertIn(".roadmap-grid", css)
-        self.assertIn(".decision-grid,.engagement-grid", css)
-        self.assertIn(".dashboard-primary", css)
-        self.assertIn(".trust-card", css)
-        self.assertIn("@media(max-width:760px)", css)
+        self.assertIn(".dashboard-header", css)
+        self.assertIn(".overview-metrics", css)
+        self.assertIn(".trend-grid", css)
+        self.assertIn(".source-reading-grid", css)
+        self.assertIn(".property-field select", css)
+        self.assertIn("@media(max-width:620px)", css)
         self.assertIn("@media(prefers-reduced-motion:reduce)", css)
         self.assertIn("overflow-x:auto", css)
         self.assertIn("align-items:start", css)
-        self.assertIn(".report-nav{flex-wrap:wrap;overflow-x:visible}", css)
+        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", css)
 
     def test_attention_panel_prioritizes_three_items_and_collapses_the_rest(self):
         body = _attention_html({"attention_items": [
@@ -677,7 +682,7 @@ class WebTests(unittest.TestCase):
     def test_generated_all_sites_forms_submit_without_a_blank_query(self):
         status, _headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
         self.assertEqual(status, 200)
-        self.assertIn('<option value="all" selected>All sites</option>', body)
+        self.assertIn('<option value="all" selected>All properties</option>', body)
         self.assertEqual(
             self.request("/?report=summary&start=2026-07-01&end=2026-07-02&metric=umami.pageviews&site=all")[0],
             200,
@@ -744,15 +749,13 @@ metric_groups = ["traffic"]
         try:
             status, forms_body = request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")
             self.assertEqual(status, 200)
-            self.assertNotIn('value="second-site"', forms_body)
+            self.assertIn('<option value="second-site">Second Site</option>', forms_body)
+            self.assertNotIn('name="subreport"', forms_body)
             status, overview_body = request(
                 "/?report=summary&metric=forms.submissions&start=2026-07-01&end=2026-07-02"
             )
             self.assertEqual(status, 200)
-            self.assertIn(
-                'value="second-site" data-sources="umami" hidden disabled',
-                overview_body,
-            )
+            self.assertIn('<option value="second-site">Second Site</option>', overview_body)
             unsupported_dashboard = (
                 "/?report=summary&metric=forms.submissions&site=second-site"
                 "&start=2026-07-01&end=2026-07-02"
@@ -1060,13 +1063,14 @@ metric_groups = ["traffic"]
 
     def test_forms_cards_preserve_unknown_pipeline_values(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
-        self.assertIn('data-metric="forms.pending" data-state="unknown"', body)
-        self.assertIn('data-metric="forms.failed" data-state="unknown"', body)
+        self.assertNotIn('data-metric="forms.pending"', body)
+        self.assertNotIn('data-metric="forms.failed"', body)
+        self.assertIn('data-metric="umami.pageviews"', body)
 
     def test_partial_card_and_metric_table_disclose_coverage(self):
         body = self.request("/?report=summary&start=2026-06-30&end=2026-07-02")[2]
         self.assertIn('data-metric="umami.pageviews" data-state="partial"', body)
-        self.assertIn("Partial data", body)
+        self.assertIn("partial coverage", body)
         self.assertIn("<th>Coverage</th>", body)
 
     def test_weighted_accessible_chart_uses_window_aggregate_not_sum_of_daily_rates(self):
@@ -1102,14 +1106,21 @@ metric_groups = ["traffic"]
 
     def test_subreport_navigation_and_form_preserve_scope_and_window(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
-        self.assertIn('name="subreport" value="forms"', body)
-        self.assertIn("subreport=forms", body); self.assertIn("start=2026-07-01", body); self.assertIn("end=2026-07-02", body)
+        self.assertNotIn('name="subreport"', body)
+        self.assertNotIn("subreport=forms", body)
+        self.assertIn('name="start" value="2026-07-01"', body)
+        self.assertIn('name="end" value="2026-07-02"', body)
+        self.assertIn("All properties", body)
 
     def test_site_scope_is_validated_and_preserved(self):
         path = "/?report=summary&site=example-site&start=2026-07-01&end=2026-07-02"
         status, _headers, body = self.request(path)
-        self.assertEqual(status, 200); self.assertIn('value="example-site" data-sources=', body); self.assertIn('selected>Example Site</option>', body)
+        self.assertEqual(status, 200); self.assertIn('<option value="example-site" selected>Example Site</option>', body)
+        self.assertIn('<h1>Example Site</h1>', body)
         self.assertIn("site=example-site", body)
+        self.assertNotIn("Traffic by property", body)
+        self.assertIn("Page views over time", body)
+        self.assertIn("Index coverage", body)
         self.assertEqual(self.request("/?report=summary&site=unknown&start=2026-07-01&end=2026-07-02")[0], 400)
 
     def test_early_valid_dashboard_window_does_not_underflow_quick_presets(self):

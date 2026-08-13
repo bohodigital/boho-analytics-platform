@@ -434,7 +434,22 @@ DASHBOARD_VISUAL_CSS = """
 @media(max-width:900px){.visual-grid{grid-template-columns:1fr}.signal-strip{grid-template-columns:1fr 1fr}.signal-item:last-child:nth-child(odd){grid-column:1/-1}}
 @media(max-width:620px){.visual-panel{padding:15px}.rank-row{grid-template-columns:minmax(92px,.75fr) minmax(100px,1.25fr) auto;gap:8px}.signal-strip{grid-template-columns:1fr}.signal-item:last-child:nth-child(odd){grid-column:auto}.kpi-note{font-size:10px}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
+ALL_IN_ONE_CSS = """
+.dashboard-app{background:#f3f6f4;color:#13211c}.dashboard-app .topbar{position:sticky}.dashboard-app .topbar-inner{max-width:1480px;padding:10px 24px}.dashboard-app .brand{gap:10px}.dashboard-app .brand-mark{width:32px;height:32px;border-radius:8px;font-size:12px}.dashboard-app .brand strong{font-size:14px}.dashboard-app .live-state{padding:0;border:0;border-radius:0;background:transparent;color:#c7d3ce;font-size:12px}
+.dashboard-app .shell{max-width:1480px;padding:22px 24px 40px}.dashboard-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:14px}.dashboard-title h1{margin:0;font-size:clamp(28px,3vw,40px);line-height:1.05;letter-spacing:-.045em}.dashboard-meta{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:7px;color:#5b6a63;font-size:12px;font-weight:700}.coverage-state{display:inline-flex;align-items:center;gap:6px}.coverage-state:before{content:"";width:7px;height:7px;border-radius:50%;background:#1e8061}.coverage-state[data-state="partial"]:before,.coverage-state[data-state="unknown"]:before{background:#b46b18}
+.dashboard-controls{display:flex;gap:8px;align-items:flex-end}.property-form{display:flex;gap:8px;align-items:flex-end}.property-field{display:grid;gap:4px}.property-field span{color:#56665e;font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}.property-field select{width:230px;min-height:40px;padding:8px 34px 8px 11px;border-color:#cbd6d0;border-radius:9px;font-weight:800}.scope-apply{min-height:40px;padding:8px 12px}.tool-menu{position:relative}.tool-menu>summary{display:flex;min-height:40px;align-items:center;padding:8px 12px;border:1px solid #cbd6d0;border-radius:9px;background:#fff;color:#263b32;font-size:12px;font-weight:850;cursor:pointer;list-style:none}.tool-menu>summary::-webkit-details-marker{display:none}.tool-menu[open]>summary{border-color:#789487}.tool-menu-items{position:absolute;right:0;top:46px;z-index:12;width:230px;padding:7px;border:1px solid #cad6d0;border-radius:11px;background:#fff;box-shadow:0 18px 44px rgba(20,39,31,.16)}.tool-menu-items a,.tool-menu-items button{display:block;width:100%;min-height:0;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#263b32;font-size:12px;font-weight:750;text-align:left;text-decoration:none}.tool-menu-items a:hover{background:#edf3ef}.tool-menu-items hr{height:1px;margin:5px 4px;border:0;background:#e3e9e5}
+.window-bar{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:12px;padding:9px 11px;border:1px solid #dbe4df;border-radius:11px;background:#fff}.window-bar strong{font-size:12px}.window-links{display:flex;gap:4px}.window-links a{padding:5px 8px;border-radius:7px;color:#53645c;font-size:11px;font-weight:850;text-decoration:none}.window-links a:hover,.window-links a.active{background:#e8efeb;color:#17372c}.custom-window{position:relative}.custom-window>summary{cursor:pointer;list-style:none;color:#53645c;font-size:11px;font-weight:850}.custom-window>summary::-webkit-details-marker{display:none}.custom-window-form{position:absolute;right:0;top:30px;z-index:11;display:grid;grid-template-columns:repeat(2,150px) auto;gap:8px;align-items:end;padding:12px;border:1px solid #cad6d0;border-radius:11px;background:#fff;box-shadow:0 18px 44px rgba(20,39,31,.16)}.custom-window-form .field span{font-size:10px}.custom-window-form input{min-height:38px}.custom-window-form button{min-height:38px}
+.overview-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-bottom:12px}.overview-metric{min-width:0;padding:15px 15px 13px;border:1px solid #d9e3de;border-radius:13px;background:#fff;box-shadow:0 6px 18px rgba(20,39,31,.04)}.overview-metric[data-state="unavailable"]{background:#f8faf9}.overview-metric-head{display:flex;justify-content:space-between;gap:7px;align-items:center;color:#53645c;font-size:10px;font-weight:850;letter-spacing:.055em;text-transform:uppercase}.overview-metric strong{display:block;margin:13px 0 7px;overflow:hidden;text-overflow:ellipsis;font-size:clamp(25px,2.2vw,34px);line-height:1;font-weight:880;letter-spacing:-.04em}.overview-metric[data-state="unavailable"] strong{color:#6c7973;font-size:23px}.overview-metric small{display:block;min-height:28px;color:#66756e;font-size:10px;line-height:1.35}.metric-delta{padding:3px 5px;border-radius:6px;background:#eef2ef;color:#52615a;font-size:9px;letter-spacing:0}.metric-delta.up{background:#e4f4ed;color:#0f7052}.metric-delta.down{background:#fbe9e7;color:#9a3d35}
+.trend-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(360px,1fr);gap:12px;margin-bottom:12px}.series-panel{padding:17px}.compact-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}.compact-heading h2{margin:0;font-size:16px;line-height:1.2;letter-spacing:-.02em}.compact-heading span,.compact-heading small{display:block;margin-top:3px;color:#68776f;font-size:10px;font-weight:700}.series-panel .chart-stage{min-height:290px;border:0;border-radius:10px;background:#f8faf9}.series-panel .time-series-chart{height:290px}.series-panel .chart-legend{gap:7px 14px;margin-top:10px;font-size:10px}.series-panel .legend-swatch{width:14px}.series-panel .chart-fallback{margin-top:8px}.series-panel .chart-fallback>summary{font-size:10px}.dashboard-app .chart-status{display:none}
+.dashboard-app .visual-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.dashboard-app .visual-panel{padding:17px}.dashboard-app .rank-list{gap:11px}.dashboard-app .rank-row{grid-template-columns:minmax(112px,.78fr) minmax(150px,1.4fr) auto}.dashboard-app .rank-track,.dashboard-app .capture-track{height:9px}.dashboard-app .rank-fill{background:#287761}.dashboard-app .capture-track>span{background:#df6840}.dashboard-app .rank-value small{font-size:9px}.dashboard-app .index-stack{height:11px}.index-legend{display:flex;gap:12px;align-items:center}.index-legend span{display:flex!important;gap:5px;align-items:center;margin:0!important;font-size:9px!important}.index-legend i{width:9px;height:9px;border-radius:2px}.index-legend .indexed{background:#287761}.index-legend .unindexed{background:#d9a34d}
+.search-funnel{display:grid;gap:11px}.search-funnel>div{display:grid;grid-template-columns:82px minmax(100px,1fr) auto;gap:10px;align-items:center}.search-funnel span{font-size:10px;font-weight:800}.search-funnel strong{font-size:12px}.funnel-track{height:10px;overflow:hidden;border-radius:999px;background:#edf1ef}.funnel-track i{display:block;height:100%;border-radius:inherit;background:#df6840}.search-summary-row{display:flex;gap:24px;margin-top:15px;padding-top:12px;border-top:1px solid #e6ece8;color:#627169;font-size:10px}.search-summary-row b{margin-right:3px;color:#16261f;font-size:15px}
+.country-list{display:grid;gap:8px}.country-row{display:grid;grid-template-columns:30px minmax(100px,1fr) auto;gap:9px;align-items:center}.country-row>span:first-child{font-size:10px;font-weight:850}.country-row strong{font-size:11px}.country-track{height:8px;overflow:hidden;border-radius:999px;background:#edf1ef}.country-track>span{display:block;height:100%;border-radius:inherit;background:#287761}
+.source-readings{padding:17px;margin-bottom:12px}.source-reading-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;border:1px solid #e0e7e3;border-radius:11px}.source-reading{min-width:0;padding:12px 13px;border-right:1px solid #e0e7e3}.source-reading:last-child{border-right:0}.source-reading span,.source-reading small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#65736c;font-size:9px;font-weight:800}.source-reading strong{display:block;margin:7px 0 5px;overflow:hidden;text-overflow:ellipsis;font-size:20px;line-height:1}.data-details{margin-bottom:10px;overflow:hidden}.data-details>summary{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;cursor:pointer;list-style:none;color:#33483f;font-size:12px;font-weight:850}.data-details>summary::-webkit-details-marker{display:none}.data-details>summary:after{content:"Open";color:#68776f;font-size:10px}.data-details[open]>summary:after{content:"Close"}.data-details-body{padding:0 14px 14px}.data-details .table-panel,.data-details .split-grid{box-shadow:none}.dashboard-app .footer{justify-content:flex-end;padding-top:4px;font-size:10px}
+@media(max-width:1200px){.overview-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.source-reading-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.source-reading:nth-child(3){border-right:0}.source-reading:nth-child(-n+3){border-bottom:1px solid #e0e7e3}}
+@media(max-width:940px){.dashboard-header{align-items:flex-start;flex-direction:column}.dashboard-controls{width:100%;justify-content:space-between}.property-field select{width:min(64vw,320px)}.trend-grid{grid-template-columns:1fr}.dashboard-app .visual-grid{grid-template-columns:1fr}}
+@media(max-width:620px){.dashboard-app .topbar-inner,.dashboard-app .shell{padding-left:14px;padding-right:14px}.dashboard-app .live-state{display:none}.dashboard-controls{align-items:flex-end}.property-form{flex:1}.property-field{flex:1}.property-field select{width:100%}.window-bar{align-items:flex-start;flex-wrap:wrap}.custom-window-form{position:fixed;left:14px;right:14px;top:110px;grid-template-columns:1fr}.overview-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-metric{padding:13px 12px}.overview-metric strong{font-size:27px}.trend-grid{display:block}.trend-grid .series-panel{margin-bottom:12px}.series-panel .chart-stage{min-height:255px}.series-panel .time-series-chart{height:255px}.source-reading-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.source-reading,.source-reading:nth-child(3){border-right:1px solid #e0e7e3;border-bottom:1px solid #e0e7e3}.source-reading:nth-child(even){border-right:0}.source-reading:nth-last-child(-n+2){border-bottom:0}.dashboard-app .rank-row{grid-template-columns:minmax(88px,.7fr) minmax(90px,1.3fr) auto}.index-legend{margin-top:8px}.compact-heading{flex-wrap:wrap}.tool-menu-items{position:fixed;left:14px;right:14px;top:70px;width:auto}.search-funnel>div{grid-template-columns:66px minmax(80px,1fr) auto}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
@@ -539,17 +554,18 @@ JS = r"""
     const comparison = payload.comparison_series || [];
     const unit = payload.unit || series[0]?.unit || "count";
     const lowerIsBetter = Boolean(payload.lower_is_better);
-    const status = document.getElementById("chart-status");
-    const liveStatus = document.getElementById("chart-live-status");
-    const legend = document.getElementById("chart-legend");
+    const panel = canvas.closest(".series-panel,.chart-panel") || document;
+    const status = panel.querySelector("[data-chart-status]") || document.getElementById("chart-status");
+    const liveStatus = panel.querySelector("[data-chart-live-status]") || document.getElementById("chart-live-status");
+    const legend = panel.querySelector("[data-chart-legend]") || document.getElementById("chart-legend");
     if (!series.length) {
       const context = canvas.getContext("2d");
       if (context) context.clearRect(0, 0, canvas.width, canvas.height);
       if (legend) legend.replaceChildren();
       canvas.onpointermove = null;
       canvas.onpointerleave = null;
-      status.textContent = payload.availability_note || "No stored daily values match this selection.";
-      if (liveStatus) liveStatus.textContent = status.textContent;
+      if (status) status.textContent = payload.availability_note || "No stored daily values match this selection.";
+      if (liveStatus) liveStatus.textContent = status?.textContent || "No stored daily values match this selection.";
       canvas.dataset.rendered = "empty";
       return;
     }
@@ -688,7 +704,7 @@ JS = r"""
     const directionText = lowerIsBetter ? " - lower is better" : "";
     const surfaceText = payload.search_type ? ` - ${payload.search_type} search surface` : "";
     const statusText = `${payload.metric_label} (${unit})${directionText}${surfaceText} - ${series.length} series - ${rangeText}${comparisonText}`;
-    status.textContent = statusText;
+    if (status) status.textContent = statusText;
     if (liveStatus && liveStatus.dataset.summary !== statusText) {
       liveStatus.dataset.summary = statusText;
       liveStatus.textContent = statusText;
@@ -702,16 +718,15 @@ JS = r"""
         const point = item.points.find(candidate => candidate.date === selectedDate);
         return `${payload.site_names[item.site_id] || item.site_id}: ${point ? formatMetricValue(point.value, unit) : "no value"}`;
       });
-      status.textContent = `${selectedDate} - ${values.join(" - ")}`;
+      if (status) status.textContent = `${selectedDate} - ${values.join(" - ")}`;
     };
-    canvas.onpointerleave = () => { status.textContent = statusText; };
+    canvas.onpointerleave = () => { if (status) status.textContent = statusText; };
   }
 
-  async function loadChart() {
-    const canvas = document.getElementById("time-series-chart");
-    if (!canvas) return;
-    const status = document.getElementById("chart-status");
-    const liveStatus = document.getElementById("chart-live-status");
+  async function loadChart(canvas) {
+    const panel = canvas.closest(".series-panel,.chart-panel") || document;
+    const status = panel.querySelector("[data-chart-status]") || document.getElementById("chart-status");
+    const liveStatus = panel.querySelector("[data-chart-live-status]") || document.getElementById("chart-live-status");
     try {
       const response = await fetch(canvas.dataset.seriesUrl, {headers: {Accept: "application/json"}, credentials: "same-origin"});
       if (!response.ok) throw new Error(`Series request failed (${response.status})`);
@@ -720,10 +735,14 @@ JS = r"""
       drawChart(canvas, payload);
       new ResizeObserver(() => drawChart(canvas, canvas._payload)).observe(canvas);
     } catch (error) {
-      status.textContent = error.message;
+      if (status) status.textContent = error.message;
       if (liveStatus) liveStatus.textContent = error.message;
       canvas.dataset.rendered = "error";
     }
+  }
+
+  function loadCharts() {
+    document.querySelectorAll("canvas.time-series-chart[data-series-url]").forEach(loadChart);
   }
 
   const svgNamespace = "http://www.w3.org/2000/svg";
@@ -1276,7 +1295,11 @@ JS = r"""
     updateSiteOptions();
     searchType.addEventListener("change", updateSiteOptions);
   }
-  loadChart();
+  const propertySelector = document.getElementById("property-selector");
+  if (propertySelector) {
+    propertySelector.addEventListener("change", () => propertySelector.form?.requestSubmit());
+  }
+  loadCharts();
   loadGeography();
   initSiteGraph();
 })();
@@ -2302,7 +2325,7 @@ def _ranked_metric_visual(result, site_names, metric, *, title, subtitle, fill_c
         )
     return (
         '<section class="panel visual-panel" aria-labelledby="property-attention-title">'
-        f'<div class="panel-heading"><div><h2 id="property-attention-title">{_e(title)}</h2><p>{_e(subtitle)}</p></div></div>'
+        f'<div class="compact-heading"><div><h2 id="property-attention-title">{_e(title)}</h2><span>{_e(subtitle)}</span></div></div>'
         f'<div class="rank-list">{"".join(rows)}</div></section>'
     )
 
@@ -2321,6 +2344,25 @@ def _search_capture_visual(result, site_names):
     if not items:
         return ""
     items.sort(key=lambda item: item[1], reverse=True)
+    if len(items) == 1:
+        site_id, impressions, clicks, ctr = items[0]
+        click_width = max(1, min(100, round(ctr))) if clicks else 0
+        position = _site_metric_row(result, site_id, "search.position")
+        position_value = (
+            _format_value(position["value"], position.get("unit", "position"))
+            if position and position.get("value") is not None else "—"
+        )
+        return (
+            '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
+            '<div class="compact-heading"><div><h2 id="search-capture-title">Search performance</h2>'
+            '<span>Google Search Console</span></div></div>'
+            '<div class="search-funnel">'
+            f'<div><span>Impressions</span><span class="funnel-track"><i class="p-100"></i></span><strong>{impressions:,.0f}</strong></div>'
+            f'<div><span>Clicks</span><span class="funnel-track"><i class="p-{click_width}"></i></span><strong>{clicks:,.0f}</strong></div>'
+            '</div><div class="search-summary-row">'
+            f'<span><b>{ctr:.2f}%</b> CTR</span><span><b>{_e(position_value)}</b> avg. position</span>'
+            '</div></section>'
+        )
     maximum = max((item[1] for item in items), default=0) or 1
     rows = []
     for site_id, impressions, clicks, ctr in items:
@@ -2334,10 +2376,9 @@ def _search_capture_visual(result, site_names):
         )
     return (
         '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
-        '<div class="panel-heading"><div><h2 id="search-capture-title">Search demand &amp; capture</h2>'
-        '<p>Google visibility ranked by property, with clicks and CTR shown on the same row.</p></div></div>'
-        f'<div class="rank-list">{"".join(rows)}</div>'
-        '<p class="visual-footnote">Bar length compares impressions. CTR is clicks divided by impressions for the selected Search Console surface.</p></section>'
+        '<div class="compact-heading"><div><h2 id="search-capture-title">Search performance</h2>'
+        '<span>Impressions · clicks · CTR</span></div><small>Google Search Console</small></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
     )
 
 
@@ -2376,6 +2417,8 @@ def _daily_attention_heatmap(result, site_names, metric="umami.pageviews"):
 
 def _index_coverage_visual(result, site_names):
     properties = (result.get("index_coverage") or {}).get("properties") or []
+    if result.get("site_id"):
+        properties = [item for item in properties if item.get("site_id") == result["site_id"]]
     if not properties:
         return ""
     rows = []
@@ -2389,7 +2432,7 @@ def _index_coverage_visual(result, site_names):
         else:
             indexed_width = max(0, min(100, round(float(percentage))))
             unindexed_width = 100 - indexed_width
-            value_html = f'<span class="rank-value">{float(percentage):.2f}%<small>{int(indexed):,} / {int(published):,} pages</small></span>'
+            value_html = f'<span class="rank-value">{float(percentage):.1f}%<small>{int(indexed):,} indexed / {int(published):,} pages</small></span>'
             bar_html = (
                 f'<span class="index-stack" role="img" aria-label="{int(indexed):,} of {int(published):,} published pages indexed">'
                 f'<span class="indexed p-{indexed_width}"></span><span class="unindexed p-{unindexed_width}"></span></span>'
@@ -2398,10 +2441,10 @@ def _index_coverage_visual(result, site_names):
         rows.append(f'<div class="rank-row"><span class="rank-name" title="{_e(name)}">{_e(name)}</span>{bar_html}{value_html}</div>')
     return (
         '<section class="panel visual-panel" aria-labelledby="index-visual-title">'
-        '<div class="panel-heading"><div><h2 id="index-visual-title">Google index coverage</h2>'
-        '<p>Indexed and unindexed pages in each property’s current sitemap inventory.</p></div></div>'
-        f'<div class="rank-list">{"".join(rows)}</div>'
-        '<p class="visual-footnote">Green = indexed. Gold = published but not indexed. Complete URL Inspection census only.</p></section>'
+        '<div class="compact-heading"><div><h2 id="index-visual-title">Index coverage</h2>'
+        '<span>Google URL Inspection census</span></div><div class="index-legend" aria-label="Index coverage legend">'
+        '<span><i class="indexed"></i>Indexed</span><span><i class="unindexed"></i>Not indexed</span></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
     )
 
 
@@ -2421,14 +2464,193 @@ def _signal_strip_html(support):
 def _dashboard_visuals_html(result, site_names):
     traffic = _ranked_metric_visual(
         result, site_names, "umami.pageviews",
-        title="Attention by property",
-        subtitle="Umami page views and each property’s share of the portfolio total.",
+        title="Traffic by property",
+        subtitle="Umami page views",
     )
     search = _search_capture_visual(result, site_names)
-    heatmap = _daily_attention_heatmap(result, site_names)
     index = _index_coverage_visual(result, site_names)
-    panels = [item for item in (traffic, search, heatmap, index) if item]
+    if result.get("site_id"):
+        traffic = ""
+    panels = [item for item in (traffic, search, index) if item]
     return f'<div class="visual-grid">{"".join(panels)}</div>' if panels else ""
+
+
+CORE_DASHBOARD_METRICS = (
+    "umami.pageviews",
+    "umami.visits",
+    "search.impressions",
+    "search.clicks",
+    "search.ctr",
+)
+
+
+def _compact_delta(total):
+    if not total or not total.get("comparison_available"):
+        return ""
+    change = total.get("change")
+    if change is None:
+        return ""
+    state = "up" if change > 0 else "down" if change < 0 else "flat"
+    prefix = "+" if change > 0 else ""
+    return f'<span class="metric-delta {state}">{prefix}{float(change):.1f}%</span>'
+
+
+def _index_scope_summary(result):
+    properties = (result.get("index_coverage") or {}).get("properties") or []
+    selected_site = result.get("site_id")
+    if selected_site:
+        properties = [item for item in properties if item.get("site_id") == selected_site]
+    complete = [
+        item for item in properties
+        if item.get("published_pages") is not None and item.get("indexed_pages") is not None
+    ]
+    if not complete:
+        return None
+    published = sum(int(item["published_pages"]) for item in complete)
+    indexed = sum(int(item["indexed_pages"]) for item in complete)
+    percentage = indexed / published * 100 if published else 0
+    return {
+        "indexed": indexed,
+        "published": published,
+        "percentage": percentage,
+        "complete_properties": len(complete),
+        "total_properties": len(properties),
+    }
+
+
+def _overview_cards_html(result):
+    definitions = (
+        ("Page views", "umami.pageviews", "Umami"),
+        ("Visits", "umami.visits", "Umami"),
+        ("Search impressions", "search.impressions", "Google Search"),
+        ("Search clicks", "search.clicks", "Google Search"),
+        ("Search CTR", "search.ctr", "Google Search"),
+    )
+    cards = []
+    for label, metric, source in definitions:
+        total = _metric_total(result, metric) if metric in result.get("summary_totals", {}) else None
+        available = bool(total and total.get("value") is not None)
+        partial = bool(available and total.get("coverage_status") == "partial")
+        value = _format_value(total["value"], total.get("unit", "count")) if available else "No data"
+        if available:
+            secondary = source + (" · partial coverage" if partial else "")
+        elif metric == "umami.visits":
+            secondary = "No exact-window total stored"
+        else:
+            secondary = f"{source} did not return a value"
+        cards.append(
+            f'<article class="overview-metric" data-metric="{_e(metric)}" data-state="{"partial" if partial else "observed" if available else "unavailable"}">'
+            f'<div class="overview-metric-head"><span>{_e(label)}</span>{_compact_delta(total)}</div>'
+            f'<strong>{_e(value)}</strong><small>{_e(secondary)}</small></article>'
+        )
+
+    index = _index_scope_summary(result)
+    if index:
+        coverage = f'{index["percentage"]:.1f}% of {index["published"]:,} published pages'
+        if index["complete_properties"] != index["total_properties"]:
+            coverage += f' · {index["complete_properties"]} of {index["total_properties"]} properties measured'
+        index_value = f'{index["indexed"]:,}'
+    else:
+        index_value = "No data"
+        coverage = "No complete URL Inspection census"
+    cards.append(
+        '<article class="overview-metric" data-metric="index.coverage" '
+        f'data-state="{"observed" if index else "unavailable"}"><div class="overview-metric-head">'
+        '<span>Indexed pages</span></div>'
+        f'<strong>{_e(index_value)}</strong><small>{_e(coverage)}</small></article>'
+    )
+    return '<section class="overview-metrics" aria-label="Current window summary">' + "".join(cards) + "</section>"
+
+
+def _source_readings_html(result):
+    definitions = (
+        ("Unique visitors", "umami.visitors", "Umami"),
+        ("GA4 page views", "google.pageviews", "Google Analytics"),
+        ("GA4 sessions", "google.sessions", "Google Analytics"),
+        ("Edge requests", "cloudflare.requests", "Cloudflare"),
+        ("Edge visits", "cloudflare.visits", "Cloudflare"),
+        ("Average position", "search.position", "Google Search"),
+    )
+    readings = []
+    for label, metric, source in definitions:
+        total = _metric_total(result, metric) if metric in result.get("summary_totals", {}) else None
+        if not total or total.get("value") is None:
+            continue
+        definition = METRICS.get(metric)
+        report_sites = {str(item) for item in result.get("site_ids", []) if item}
+        configured_sites = {
+            str(bucket["site_id"])
+            for bucket in (result.get("coverage") or {}).get("by_site_source", [])
+            if definition and bucket.get("source") == definition.source
+            and bucket.get("site_id") in report_sites
+            and (bucket.get("metric_status") or {}).get(metric) != "not_configured"
+        }
+        source_note = source
+        if report_sites and configured_sites and len(configured_sites) < len(report_sites):
+            source_note += f" · {len(configured_sites)} of {len(report_sites)} properties"
+        readings.append(
+            '<div class="source-reading">'
+            f'<span>{_e(label)}</span><strong>{_e(_format_value(total["value"], total.get("unit", "count")))}</strong>'
+            f'<small>{_e(source_note)}</small></div>'
+        )
+    if not readings:
+        return ""
+    return (
+        '<section class="panel source-readings" aria-labelledby="source-readings-title">'
+        '<div class="compact-heading"><h2 id="source-readings-title">Provider metrics</h2></div>'
+        f'<div class="source-reading-grid">{"".join(readings)}</div></section>'
+    )
+
+
+def _geography_summary_html(payload):
+    countries = (payload or {}).get("countries") or []
+    if not countries:
+        return ""
+    rows = countries[:7]
+    maximum = max(float(item.get("value") or 0) for item in rows) or 1
+    bars = []
+    for item in rows:
+        value = float(item.get("value") or 0)
+        width = max(1, min(100, round(value / maximum * 100))) if value else 0
+        bars.append(
+            '<div class="country-row">'
+            f'<span>{_e(item.get("code") or "—")}</span>'
+            f'<span class="country-track" role="img" aria-label="{_e(item.get("code") or "Unknown")}: {_e(_format_value(value))} Umami visits"><span class="p-{width}"></span></span>'
+            f'<strong>{_e(_format_value(value))}</strong></div>'
+        )
+    threshold = int(((payload or {}).get("suppression") or {}).get("threshold") or 0)
+    note = f"Umami visits · countries below {threshold:,} hidden" if threshold else "Umami visits"
+    return (
+        '<section class="panel visual-panel audience-panel" aria-labelledby="audience-title">'
+        '<div class="compact-heading"><div><h2 id="audience-title">Audience by country</h2>'
+        f'<span>{_e(note)}</span></div></div><div class="country-list">{"".join(bars)}</div></section>'
+    )
+
+
+def _core_coverage_label(result):
+    cells = (result.get("coverage") or {}).get("by_metric_cells") or {}
+    selected = [cells[metric] for metric in CORE_DASHBOARD_METRICS if metric in cells]
+    expected = sum(int(item.get("expected") or 0) for item in selected)
+    covered = sum(int(item.get("covered") or 0) for item in selected)
+    if not expected:
+        return "Core feed coverage unavailable", "unknown"
+    percent = round(covered / expected * 100)
+    return f"Core feeds {percent}%", "complete" if covered == expected else "partial"
+
+
+def _updated_at_label(result):
+    ingested = [
+        str(item["ingested_at"]) for item in (result.get("source_health") or [])
+        if item.get("ingested_at")
+    ]
+    if not ingested:
+        return "Update time unavailable"
+    try:
+        timestamp = datetime.fromisoformat(sorted(ingested)[-1].replace("Z", "+00:00"))
+        formatted = timestamp.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+        return f"Updated {formatted} UTC"
+    except (TypeError, ValueError):
+        return "Updated " + sorted(ingested)[-1][:16].replace("T", " ") + " UTC"
 
 
 def _provider_comparisons_html(result, site_names):
@@ -4447,7 +4669,7 @@ def handler_factory(config, store, credentials=None):
             is_plot = view == "plot"
             result, report = self._request(
                 query,
-                force_overview=is_plot,
+                force_overview=True,
                 include_decision_support=not is_plot,
                 include_provider_comparisons=not is_plot,
             )
@@ -4788,6 +5010,151 @@ def handler_factory(config, store, credentials=None):
                 + (f'<span>Search surface: {_e(_search_type_label(selected_search_type))}</span>' if selected_search_type else "")
                 + '</p>'
             )
+
+            if not is_plot:
+                dashboard_site_options = (
+                    f'<option value="all"{" selected" if result["site_id"] is None else ""}>All properties</option>'
+                    + "".join(
+                        f'<option value="{_e(site_id)}"{" selected" if site_id == result["site_id"] else ""}>'
+                        f'{_e(site_names.get(site_id, site_id))}</option>'
+                        for site_id in report.site_ids
+                    )
+                )
+                scope_title = (
+                    site_names.get(result["site_id"], result["site_id"])
+                    if result.get("site_id") else "All properties"
+                )
+                core_coverage, core_coverage_state = _core_coverage_label(result)
+                updated_at = _updated_at_label(result)
+
+                base_scope_params = {
+                    "report": report.id,
+                    "start": start,
+                    "end": end,
+                }
+                if selected_search_type:
+                    base_scope_params["search_type"] = selected_search_type
+                if result.get("site_id"):
+                    base_scope_params["site"] = result["site_id"]
+
+                period_links = []
+                selected_days = (end_date - datetime.fromisoformat(start).date()).days
+                for days in (7, 30, 90):
+                    try:
+                        period_start = end_date - timedelta(days=days)
+                    except OverflowError:
+                        continue
+                    period_params = {
+                        **base_scope_params,
+                        "start": period_start.isoformat(),
+                    }
+                    active = " active" if selected_days == days else ""
+                    period_links.append(
+                        f'<a class="{active.strip()}" href="/?{_e(urlencode(period_params))}"'
+                        f'{" aria-current=\"page\"" if active else ""}>{days}D</a>'
+                    )
+
+                def overview_series_url(metric, source):
+                    params = {
+                        "report": report.id,
+                        "start": start,
+                        "end": end,
+                        "metric": metric,
+                        "source": source,
+                        "style": "line",
+                    }
+                    if source == "search-console" and selected_search_type:
+                        params["search_type"] = selected_search_type
+                    if result.get("site_id"):
+                        params["site"] = result["site_id"]
+                    return "/api/v1/series?" + urlencode(params)
+
+                def series_panel(metric, source, title, source_label, *, primary=False):
+                    if metric not in available_metrics:
+                        return ""
+                    suffix = "traffic" if primary else "search"
+                    canvas_id = ' id="time-series-chart"' if primary else f' id="time-series-chart-{suffix}"'
+                    status_id = ' id="chart-status"' if primary else ""
+                    live_id = ' id="chart-live-status"' if primary else ""
+                    legend_id = ' id="chart-legend"' if primary else ""
+                    return (
+                        '<section class="panel series-panel">'
+                        f'<div class="compact-heading"><div><h2>{_e(title)}</h2><span>{_e(source_label)}</span></div></div>'
+                        '<div class="chart-stage">'
+                        f'<div class="chart-status" data-chart-status{status_id}>Loading series</div>'
+                        f'<span class="sr-only" data-chart-live-status{live_id} role="status" aria-live="polite">Loading series</span>'
+                        f'<canvas class="time-series-chart"{canvas_id} data-series-url="{_e(overview_series_url(metric, source))}" '
+                        f'role="img" aria-label="{_e(title)}"></canvas></div>'
+                        f'<ul class="chart-legend" data-chart-legend{legend_id} aria-label="Property legend"></ul>'
+                        f'<details class="chart-fallback"><summary>Daily values</summary>{_chart_html(result, metric, site_names)}</details>'
+                        '</section>'
+                    )
+
+                traffic_panel = series_panel(
+                    "umami.pageviews", "umami", "Page views over time", "Umami", primary=True,
+                )
+                search_panel = series_panel(
+                    "search.impressions", "search-console", "Search impressions over time",
+                    f'Google Search Console · {_search_type_label(selected_search_type)}' if selected_search_type else "Google Search Console",
+                )
+                trend_panels = "".join(item for item in (traffic_panel, search_panel) if item)
+                trend_html = f'<div class="trend-grid">{trend_panels}</div>' if trend_panels else ""
+
+                geography_params = {
+                    "report": report.id,
+                    "start": start,
+                    "end": end,
+                    "source": "umami",
+                }
+                if result.get("site_id"):
+                    geography_params["site"] = result["site_id"]
+                geography_payload = self._geography_payload(
+                    {key: [value] for key, value in geography_params.items()}
+                )
+                audience_html = _geography_summary_html(geography_payload)
+                visual_panels = _dashboard_visuals_html(result, site_names)
+                if audience_html:
+                    if visual_panels:
+                        visual_panels = visual_panels[:-6] + audience_html + "</div>"
+                    else:
+                        visual_panels = f'<div class="visual-grid">{audience_html}</div>'
+
+                metric_detail_html = (
+                    '<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2>'
+                    '<p>Stored totals by source and property.</p></div></div><div class="table-scroll"><table>'
+                    '<thead><tr><th>Metric</th><th>Property</th><th>Source</th><th>Current</th><th>Previous</th><th>Coverage</th><th>Change</th></tr></thead>'
+                    f'<tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
+                )
+                data_details_parts = (
+                    _warnings_html(result["warnings"])
+                    + provider_comparison_html
+                    + _health_html(result, expected_metrics)
+                    + metric_detail_html
+                )
+
+                property_hidden = (
+                    f'<input type="hidden" name="site" value="{_e(result["site_id"])}">'
+                    if result.get("site_id") else ""
+                )
+                search_hidden = (
+                    f'<input type="hidden" name="search_type" value="{_e(selected_search_type)}">'
+                    if selected_search_type else ""
+                )
+                page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_e(scope_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body class="dashboard-app"><a class="skip-link" href="#main">Skip to dashboard</a>
+<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><strong>Boho Analytics</strong></div><div class="live-state">{_e(updated_at)}</div></div></header>
+<main class="shell" id="main">
+<section class="dashboard-header"><div class="dashboard-title"><h1>{_e(scope_title)}</h1><div class="dashboard-meta"><span>{_e(window_label)}</span><span class="coverage-state" data-state="{_e(core_coverage_state)}">{_e(core_coverage)}</span></div></div>
+<div class="dashboard-controls"><form class="property-form" id="property-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}"><input type="hidden" name="start" value="{_e(start)}"><input type="hidden" name="end" value="{_e(end)}">{search_hidden}<label class="property-field"><span>Property</span><select id="property-selector" name="site">{dashboard_site_options}</select></label><noscript><button class="scope-apply" type="submit">Apply</button></noscript></form>
+<details class="tool-menu"><summary>Tools</summary><div class="tool-menu-items"><a href="{_e(plot_url)}">Plot builder</a><a href="/site-graph">Site graph</a><a href="/route-observations">Route observations</a><hr><a href="{_e(csv_url)}">Download CSV</a><a href="{_e(json_url)}">Open JSON</a></div></details></div></section>
+<section class="window-bar" aria-label="Date window"><strong>{_e(window_label)}</strong><nav class="window-links" aria-label="Quick date windows">{"".join(period_links)}</nav><details class="custom-window"><summary>Custom</summary><form class="custom-window-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{property_hidden}{search_hidden}<label class="field"><span>Start</span><input type="date" name="start" value="{_e(start)}" required></label><label class="field"><span>End boundary</span><input type="date" name="end" value="{_e(end)}" required></label><button type="submit">Apply</button></form></details></section>
+{_overview_cards_html(result)}{trend_html}{visual_panels}{_source_readings_html(result)}
+<details class="panel data-details"><summary>Data details</summary><div class="data-details-body">{data_details_parts}</div></details>
+</main></body></html>"""
+                self._send(200, "text/html; charset=utf-8", page)
+                return
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
