@@ -2367,12 +2367,13 @@ def _search_capture_visual(result, site_names):
     rows = []
     for site_id, impressions, clicks, ctr in items:
         width = max(1, min(100, round(impressions / maximum * 100))) if impressions else 0
+        click_label = "click" if clicks == 1 else "clicks"
         rows.append(
             '<div class="capture-row">'
             '<div class="capture-meta">'
             f'<b>{_e(site_names.get(site_id, site_id))}</b>'
-            f'<span>{impressions:,.0f} impressions · {clicks:,.0f} clicks · {ctr:.2f}% CTR</span></div>'
-            f'<span class="capture-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {impressions:,.0f} search impressions and {clicks:,.0f} clicks"><span class="p-{width}"></span></span></div>'
+            f'<span>{impressions:,.0f} impressions · {clicks:,.0f} {click_label} · {ctr:.2f}% CTR</span></div>'
+            f'<span class="capture-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {impressions:,.0f} search impressions and {clicks:,.0f} {click_label}"><span class="p-{width}"></span></span></div>'
         )
     return (
         '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
