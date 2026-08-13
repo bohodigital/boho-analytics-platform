@@ -440,6 +440,27 @@ JS = r"""
 (() => {
   const colors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+  const integerFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+
+  function formatCountValue(number) {
+    const magnitude = Math.abs(number);
+    const compact = [
+      [1e9, "B"],
+      [1e6, "M"],
+      [1e3, "K"],
+    ].find(([threshold]) => magnitude >= threshold);
+    if (!compact) return integerFormat.format(Math.round(number));
+    const [threshold, suffix] = compact;
+    return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: 2}).format(number / threshold)}${suffix}`;
+  }
+
+  function niceCountStep(maximum, targetTicks = 5) {
+    const raw = Math.max(1, maximum / targetTicks);
+    const magnitude = 10 ** Math.floor(Math.log10(raw));
+    const normalized = raw / magnitude;
+    const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    return Math.max(1, factor * magnitude);
+  }
 
   function formatMetricValue(value, unit) {
     const number = Number(value);
@@ -465,6 +486,7 @@ JS = r"""
       }
       return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: index ? 1 : 0}).format(scaled)} ${suffixes[index]}`;
     }
+    if (unit === "count") return formatCountValue(number);
     return format.format(number);
   }
 
@@ -552,6 +574,10 @@ JS = r"""
     if (lowerIsBetter) {
       max += padding;
       min = Math.max(0, min - padding);
+    } else if (unit === "count") {
+      min = 0;
+      const countStep = niceCountStep(max);
+      max = Math.max(countStep, Math.ceil(max / countStep) * countStep);
     } else {
       if (max > 0) max += padding;
       if (min < 0) min -= padding;
@@ -570,9 +596,10 @@ JS = r"""
     ctx.strokeStyle = "#e4e4de";
     ctx.fillStyle = "#727974";
     ctx.lineWidth = 1;
-    for (let step = 0; step <= 4; step++) {
-      const value = max - (max - min) * step / 4;
-      const py = margin.top + plotHeight * step / 4;
+    const gridIntervals = unit === "count" ? Math.max(1, Math.round(max / niceCountStep(max))) : 4;
+    for (let step = 0; step <= gridIntervals; step++) {
+      const value = max - (max - min) * step / gridIntervals;
+      const py = margin.top + plotHeight * step / gridIntervals;
       ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(width - margin.right, py); ctx.stroke();
       ctx.textAlign = "right"; ctx.fillText(formatMetricValue(value, unit), margin.left - 9, py);
     }
