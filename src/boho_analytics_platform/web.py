@@ -461,10 +461,50 @@ HYPERPUNK_CSS = """
 .dashboard-app .health-item,.dashboard-app .pipeline-item,.dashboard-app .operation-card,.dashboard-app .decision-card,.dashboard-app .engagement-card,.dashboard-app .roadmap-card,.dashboard-app .attention-item,.dashboard-app .signal-item,.dashboard-app .chart-card,.dashboard-app .graph-disclosure,.dashboard-app .distance-item{border-color:#202a34;background:#0e1217}.dashboard-app .pipeline-value,.dashboard-app .decision-value,.dashboard-app .graph-disclosure strong{color:#d8e2e0!important}.dashboard-app .data-notices{border-color:#4a391f;background:#110e09}.dashboard-app .data-notices>summary{color:#ffc268}.dashboard-app .data-notices .alert,.dashboard-app .alert{border-color:#4a391f;background:#151006;color:#e9c994}.dashboard-app .alert-mark{background:#9d6828}.dashboard-app .attention-item[data-severity="clear"],.dashboard-app .signal-item[data-severity="clear"]{border-color:#24493b;background:#0b1713}.dashboard-app .attention-item[data-severity="review"],.dashboard-app .signal-item[data-severity="review"]{border-color:#4a391f;background:#151006}.dashboard-app .attention-item[data-severity="immediate"],.dashboard-app .signal-item[data-severity="immediate"]{border-color:#4a2931;background:#170c10}
 .dashboard-app table{color:#cdd8d5}.dashboard-app th,.dashboard-app td{border-bottom-color:#1b242c}.dashboard-app th{color:#81908d}.dashboard-app tbody tr:hover{background:#10161c}.dashboard-app .performance-table th:first-child,.dashboard-app .performance-table td:first-child,.dashboard-app .matrix-table th:first-child,.dashboard-app .matrix-table td:first-child{background:#0b0e12}.dashboard-app .positive{color:#6ee7b7}.dashboard-app .negative{color:#ff7c91}.dashboard-app .index-pct{color:#b8f34a}.dashboard-app .index-pending,.dashboard-app .geo-suppressed{color:#ffc268}.dashboard-app .index-meter{background:#171e25}.dashboard-app .index-coverage-table tr[data-state="complete"] .index-meter>span{background:#b8f34a}.dashboard-app .index-meter>span{background:#ffb44d}.dashboard-app .index-method{border-top-color:#202a34}.dashboard-app .empty-state{border-color:#293641;color:#899895}.dashboard-app ::selection{background:rgba(255,79,216,.28);color:#fff}.dashboard-app *{scrollbar-color:#34434f #080a0d}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
+PRODUCTION_UI_CSS = """
+.dashboard-app[data-theme="hyperpunk"]{--app-bg:#050607;--app-surface:#0b0e12;--app-surface-2:#0e1319;--app-control:#090c10;--app-line:#202a34;--app-line-strong:#34434f;--app-text:#d8e2e0;--app-muted:#899895;--app-accent:#37e6ff;--app-accent-soft:rgba(55,230,255,.11);--app-secondary:#ff4fd8;--app-good:#6ee7b7;--app-warn:#ffc268;--app-bad:#ff7c91}
+.dashboard-app[data-theme="ultraviolet"]{--ink:#ddd9eb;--ink-2:#c3bfd2;--paper:#050408;--surface:#0d0a13;--line:#2b223b;--muted:#938da1;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.12);--green:#55e6c1;--green-soft:rgba(85,230,193,.1);--amber:#ffd166;--amber-soft:rgba(255,209,102,.1);--red:#ff7893;--red-soft:rgba(255,120,147,.1);--series-1:#a78bfa;--series-2:#55e6c1;--series-3:#55bdf2;--series-4:#f472d0;--series-5:#ffd166;--series-6:#ff7893;--chart-grid:#2b223b;--chart-axis:#958ea4;--app-bg:#050408;--app-surface:#0d0a13;--app-surface-2:#120e1a;--app-control:#0a0710;--app-line:#2b223b;--app-line-strong:#493a60;--app-text:#ddd9eb;--app-muted:#938da1;--app-accent:#a78bfa;--app-accent-soft:rgba(167,139,250,.12);--app-secondary:#55e6c1;--app-good:#55e6c1;--app-warn:#ffd166;--app-bad:#ff7893}
+.dashboard-app[data-theme="ember"]{--ink:#e7dfd7;--ink-2:#cbbfb5;--paper:#070503;--surface:#110c08;--line:#36271d;--muted:#9d9086;--accent:#ff8a4c;--accent-soft:rgba(255,138,76,.12);--green:#b8e36b;--green-soft:rgba(184,227,107,.1);--amber:#ffc857;--amber-soft:rgba(255,200,87,.1);--red:#ff6f7d;--red-soft:rgba(255,111,125,.1);--series-1:#ff8a4c;--series-2:#b8e36b;--series-3:#ffd166;--series-4:#ff6f7d;--series-5:#c792ea;--series-6:#5ed7d7;--chart-grid:#36271d;--chart-axis:#9d9086;--app-bg:#070503;--app-surface:#110c08;--app-surface-2:#17100b;--app-control:#0d0906;--app-line:#36271d;--app-line-strong:#59402e;--app-text:#e7dfd7;--app-muted:#9d9086;--app-accent:#ff8a4c;--app-accent-soft:rgba(255,138,76,.12);--app-secondary:#b8e36b;--app-good:#b8e36b;--app-warn:#ffc857;--app-bad:#ff6f7d}
+.dashboard-app[data-theme]{background:var(--app-bg);color:var(--app-text);accent-color:var(--app-accent)}
+.dashboard-app[data-theme] .topbar{background:var(--app-bg);border-bottom-color:var(--app-line)}
+.dashboard-app[data-theme] .panel,.dashboard-app[data-theme] .overview-metric,.dashboard-app[data-theme] .window-bar,.dashboard-app[data-theme] .source-readings{border-color:var(--app-line);background:var(--app-surface)}
+.dashboard-app[data-theme] input,.dashboard-app[data-theme] select,.dashboard-app[data-theme] .check-field,.dashboard-app[data-theme] .layer-picker{border-color:var(--app-line-strong);background:var(--app-control);color:var(--app-text)}
+.dashboard-app[data-theme] button,.dashboard-app[data-theme] .scope-apply{border-color:var(--app-accent);background:var(--app-accent-soft);color:var(--app-accent)}
+.dashboard-app[data-theme] button:hover{background:color-mix(in srgb,var(--app-accent) 18%,var(--app-surface))}
+.dashboard-app[data-theme] input:focus,.dashboard-app[data-theme] select:focus,.dashboard-app[data-theme] button:focus,.dashboard-app[data-theme] a:focus,.dashboard-app[data-theme] summary:focus{outline-color:color-mix(in srgb,var(--app-accent) 38%,transparent);border-color:var(--app-accent)}
+.dashboard-app[data-theme] .brand-mark{border-color:color-mix(in srgb,var(--app-accent) 38%,transparent);background:var(--app-control);color:var(--app-accent);box-shadow:0 0 18px color-mix(in srgb,var(--app-accent) 14%,transparent)}
+.dashboard-app[data-theme] .tool-menu>summary,.dashboard-app[data-theme] .tool-menu-items,.dashboard-app[data-theme] .custom-window-form{border-color:var(--app-line-strong);background:var(--app-surface);color:var(--app-text)}
+.dashboard-app[data-theme] .tool-menu-items a,.dashboard-app[data-theme] .tool-menu-items button{color:var(--app-text)}.dashboard-app[data-theme] .tool-menu-items a:hover{background:var(--app-surface-2)}
+.dashboard-app[data-theme] .source-chip,.dashboard-app[data-theme] .capability-chip,.dashboard-app[data-theme] .graph-meta span,.dashboard-app[data-theme] .graph-zoom-status{background:var(--app-surface-2);color:var(--ink-2)}
+.dashboard-app[data-theme] .chart-stage,.dashboard-app[data-theme] .series-panel .chart-stage,.dashboard-app[data-theme] .chart-card,.dashboard-app[data-theme] .graph-stage,.dashboard-app[data-theme] .graph-inspector,.dashboard-app[data-theme] .graph-disclosure,.dashboard-app[data-theme] .distance-item,.dashboard-app[data-theme] .signal-item{border-color:var(--app-line);background:var(--app-control)}
+.dashboard-app[data-theme] .chart-tooltip{border-color:var(--app-line-strong);background:color-mix(in srgb,var(--app-surface) 96%,transparent);color:var(--app-text)}
+.dashboard-app[data-theme] .chart-tooltip-date,.dashboard-app[data-theme] .chart-tooltip-value{color:var(--app-text)}.dashboard-app[data-theme] .chart-tooltip-label{color:var(--app-muted)}
+.dashboard-app[data-theme] .rank-track,.dashboard-app[data-theme] .capture-track,.dashboard-app[data-theme] .funnel-track,.dashboard-app[data-theme] .country-track,.dashboard-app[data-theme] .index-meter{background:var(--app-surface-2)}
+.dashboard-app[data-theme] .rank-fill,.dashboard-app[data-theme] .country-track>span{background:var(--series-1)}.dashboard-app[data-theme] .capture-track>span,.dashboard-app[data-theme] .funnel-track i{background:var(--series-2)}
+.dashboard-app[data-theme] .graph-node{fill:var(--app-surface);stroke:var(--app-accent)}.dashboard-app[data-theme] .graph-label,.dashboard-app[data-theme] .graph-cluster-label{fill:var(--app-text)}.dashboard-app[data-theme] .graph-cluster-label{stroke:var(--app-bg)}
+.dashboard-app[data-theme] table{color:var(--app-text)}.dashboard-app[data-theme] th,.dashboard-app[data-theme] td{border-bottom-color:var(--app-line)}.dashboard-app[data-theme] th{color:var(--app-muted)}.dashboard-app[data-theme] tbody tr:hover{background:var(--app-surface-2)}
+.app-topbar-inner{max-width:1480px}.app-brand{flex:0 0 auto;color:inherit;text-decoration:none}.app-nav{display:flex;flex:0 0 auto;gap:4px;align-items:center}.app-nav a{padding:7px 9px;border-radius:8px;color:var(--app-muted);font-size:11px;font-weight:850;text-decoration:none}.app-nav a:hover{background:var(--app-surface-2);color:var(--app-text)}.app-nav a.active{background:var(--app-accent-soft);color:var(--app-accent)}
+.app-header-actions{display:flex;min-width:0;gap:12px;align-items:center}.app-header-actions .live-state{min-width:0;max-width:min(36vw,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.theme-field{display:flex;flex:0 0 auto;gap:7px;align-items:center;color:var(--app-muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}.theme-field select{width:auto;min-height:34px;padding:5px 28px 5px 9px;border-radius:8px;font-size:11px;font-weight:800;text-transform:none;letter-spacing:0}.app-page .shell{max-width:1480px;padding-top:22px}.app-page .hero{align-items:center;margin-bottom:14px;border-color:var(--app-line);background:linear-gradient(135deg,var(--app-accent-soft),var(--app-surface));color:var(--app-text);box-shadow:var(--shadow-soft)}.app-page .hero h1{font-size:clamp(26px,3vw,38px)}.app-page .hero-copy{max-width:820px;margin-top:7px;color:var(--ink-2);font-size:13px}.app-page .eyebrow{margin-bottom:5px;color:var(--app-accent);font-size:10px}.app-page .coverage-badge{background:color-mix(in srgb,var(--app-good) 12%,transparent);color:var(--app-good)}.app-page .trust-card{border-color:var(--app-line-strong);background:var(--app-accent-soft)}.app-page .trust-label,.app-page .trust-value span{color:var(--ink-2)}.app-page .trust-value{color:var(--app-text)}
+.app-page .kpi-grid{margin-bottom:12px}.app-page .kpi-card{min-height:128px;padding:15px;border-color:var(--app-line);background:var(--app-surface);box-shadow:var(--shadow-soft)}.app-page .kpi-card:before{background:var(--app-accent)}.app-page .kpi-card:after{background:var(--app-accent-soft)}.app-page .kpi-value{font-size:30px}.app-page .kpi-note{white-space:normal}.app-page .control-panel{padding:0;overflow:visible}.app-page .control-summary{display:flex;margin:0;padding:14px 16px;cursor:pointer;list-style:none}.app-page .control-summary::-webkit-details-marker{display:none}.app-page .control-summary:after{content:"Open";display:block;flex:0 0 auto;width:auto;height:auto;margin-left:auto;border-radius:0;background:transparent;color:var(--app-accent);font-size:10px;font-weight:850}.app-page .control-panel[open] .control-summary:after{content:"Close"}.app-page .control-content{padding:0 16px 16px;border-top-color:var(--app-line)}.app-page .quick-links{margin-bottom:12px}.app-page .quick-links a{border-color:var(--app-line);background:var(--app-surface);color:var(--ink-2)}.app-page .quick-links a:hover{border-color:var(--app-line-strong);background:var(--app-surface-2)}
+.raw-data-details{overflow:hidden;margin-bottom:18px}.raw-data-details>summary{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:15px 18px;cursor:pointer;list-style:none;font-weight:850}.raw-data-details>summary::-webkit-details-marker{display:none}.raw-data-details>summary:after{content:"Open table";color:var(--app-accent);font-size:10px}.raw-data-details[open]>summary:after{content:"Close table"}.raw-data-details .table-panel{margin:0;border:0;border-top:1px solid var(--app-line);border-radius:0;box-shadow:none}.app-filter-summary{color:var(--app-muted);font-size:11px;font-weight:700}.observation-source-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.observation-source{padding:14px;border:1px solid var(--app-line);border-radius:12px;background:var(--app-surface)}.observation-source span{display:block;color:var(--app-muted);font-size:10px;font-weight:850;text-transform:uppercase}.observation-source strong{display:block;margin-top:7px;font-size:24px}.observation-source i{display:block;height:5px;margin-top:10px;border-radius:999px;background:var(--app-surface-2);overflow:hidden}.observation-source i b{display:block;height:100%;background:var(--app-accent)}
+@media(max-width:980px){.app-topbar-inner{align-items:flex-start;flex-wrap:wrap}.app-nav{order:3;width:100%;overflow-x:auto}.app-header-actions{margin-left:auto}.app-page .graph-form{grid-template-columns:repeat(2,minmax(0,1fr))}.observation-source-grid{grid-template-columns:1fr}}
+@media(max-width:650px){.app-header-actions .live-state{display:none}.theme-field span{display:none}.app-nav{padding-bottom:2px}.app-page .graph-form{grid-template-columns:1fr}.app-page .hero{display:block}.app-page .coverage-badge{margin-top:10px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + PRODUCTION_UI_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
+  const themeStorageKey = "boho-analytics-theme";
+  const availableThemes = new Set(["hyperpunk", "ultraviolet", "ember"]);
+  let savedTheme = "hyperpunk";
+  try {
+    const candidate = window.localStorage.getItem(themeStorageKey);
+    if (availableThemes.has(candidate)) savedTheme = candidate;
+  } catch (_error) {
+    // Storage can be unavailable in hardened or private browsing contexts.
+  }
+  document.body.dataset.theme = savedTheme;
+
   const defaultColors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
   const integerFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
@@ -1434,6 +1474,17 @@ JS = r"""
   if (propertySelector) {
     propertySelector.addEventListener("change", () => propertySelector.form?.requestSubmit());
   }
+  const themeSelector = document.getElementById("theme-selector");
+  if (themeSelector) {
+    themeSelector.value = savedTheme;
+    themeSelector.addEventListener("change", () => {
+      const theme = availableThemes.has(themeSelector.value) ? themeSelector.value : "hyperpunk";
+      document.body.dataset.theme = theme;
+      try { window.localStorage.setItem(themeStorageKey, theme); } catch (_error) {}
+      loadCharts();
+      loadGeography();
+    });
+  }
   loadCharts();
   loadGeography();
   initSiteGraph();
@@ -1453,6 +1504,33 @@ def _window(query, timezone, default_days, default_end_lag_days=0):
 
 def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
+
+
+def _app_header(active: str, status: str) -> str:
+    nav_items = (
+        ("overview", "/", "Overview"),
+        ("plot", "/?view=plot", "Plot"),
+        ("site-graph", "/site-graph", "Site graph"),
+        ("routes", "/route-observations", "Routes"),
+    )
+    nav = "".join(
+        f'<a class="{"active" if key == active else ""}"'
+        f'{" aria-current=\"page\"" if key == active else ""} href="{href}">{label}</a>'
+        for key, href, label in nav_items
+    )
+    return (
+        '<header class="topbar"><div class="topbar-inner app-topbar-inner">'
+        '<a class="brand app-brand" href="/" aria-label="Boho Analytics overview">'
+        '<span class="brand-mark">BA</span><strong>Boho Analytics</strong></a>'
+        f'<nav class="app-nav" aria-label="Application">{nav}</nav>'
+        '<div class="app-header-actions"><label class="theme-field" for="theme-selector">'
+        '<span>Theme</span><select id="theme-selector" aria-label="Color theme">'
+        '<option value="hyperpunk">Hyperpunk</option>'
+        '<option value="ultraviolet">Ultraviolet</option>'
+        '<option value="ember">Ember</option>'
+        '</select></label>'
+        f'<div class="live-state">{_e(status)}</div></div></div></header>'
+    )
 
 
 def _compare_flag(query) -> bool:
@@ -3998,10 +4076,11 @@ def _route_observation_html(payload):
         f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(_source_label(source))}</option>'
         for source in payload["available_sources"]
     )
-    metric_options = '<option value="">All accepted route metrics</option>' + "".join(
-        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(_metric_label(metric))} ({_e(metric)})</option>'
+    metric_options = '<option value="">All route metrics</option>' + "".join(
+        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(_metric_label(metric))}</option>'
         for metric in payload["available_metrics"]
     )
+    browser_rows = payload["rows"][:50]
     rows = "".join(
         "<tr>"
         f'<td>{_e(row["site_id"])}</td><td>{_e(_source_label(row["source"]))}</td>'
@@ -4010,7 +4089,7 @@ def _route_observation_html(payload):
         f'<td>{_e(_format_value(float(row["value"]), row["unit"]))}<small class="performance-meta">{_e(row["unit"])}</small></td><td>{_e(row["coverage"])}</td>'
         f'<td>{_e(row["data_state"])}</td><td>{_e(row["freshness"])}</td>'
         f'<td>{_e(row["provider_limitation"])}</td></tr>'
-        for row in payload["rows"]
+        for row in browser_rows
     ) or '<tr><td colspan="10">No accepted route observations match this bounded window.</td></tr>'
     query = {
         key: value for key, value in (
@@ -4027,14 +4106,39 @@ def _route_observation_html(payload):
         f'<span class="source-chip">{_e(dimension.replace("_", " "))}</span>'
         for dimension in payload.get("available_dimensions", [])
     ) or '<span class="performance-meta">No accepted dimensions in this selection</span>'
+    source_counts = {}
+    for row in payload["rows"]:
+        source_counts[row["source"]] = source_counts.get(row["source"], 0) + 1
+    sample_size = max(1, len(payload["rows"]))
+    source_summary = "".join(
+        '<article class="observation-source">'
+        f'<span>{_e(_source_label(source))}</span><strong>{count:,}</strong>'
+        f'<i aria-hidden="true"><b class="p-{round(count / sample_size * 100)}"></b></i></article>'
+        for source, count in sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))
+    ) or '<p class="empty-state">No matching observations.</p>'
+    cards = (
+        ("Matching rows", payload["total_rows"], "Complete count for these filters"),
+        ("Table rows", len(browser_rows), "Shown in the browser"),
+        ("Export cap", payload["limit"], "Maximum sanitized rows per request"),
+        ("Dimensions", len(payload.get("available_dimensions", [])), "Available stored dimension fields"),
+    )
+    cards_html = "".join(
+        '<article class="kpi-card"><div class="kpi-top">'
+        f'<span class="kpi-label">{_e(label)}</span></div>'
+        f'<strong class="kpi-value">{value:,}</strong><p class="kpi-note">{_e(note)}</p></article>'
+        for label, value, note in cards
+    )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Route observations - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to route observations</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only route observations</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a href="/site-graph">Site Graph</a><a class="active" aria-current="page" href="/route-observations">Route observations</a></div>
-<section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} - end exclusive</p><h1>Route observations</h1><p class="hero-copy">Provider-separated, privacy-bounded route and acquisition facts. Search clicks are not sessions; GA4 sessions are not Umami visits.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["displayed_rows"]} of {payload["total_rows"]} rows</span></section>
-<section class="panel control-panel"><div class="panel-heading"><div><h2>Bounded filters</h2><p>Filters never trigger provider collection or alter stored facts.</p></div></div>
+<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body class="dashboard-app app-page routes-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to route observations</a>
+{_app_header("routes", "Stored route evidence")}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} · end exclusive</p><h1>Routes</h1><p class="hero-copy">Content, acquisition, and search observations by property and provider.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["total_rows"]:,} matches</span></section>
+<section class="kpi-grid" aria-label="Route observation summary">{cards_html}</section>
+<section class="panel section-panel"><div class="panel-heading"><div><h2>Provider mix</h2><p>Row counts in the current bounded sample; these are observations, not visits.</p></div></div><div class="observation-source-grid">{source_summary}</div></section>
+<details class="panel control-panel"><summary class="panel-heading control-summary"><div><h2>Filters</h2><p class="app-filter-summary">{_e(filters["site"])} · {_e(_source_label(filters["source"])) if filters["source"] else "all providers"} · {_e(_metric_label(filters["metric"])) if filters["metric"] else "all metrics"}</p></div></summary><div class="control-content">
 <form class="filter-form" method="get" action="/route-observations"><input type="hidden" name="report" value="{_e(filters["report"])}">
 <label class="field"><span>Start</span><input type="date" name="start" value="{_e(payload["window"]["start"][:10])}"></label>
 <label class="field"><span>End (exclusive)</span><input type="date" name="end" value="{_e(payload["window"]["end"][:10])}"></label>
@@ -4042,13 +4146,13 @@ def _route_observation_html(payload):
 <label class="field"><span>Provider</span><select name="source">{source_options}</select></label>
 <label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Exact route</span><input name="route" value="{_e(filters["route"])}" placeholder="/services/"></label>
-<button type="submit">Apply filters</button></form></section>
-<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Provider semantics remain separate</strong><br>No visitor or session identifiers, unscreened query wording, or full external referrer URLs are exposed. Opted-in query text has already passed the configured privacy screen. Search Console provider date and surface remain explicit row dimensions.</div></div></aside>
-<section class="panel section-panel"><div class="panel-heading"><div><h2>Dimension disclosure</h2><p>Only accepted, stored dimensions are displayed; provider date, Search Console surface, and dimension family are not folded into route identity.</p></div></div><div class="capability-strip">{dimension_chips}</div></section>
-<section class="panel table-panel"><div class="panel-heading"><div><h2>Accepted observations</h2><p>Complete matching-row total: {payload["total_rows"]}. Display is bounded to {payload["limit"]}; export uses the same bounded, sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
+<button type="submit">Apply filters</button></form></div></details>
+<details class="panel raw-data-details"><summary><span>Observation table</span><span class="app-filter-summary">Showing {len(browser_rows):,} of {payload["total_rows"]:,} matches</span></summary>
+<section class="table-panel"><div class="panel-heading"><div><h2>Stored observations</h2><p>Browser display is capped at 50 rows; CSV is capped at {payload["limit"]:,} sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
 <div class="table-scroll"><table><caption class="sr-only">Provider-separated route observations with coverage, freshness, and limitations</caption>
-<thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section>
-<footer class="footer"><span>Read-only compatibility view</span><span>No provider sync, unscreened query wording, identifier, or full external referrer data</span></footer></main></body></html>"""
+<thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section></details>
+<details class="panel data-details"><summary>Definitions &amp; privacy</summary><div class="data-details-body"><p>Provider metrics remain separate. Search clicks are not sessions, and GA4 sessions are not Umami visits. No visitor or session identifiers, unscreened query wording, or full external referrer URLs are exposed.</p><div class="capability-strip">{dimension_chips}</div></div></details>
+<footer class="footer"><span>Read-only route evidence</span><span>No browser-side provider access</span></footer></main></body></html>"""
 
 
 def handler_factory(config, store, credentials=None):
@@ -4458,9 +4562,9 @@ def handler_factory(config, store, credentials=None):
                     for site in payload["sites"]
                 )
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a>{site_links}</div>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head><body class="dashboard-app app-page site-graph-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to graph dashboard</a>
+{_app_header("site-graph", "Stored structural evidence")}
+<main class="shell" id="main"><div class="quick-links" aria-label="Available site snapshots">{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
                 return self._send(200, "text/html; charset=utf-8", page)
 
@@ -4516,23 +4620,18 @@ def handler_factory(config, store, credentials=None):
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a></div>
-<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Inspect internal-link structure with exact completeness disclosures, a safe full-graph mode for small sites, bounded rendering for larger sites, and a complete paginated evidence table.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
-<div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
-{view_links}
-<section class="panel control-panel"><div class="panel-heading"><div><h2>Graph controls</h2><p>Contextual, related, and action links are shown by default. Browser controls are read-only.</p></div></div>
-<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Neighborhood page route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><label class="field"><span>Graph mode</span><select name="graph">{graph_mode_options}</select></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></section>
-<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Structural evidence</strong><br>{_e(payload["structural_evidence_notice"])}</div></div></aside>
+<body class="dashboard-app app-page site-graph-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to graph dashboard</a>
+{_app_header("site-graph", "Snapshot " + payload["snapshot"]["captured_at"][:10])}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} · snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site graph</h1><p class="hero-copy">Internal-link structure, reachability, and unresolved destinations for {_e(payload["site"]["display_name"])}.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
 <section class="kpi-grid" aria-label="Graph overview">{cards_html}</section>
-<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Full structural overview' if payload["display"]["graph_mode"] == 'full' else 'Bounded structural overview'}</h2><p>Active projection: contextual; layers: {_e(", ".join(payload["selected_layers"]))}; unique edges aggregate matching occurrences by source, destination, and layer.</p></div><span class="source-chip">{_e(payload["display"]["graph_mode"])} mode</span></div>{graph_disclosure}{_site_graph_svg(payload)}<p class="graph-caption">Arrows represent aggregated, stored, crawlable internal relationships in the selected layers. Node color marks goals, unreachable pages, and the selected page.</p>{graph_table}</section>
-{analysis_panels}
-{complete_edge_table}
+<details class="panel control-panel"><summary class="panel-heading control-summary"><div><h2>Graph controls</h2><p>{_e(payload["display"]["graph_mode"])} mode · {_e(", ".join(payload["selected_layers"]))}</p></div></summary><div class="control-content">
+<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Focus route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><label class="field"><span>Graph mode</span><select name="graph">{graph_mode_options}</select></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></div></details>
+<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Full structural overview' if payload["display"]["graph_mode"] == 'full' else 'Bounded structural overview'}</h2><p>Hover or focus a node or edge for exact stored details.</p></div><span class="source-chip">{_e(payload["display"]["graph_mode"])} mode</span></div>{_site_graph_svg(payload)}<p class="graph-caption">Arrows are stored crawlable internal relationships. Node color marks goals, unreachable pages, and the selected page.</p></section>
 <section class="panel section-panel"><div class="panel-heading"><div><h2>Goal distance</h2><p>Shortest structural path to a configured goal in the compiled contextual projection.</p></div></div><div class="distance-grid">{bucket_html}</div></section>
-<div class="split-grid"><section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Deterministic Kosaraju components; these are structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section>
-<section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Evidence-linked structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section></div>
-<footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Read-only - loopback-first - no browser ingest, build, compile, or provider sync</span></footer></main></body></html>"""
+<section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section>
+<details class="panel raw-data-details"><summary><span>Deep analysis &amp; evidence</span><span class="app-filter-summary">Matrix, resilience, entry-to-goal, snapshots, edges</span></summary><div class="data-details-body"><div class="graph-meta"><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>{view_links}{graph_disclosure}{graph_table}{analysis_panels}{complete_edge_table}<section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section><p class="graph-caption">{_e(payload["structural_evidence_notice"])}</p></div></details>
+<footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Stored structural evidence · no browser ingest or compile</span></footer></main></body></html>"""
             return self._send(200, "text/html; charset=utf-8", page)
 
         def _request(
@@ -5279,8 +5378,8 @@ def handler_factory(config, store, credentials=None):
                 page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(scope_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body class="dashboard-app"><a class="skip-link" href="#main">Skip to dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><strong>Boho Analytics</strong></div><div class="live-state">{_e(updated_at)}</div></div></header>
+<body class="dashboard-app" data-theme="hyperpunk" data-page="overview"><a class="skip-link" href="#main">Skip to dashboard</a>
+{_app_header("overview", updated_at)}
 <main class="shell" id="main">
 <section class="dashboard-header"><div class="dashboard-title"><h1>{_e(scope_title)}</h1><div class="dashboard-meta"><span>{_e(window_label)}</span><span class="coverage-state" data-state="{_e(core_coverage_state)}">{_e(core_coverage)}</span></div></div>
 <div class="dashboard-controls"><form class="property-form" id="property-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}"><input type="hidden" name="start" value="{_e(start)}"><input type="hidden" name="end" value="{_e(end)}">{search_hidden}<label class="property-field"><span>Property</span><select id="property-selector" name="site">{dashboard_site_options}</select></label><noscript><button class="scope-apply" type="submit">Apply</button></noscript></form>
@@ -5295,20 +5394,20 @@ def handler_factory(config, store, credentials=None):
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(page_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body><a class="skip-link" href="#main">Skip to dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Stored portfolio evidence</span></div></div><div class="live-state">{_e(snapshot_status)}</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
-<section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div>{coverage_summary}</section>
-<nav class="subnav" aria-label="Report sections">{subnav}</nav>
-<details class="panel control-panel"{controls_open}><summary class="panel-heading control-summary"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>{'Choose source, metric, scope, comparison, and chart style.' if is_plot else 'Change the window or site scope, or export the underlying evidence.'}</p>{scope_summary}</div></summary><div class="control-content">
+<body class="dashboard-app app-page plot-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to plot builder</a>
+{_app_header("plot", snapshot_status)}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">{_e(window_label)} · end exclusive</p><h1>Plot builder</h1><p class="hero-copy">Build a precise comparison from stored provider data. The chart always retains the provider's metric definition and unit.</p></div>{coverage_summary}</section>
+{primary_content}
+<details class="panel control-panel" open><summary class="panel-heading control-summary"><div><h2>Plot controls</h2><p>Source, metric, property, comparison, and chart style.</p>{scope_summary}</div></summary><div class="control-content">
 <form class="{form_class}" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{view_input}{hidden_subreport}
 <label class="field"><span>Start date</span><input type="date" name="start" value="{_e(start)}" required></label>
 <label class="field"><span>End date</span><input type="date" name="end" value="{_e(end)}" required></label>
 {source_field}<label class="field"><span>{'Metric' if is_plot else 'Primary chart'}</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{search_type_field}{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{evidence_html}
-<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
+{_warnings_html(result['warnings'])}{evidence_html}
+<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Stored data only · no browser-side provider access</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 
     return Handler

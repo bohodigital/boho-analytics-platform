@@ -172,6 +172,11 @@ class WebTests(unittest.TestCase):
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertIn('class="dashboard-app"', body)
+        self.assertIn('data-theme="hyperpunk" data-page="overview"', body)
+        self.assertIn('class="app-nav" aria-label="Application"', body)
+        self.assertIn('id="theme-selector" aria-label="Color theme"', body)
+        self.assertIn('<option value="ultraviolet">Ultraviolet</option>', body)
+        self.assertIn('<option value="ember">Ember</option>', body)
         self.assertIn('<h1>All properties</h1>', body)
         self.assertIn('id="property-selector" name="site"', body)
         self.assertIn('<option value="all" selected>All properties</option>', body)
@@ -810,6 +815,8 @@ metric_groups = ["traffic"]
         path = "/?report=summary&view=plot&source=umami&metric=umami.pageviews&style=area&compare=1&start=2026-07-01&end=2026-07-02"
         status, _headers, body = self.request(path)
         self.assertEqual(status, 200); self.assertIn("Time-series Plot Builder", body)
+        self.assertIn('class="dashboard-app app-page plot-page"', body)
+        self.assertLess(body.index('class="panel chart-panel"'), body.index('class="panel control-panel"'))
         self.assertIn('name="source"', body); self.assertIn('name="style"', body); self.assertIn('name="compare"', body)
         self.assertIn("Load series JSON", body); self.assertIn("Download series CSV", body)
 
@@ -830,6 +837,9 @@ metric_groups = ["traffic"]
     def test_script_asset_is_same_origin_and_invalid_plot_source_is_rejected(self):
         status, _headers, body = self.request("/assets/app.js")
         self.assertEqual(status, 200); self.assertIn("ResizeObserver", body); self.assertIn("fetch(canvas.dataset.seriesUrl", body)
+        self.assertIn('const themeStorageKey = "boho-analytics-theme"', body)
+        self.assertIn('new Set(["hyperpunk", "ultraviolet", "ember"])', body)
+        self.assertIn("document.body.dataset.theme = theme", body)
         self.assertIn("contiguousSegments", body)
         self.assertIn("comparison unavailable", body)
         self.assertIn("formatMetricValue", body)
@@ -1083,6 +1093,21 @@ metric_groups = ["traffic"]
         )
         self.assertNotIn("discover", body)
 
+    def test_route_observations_page_is_summary_first_and_bounded(self):
+        status, _headers, body = self.request(
+            "/route-observations?report=summary&site=example-site"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn('class="dashboard-app app-page routes-page"', body)
+        self.assertIn('<h1>Routes</h1>', body)
+        self.assertIn("Matching rows", body)
+        self.assertIn("Provider mix", body)
+        self.assertIn("Browser display is capped at 50 rows", body)
+        self.assertIn('<details class="panel raw-data-details">', body)
+        self.assertIn('src="/assets/app.js"', body)
+
     def test_forms_cards_preserve_unknown_pipeline_values(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
         self.assertNotIn('data-metric="forms.pending"', body)
@@ -1159,6 +1184,10 @@ metric_groups = ["traffic"]
     def test_css_charts_need_no_inline_style_permission(self):
         status, _headers, body = self.request("/assets/app.css")
         self.assertEqual(status, 200); self.assertIn(".h-50{height:100%}", body)
+        self.assertIn('.dashboard-app[data-theme="hyperpunk"]', body)
+        self.assertIn('.dashboard-app[data-theme="ultraviolet"]', body)
+        self.assertIn('.dashboard-app[data-theme="ember"]', body)
+        self.assertIn(".app-page .kpi-card:before{background:var(--app-accent)}", body)
         page_headers = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")[1]
         self.assertNotIn("unsafe-inline", page_headers["Content-Security-Policy"])
 
@@ -1166,6 +1195,9 @@ metric_groups = ["traffic"]
         status, headers, body = self.request(f"/site-graph?site={self.graph_site_key}&page=%2Fservices%2F")
         self.assertEqual(status, 200)
         self.assertIn("Site Graph", body)
+        self.assertIn('class="dashboard-app app-page site-graph-page"', body)
+        self.assertIn('id="theme-selector" aria-label="Color theme"', body)
+        self.assertIn("Deep analysis &amp; evidence", body)
         self.assertIn("Structural evidence", body)
         self.assertIn("Analytical basis stays compiled contextual", body)
         self.assertIn("Goal distance", body)

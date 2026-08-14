@@ -54,10 +54,10 @@ cannot be initiated from the browser.
   strongly connected components, Core 2.1 reconciliation coverage, and evidence-linked corrected
   findings. Complete coverage totals are independent of the SVG cap. It is structural evidence only
   and never presents link topology as visitor behavior.
-- A read-only `/route-observations` compatibility table for accepted GA4, Search Console, and Umami
-  route-dimensional aggregates. Providers, metric semantics, coverage, freshness, provider date
-  basis, and limitations remain separate; no raw queries, visitor/session identifiers, or full
-  external referrer URLs are exposed.
+- A read-only, summary-first `/route-observations` explorer for accepted GA4, Search Console, and
+  Umami route-dimensional aggregates, with bounded raw evidence available on demand. Providers,
+  metric semantics, coverage, freshness, provider date basis, and limitations remain separate; no
+  raw queries, visitor/session identifiers, or full external referrer URLs are exposed.
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
@@ -149,7 +149,9 @@ before exposing client data. Basic authentication is only a small deployment con
 replacement for HTTPS or an identity-aware proxy.
 
 Read [SECURITY.md](SECURITY.md) and the [threat model](docs/threat-model.md). Architecture and data
-contracts are documented under [docs](docs/architecture.md).
+contracts are documented under [docs](docs/architecture.md). The staged identity, authorization,
+hosting, and production acceptance plan is in
+[the production web application roadmap](docs/production-webapp-roadmap.md).
 
 ## Development
 
