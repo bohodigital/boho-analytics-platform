@@ -54,6 +54,66 @@ class GeographyServiceTests(unittest.TestCase):
         self.assertEqual(payload["us_states"], [])
         self.assertEqual(payload["region_support"]["status"], "unavailable")
         self.assertIn("country", payload["methodology"].casefold())
+        self.assertEqual(payload["search_type"], "web")
+        self.assertEqual(payload["available_search_types"], ["web"])
+        self.assertEqual(
+            payload["search_types_by_site"], {"example-site": ["web"]}
+        )
+
+    def test_search_console_country_view_never_blends_search_surfaces(self):
+        binding = self.config.bindings[0]
+        object.__setattr__(binding, "options", {
+            "route_analytics": {"search_types": ["all"]},
+        })
+        common = {
+            "client_id": "example-client",
+            "site_id": "example-site",
+            "source": "search-console",
+            "metric": "search.country-clicks",
+            "unit": "count",
+            "day": "2026-07-01",
+            "timezone": "UTC",
+        }
+        self.store.upsert([
+            daily_point(**common, value=9, dimensions={
+                "country_code": "USA",
+                "country_code_system": "iso-alpha3",
+                "search_type": "web",
+            }),
+            daily_point(**common, value=4, dimensions={
+                "country_code": "GBR",
+                "country_code_system": "iso-alpha3",
+                "search_type": "image",
+            }),
+        ])
+
+        default_payload = self.service.render(
+            "summary", self.window, "search-console"
+        )
+        image_payload = self.service.render(
+            "summary", self.window, "search-console", search_type="image"
+        )
+
+        self.assertEqual(default_payload["search_type"], "web")
+        self.assertEqual(default_payload["countries"], [{
+            "code": "USA", "code_system": "iso-alpha3", "value": 9,
+        }])
+        self.assertEqual(image_payload["search_type"], "image")
+        self.assertEqual(image_payload["countries"], [{
+            "code": "GBR", "code_system": "iso-alpha3", "value": 4,
+        }])
+        self.assertEqual(
+            image_payload["available_search_types"],
+            ["web", "image", "video", "news", "discover", "googleNews"],
+        )
+        self.assertEqual(
+            image_payload["coverage"]["configured_site_ids"],
+            ["example-site"],
+        )
+        with self.assertRaisesRegex(ValueError, "search type is unavailable"):
+            self.service.render(
+                "summary", self.window, "search-console", search_type="bogus"
+            )
 
     def test_rejects_unknown_source_and_site(self):
         with self.assertRaisesRegex(ValueError, "geography source"):

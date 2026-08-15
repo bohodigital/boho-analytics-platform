@@ -2,9 +2,10 @@
 
 ## Decision summary
 
-Boho Analytics Platform starts as a modular monolith: one Python package, one sync command, one
-web process, and one database. The modules have explicit contracts so providers, storage, and the
-web surface can evolve independently without paying the operational cost of microservices.
+Boho Analytics Platform is one modular Python package with two deliberately independent data lanes.
+The normalized reporting lane uses SQLite; the private Search Console bulk lane uses Parquet. The
+modules have explicit contracts so providers, storage, and the web surface can evolve independently
+without paying the operational cost of microservices.
 
 The browser reads the local analytics store. It never queries providers directly.
 
@@ -12,6 +13,8 @@ The browser reads the local analytics store. It never queries providers directly
 provider APIs -> explicit sync -> connectors -> catalog validation -> SQLite -> reports -> web/API
                        ^                ^               ^
                  credentials       sync ledger       absolute windows
+
+Search Console -> BigQuery datasets -> gsc-bulk -> private external-disk Parquet lake
 ```
 
 ## Public core and private deployment
@@ -31,6 +34,8 @@ A private deployment owns:
 - Client and property mappings.
 - Provider resource identifiers when they reveal private account structure.
 - Credential references and the credential-provider choice.
+- The private bulk-export YAML, property/dataset mappings, first-export and identity-proof dates,
+  dedicated reader identity, external storage root, schedules, retention, and backup policy.
 - Local ports, hostnames, schedules, retention, backup destinations, and access policies.
 - Private saved reports and generated report artifacts.
 
@@ -80,11 +85,32 @@ and migration-controlled schema changes. PostgreSQL becomes appropriate when mea
 contention, report concurrency, or dataset size exceeds the SQLite operating envelope. Provider
 connectors and reporting code do not depend on SQLite-specific SQL.
 
+Search Console bulk export is not a connector or SQLite storage adapter. `gsc-bulk` reads the two
+property-specific data tables plus their successful `ExportLog` histories and writes revision-aware
+immutable Parquet under a verified external filesystem. Unscreened query and URL dimensions remain
+in that private lake; the report engine and web process have no reader for it. See
+[`gsc-bigquery-bulk-export.md`](gsc-bigquery-bulk-export.md) and
+[ADR 0006](adr/0006-search-console-private-bulk-lake.md).
+
 ### Reporting
 
 The report engine accepts an explicit scope, window, timezone, grain, comparison, filters, metrics,
 and sections. Saved reports and sub-reports compile to the same request model; they are not separate
 query systems. See [`reporting-model.md`](reporting-model.md).
+
+### Analytics operations foundation
+
+Schema 5 is reserved for a generic immutable-definition registry. It does not itself add goals,
+segments, annotations, alerts, delivery, or browser features. Definition versions and activation
+history are separate so reactivation never rewrites history. Future consumers must select evidence
+through the existing active-fact/reporting layer; retained historical identities are not all active.
+
+Goal providers remain separate observations. Future segment compilers must use bounded
+provider-specific mappings and fail when a predicate cannot be honored. Future writer processes
+remain CLI or scheduler operations under the global writer lease.
+
+See [`analytics-operations-contracts.md`](analytics-operations-contracts.md) and
+[`analytics-operations-migration-plan.md`](analytics-operations-migration-plan.md).
 
 ### Web and API
 
@@ -96,6 +122,10 @@ remains usable when JavaScript is disabled. Production API documentation is disa
 The web layer performs no state-changing operations. `/api/v1/report` and `/api/v1/report.csv` expose
 aggregate reports; `/api/v1/series` and `/api/v1/series.csv` expose a selected stored daily series and
 optional preceding-period comparison. Provider sync remains a CLI/timer operation.
+
+Any future Analytics Operations HTML, JSON, or CSV route inherits this boundary. HTTP may inspect
+sanitized state but cannot activate definitions, add annotations, acknowledge or suppress alerts,
+trigger sync, send reports, modify recipients, or mutate the database.
 
 ### Forms monitoring
 

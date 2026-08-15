@@ -6,10 +6,13 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .build_info import version_string
 from .config import ConfigError, load_config
+from .credentials import ReferenceCredentialProvider
 from .engine import SyncEngine
 from .models import QueryWindow
 from .reporting import ReportService, to_csv
@@ -35,6 +38,23 @@ def _build_parser() -> argparse.ArgumentParser:
     restore = db_commands.add_parser("restore"); restore.add_argument("source"); restore.add_argument("--confirm", action="store_true")
     probe = commands.add_parser("probe", help="test configured read-only capabilities"); probe.add_argument("--connection", action="append")
     sync = commands.add_parser("sync", help="collect a bounded window"); _window_args(sync); sync.add_argument("--connection", action="append")
+    index_coverage = commands.add_parser(
+        "index-coverage", help="census sitemap pages with Google URL Inspection"
+    )
+    index_commands = index_coverage.add_subparsers(dest="index_coverage_command")
+    index_sync = index_commands.add_parser(
+        "sync", help="advance the quota-bounded per-property index census"
+    )
+    index_sync.add_argument("--site", action="append")
+    index_sync.add_argument("--per-property-limit", type=int, default=1900)
+    index_sync.add_argument("--pause-seconds", type=float, default=0.12)
+    index_sync.add_argument("--workers", type=int, default=16)
+    index_sync.add_argument("--refresh-days", type=int, default=21)
+    index_sync.add_argument("--freshness-days", type=int, default=30)
+    index_status = index_commands.add_parser(
+        "status", help="show the current per-property index census"
+    )
+    index_status.add_argument("--site", action="append")
     report = commands.add_parser("report", help="render a saved report"); report.add_argument("report_id"); report.add_argument("--subreport"); _window_args(report)
     report.add_argument("--format", choices=("json", "csv"), default="json"); report.add_argument("--output")
     commands.add_parser("serve", help="run the configured read-only web dashboard")
@@ -63,6 +83,36 @@ def _build_parser() -> argparse.ArgumentParser:
     graph_report.add_argument("--layer", action="append", choices=tuple(sorted(PROJECTION_LAYERS["full"])))
     graph_report.add_argument("--latest", action="store_true", help="report the latest compiled snapshot")
     graph_report.add_argument("--format", choices=("json",), default="json")
+    gsc_bulk = commands.add_parser(
+        "gsc-bulk", help="private Search Console BigQuery bulk lake operations"
+    )
+    gsc_bulk_commands = gsc_bulk.add_subparsers(dest="gsc_bulk_command")
+    bulk_validate = gsc_bulk_commands.add_parser(
+        "validate", help="validate a private bulk-export manifest"
+    )
+    bulk_validate.add_argument("--manifest", required=True)
+    bulk_probe = gsc_bulk_commands.add_parser(
+        "probe", help="verify storage and read-only BigQuery table access"
+    )
+    bulk_probe.add_argument("--manifest", required=True)
+    bulk_probe.add_argument("--site", action="append")
+    bulk_sync = gsc_bulk_commands.add_parser(
+        "sync", help="mirror completed BigQuery revisions to private Parquet"
+    )
+    bulk_sync.add_argument("--manifest", required=True)
+    bulk_sync.add_argument("--site", action="append")
+    bulk_sync.add_argument("--start")
+    bulk_sync.add_argument("--end")
+    bulk_sync.add_argument("--days", type=int)
+    bulk_sync.add_argument("--end-lag-days", type=int)
+    bulk_status = gsc_bulk_commands.add_parser(
+        "status", help="summarize locally current bulk partitions"
+    )
+    bulk_status.add_argument("--manifest", required=True)
+    bulk_verify = gsc_bulk_commands.add_parser(
+        "verify", help="verify every completed local bulk partition"
+    )
+    bulk_verify.add_argument("--manifest", required=True)
     return parser
 
 
@@ -87,6 +137,38 @@ def _window(
 
 def _emit(value, *, error=False):
     print(json.dumps(value, sort_keys=True), file=sys.stderr if error else sys.stdout)
+
+
+def _bulk_window(args):
+    if args.days is not None and (args.start or args.end):
+        raise ValueError("--days cannot be combined with --start or --end")
+    if args.days is None and bool(args.start) != bool(args.end):
+        raise ValueError("bulk sync requires both --start and --end")
+    lag = 3 if args.end_lag_days is None else args.end_lag_days
+    if args.start and args.end_lag_days is not None:
+        raise ValueError("--end-lag-days cannot be combined with --start and --end")
+    if args.days is not None:
+        if not 1 <= args.days <= 366:
+            raise ValueError("--days must be from 1 to 366")
+        if not 0 <= lag <= 30:
+            raise ValueError("--end-lag-days must be from 0 to 30")
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+        end = today - timedelta(days=lag)
+        return end - timedelta(days=args.days), end
+    if not args.start:
+        if not 0 <= lag <= 30:
+            raise ValueError("--end-lag-days must be from 0 to 30")
+        today = datetime.now(ZoneInfo("America/Los_Angeles")).date()
+        end = today - timedelta(days=lag)
+        return end - timedelta(days=7), end
+    try:
+        start = datetime.strptime(args.start, "%Y-%m-%d").date()
+        end = datetime.strptime(args.end, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("bulk sync dates must use YYYY-MM-DD") from exc
+    if start.isoformat() != args.start or end.isoformat() != args.end:
+        raise ValueError("bulk sync dates must use YYYY-MM-DD")
+    return start, end
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -145,6 +227,63 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _emit(payload)
                 return 0
             return 2
+        if args.command == "gsc-bulk":
+            from .bulk_export.config import load_bulk_export_manifest
+
+            if not args.gsc_bulk_command:
+                return 2
+            manifest = load_bulk_export_manifest(args.manifest)
+            if args.gsc_bulk_command == "validate":
+                _emit({
+                    "ok": True,
+                    "schema_version": manifest.schema_version,
+                    "project_id": manifest.warehouse.project_id,
+                    "location": manifest.warehouse.location,
+                    "properties": [item.site_id for item in manifest.properties],
+                    "storage_root": str(manifest.storage.root),
+                    "required_mountpoint": str(manifest.storage.required_mountpoint),
+                    "required_filesystem_uuid": manifest.storage.required_filesystem_uuid,
+                })
+                return 0
+            try:
+                from .bulk_export.bigquery import BigQueryBulkSource
+                from .bulk_export.engine import BulkExportEngine
+                from .bulk_export.lake import SeagateBulkLake
+            except ModuleNotFoundError as exc:
+                if exc.name == "fcntl":
+                    raise RuntimeError(
+                        "gsc-bulk requires a POSIX host with file-lock support"
+                    ) from exc
+                raise
+            lake = SeagateBulkLake(manifest)
+            if args.gsc_bulk_command == "status":
+                with lake.lock():
+                    payload = lake.status()
+                _emit(payload)
+                return 0
+            if args.gsc_bulk_command == "verify":
+                with lake.lock():
+                    payload = lake.verify_all()
+                _emit(payload)
+                return 0
+            selected = set(args.site or [])
+            with ReferenceCredentialProvider().acquire(
+                manifest.warehouse.credential_ref
+            ) as credential:
+                source = BigQueryBulkSource(manifest, credential)
+                engine = BulkExportEngine(manifest, source, lake)
+                if args.gsc_bulk_command == "probe":
+                    _emit(engine.probe(selected))
+                    return 0
+                if args.gsc_bulk_command == "sync":
+                    start, end = _bulk_window(args)
+                    results = engine.sync(start, end, selected)
+                    _emit([item.json_value() for item in results])
+                    return 0 if all(
+                        item.status not in {"failed", "export-log-incomplete"}
+                        for item in results
+                    ) else 1
+            return 2
         config = load_config(args.config)
         if args.command == "config":
             if args.config_command != "validate": return 2
@@ -160,6 +299,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.db_command == "restore": store.restore(args.source, confirmed=args.confirm); _emit({"ok": True}); return 0
             return 2
         store.initialize()
+        if args.command == "index-coverage":
+            configured_sites = {item.id for item in config.sites}
+            selected = set(args.site or [])
+            unknown = selected - configured_sites
+            if unknown:
+                raise ValueError(f"unknown site id(s): {', '.join(sorted(unknown))}")
+            site_ids = tuple(
+                item.id for item in config.sites if not selected or item.id in selected
+            )
+            if args.index_coverage_command == "status":
+                _emit({
+                    "schema_version": 1,
+                    "metric": "Google indexed pages / published sitemap URLs",
+                    "freshness_days": 30,
+                    "properties": store.query_index_coverage(site_ids),
+                })
+                return 0
+            if args.index_coverage_command == "sync":
+                from .index_coverage import IndexCoverageEngine
+
+                results = IndexCoverageEngine(config, store).sync(
+                    selected or None,
+                    per_property_limit=args.per_property_limit,
+                    pause_seconds=args.pause_seconds,
+                    workers=args.workers,
+                    refresh_days=args.refresh_days,
+                    freshness_days=args.freshness_days,
+                )
+                _emit([item.json_value() for item in results])
+                return 0 if all(item.status != "failed" for item in results) else 1
+            return 2
         if args.command == "probe":
             results = SyncEngine(config, store).probe(set(args.connection or [])); _emit([{"connection_id": r.connection_id, "site_id": r.site_id, "status": r.status, "points": r.points, "error_category": r.error_category} for r in results])
             return 0 if all(item.status == "success" for item in results) else 1
@@ -190,7 +360,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "serve": serve(config, store); return 0
         return 2
-    except (ConfigError, ManifestError, IngestError, ValueError, RuntimeError, LockBusy) as exc:
+    except (
+        ConfigError, ManifestError, IngestError, ValueError, RuntimeError, LockBusy,
+    ) as exc:
         _emit({"ok": False, "error": str(exc)}, error=True); return 2
 
 

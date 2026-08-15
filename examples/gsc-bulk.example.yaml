@@ -1,0 +1,34 @@
+schema_version: 1
+
+warehouse:
+  # One billed Google Cloud project can hold distinct datasets for each property.
+  project_id: replace-with-project-id
+  location: US
+  # Use a dedicated read-only BigQuery service account. Do not reuse the GA4/GSC OAuth token.
+  credential_ref: env:GOOGLE_BIGQUERY_READER_CREDENTIAL
+  # Every query also uses a date partition and exact site property filter.
+  maximum_bytes_billed: 1073741824
+  # Leave false until the reader has roles/bigquery.readSessionUser.
+  use_storage_api: false
+
+storage:
+  # Raw queries and URLs are private bulk data and must remain outside the source repository.
+  root: /srv/analytics-data/boho-analytics-platform/bigquery
+  required_mountpoint: /srv/analytics-data
+  # The application also requires a private marker named
+  # .boho-storage-<this UUID> on the mounted filesystem.
+  required_filesystem_uuid: 00000000-0000-0000-0000-000000000000
+  minimum_free_bytes: 10737418240
+  parquet_compression: zstd
+  batch_rows: 50000
+
+properties:
+  - site_id: example-site
+    site_url: sc-domain:example.com
+    # Every property needs a distinct dataset whose name begins with searchconsole.
+    dataset_id: searchconsole_example
+    # Set this from the earliest date with both ExportLog namespaces after the first export lands.
+    # Bulk export has no pre-activation backfill.
+    first_export_date: 2026-01-01
+    # Select a non-empty exported date whose rows prove this property-to-dataset mapping.
+    identity_proof_date: 2026-01-01

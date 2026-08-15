@@ -1,6 +1,6 @@
 # Configuration
 
-V1 uses strict schema-v2 TOML. Unknown fields, duplicate identifiers, invalid references, invalid
+The normalized dashboard plane uses strict schema-v2 TOML. Unknown fields, duplicate identifiers, invalid references, invalid
 timezones, non-loopback unauthenticated binding, and secret-like keys are errors. Start with
 [`examples/platform.example.toml`](../examples/platform.example.toml); keep the real copy outside
 the public repository.
@@ -39,6 +39,27 @@ Supported credential fields are:
 Google service accounts require `pip install 'boho-analytics-platform[google]'`. Short-lived access
 tokens and refresh-token exchange work without the optional SDK. Inline keys including `password`,
 `token`, `api_key`, `client_secret`, and `refresh_token` are rejected anywhere in TOML.
+
+## Search Console bulk manifest
+
+The optional private BigQuery lane uses a separate strict schema-v1 YAML manifest; it is not a TOML
+connection and never opens SQLite. Start with
+[`examples/gsc-bulk.example.yaml`](../examples/gsc-bulk.example.yaml) and keep the populated file
+outside Git. It defines:
+
+- one billed query project, exact BigQuery location, dedicated reader `credential_ref`, per-query
+  bytes ceiling, and optional Storage API use;
+- an external lake root, exact mountpoint and filesystem UUID, free-space floor, Parquet
+  compression, and Arrow batch target; and
+- each exact Search Console property, unique `searchconsole*` dataset, earliest paired
+  `first_export_date`, and a non-empty `identity_proof_date` used on every sync to prevent a wrong
+  property/dataset mapping from becoming a plausible zero.
+
+Install `boho-analytics-platform[bigquery]`. The reader credential must be canonical service-account
+JSON, preferably loaded through `systemd:`; a wrapper with a string-valued `service_account_json`
+field is also accepted. The lane rejects OAuth user/refresh tokens. It does not require another
+Search Console OAuth scope and is unrelated to Google Trends access. Full setup, IAM, storage, and
+command details are in the [bulk-export runbook](gsc-bigquery-bulk-export.md).
 
 ## Provider options and binding resources
 
@@ -93,6 +114,43 @@ characters each are accepted. For this connector, `observation_start` additional
 quiet-day zero facts on and after the independently verified mail-index boundary. Without it, the
 connector emits facts only for matching messages and does not invent quiet-day zeroes. These values remain private deployment configuration
 even though they are not credentials.
+
+## Acquisition-detail controls
+
+Detailed acquisition families are disabled per binding unless
+`bindings.options.route_analytics.enabled = true`. `max_days`, `page_size`, and `max_pages` bound
+each read. They are safety ceilings, not evidence that a provider returned every possible row.
+
+For Search Console, `search_type` selects one explicit surface (`web`, `image`, `video`, `news`,
+`discover`, or `googleNews`). Use `search_types = ["all"]` to collect all six as separate provider
+scopes; it cannot be combined with the singular setting. `search_console_dimensions = ["all"]`
+enables the device, country, and search-appearance views. `search_console_query_text` opts into
+privacy-screened query wording;
+rejected wording is counted in a single redacted bucket rather than persisted. The more expensive
+page/query view requires `search_console_page_query = true` as well. `search_console_hourly = true`
+adds Google's recent `hourly_all` provisional rows within its supported lookback. Query, page,
+country, appearance, and other high-dimensional Search Analytics reads are provider top-row views,
+not exhaustive exports. When neither pagination bound is configured, Search Console detail uses
+25,000 rows per page and three calls so two full pages plus the required terminal empty call can
+prove the API's 50,000-row ceiling. Smaller explicit bounds remain valid but fail closed at the cap.
+Average position is defined only for Google Search result surfaces (`web`, `image`, `video`, and
+`news`). Discover and Google News collect clicks, impressions, and CTR without inventing a zero
+position. Those two surfaces also do not expose search-query wording, so query and page/query reads
+are skipped even when the binding enables those optional families. Discover's report also does
+not expose a device grouping, so a configured `device` route dimension is skipped for Discover
+while remaining enabled for the Google Search and Google News surfaces that support it.
+
+For Umami, `umami_dimensions = ["all"]` expands to every supported privacy-safe aggregate:
+browser, channel, country, device, domain, event name, hostname, language, operating system,
+referrer, region, screen, tag, and title. A subset may be listed instead. City, distinct ID, raw
+sessions, event properties, replay, and heatmap data are deliberately outside the ingestion
+contract. `umami_event_names` selects named daily event series without event properties.
+Umami's response field named `sessions` is cataloged as `umami.daily-visitors`, matching the
+provider's documented visitor semantics; exact-window unique visitors remain `umami.visitors`.
+
+Google Trends access is separate from both GA4 and Search Console. Do not broaden an existing
+Search Console credential in anticipation of Trends: the official Trends API is allowlisted and
+its approved-project setup is supplied by Google after admission.
 
 ## Reports and subreports
 

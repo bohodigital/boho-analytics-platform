@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 import http.client
+import io
 import json
 import tempfile
 import threading
@@ -16,13 +18,24 @@ from boho_analytics_platform.config import load_config
 from boho_analytics_platform.connectors.common import total_point
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
+from boho_analytics_platform.reporting import ReportService
 from boho_analytics_platform.storage import SQLiteMetricStore
 from boho_analytics_platform.web import (
     PORTFOLIO_SUMMARY,
     SEARCH_SUMMARY,
+    _attention_html,
     _chart_html,
+    _coverage_summary_html,
     _decision_badge,
+    _dashboard_visuals_html,
     _forms_html,
+    _metrics_table,
+    _overview_cards_html,
+    _performance_by_site_html,
+    _provider_comparisons_html,
+    _snapshot_status_text,
+    _search_type_label,
+    _site_option_enabled,
     _summary_cards,
     handler_factory,
 )
@@ -31,6 +44,27 @@ from tests.site_graph.test_analysis import seed_site_graph
 
 
 class WebTests(unittest.TestCase):
+    def test_search_type_label_preserves_google_news_wordmark(self):
+        self.assertEqual(_search_type_label("googleNews"), "Google News")
+        self.assertEqual(_search_type_label("discover"), "Discover")
+
+    def test_search_surface_only_filters_search_console_site_options(self):
+        available = {
+            "umami": {"umami-only"},
+            "search-console": {"umami-only", "search-site"},
+        }
+        surfaces = {"umami-only": [], "search-site": ["web"]}
+
+        self.assertTrue(_site_option_enabled(
+            "umami-only", "umami", "web", available, surfaces
+        ))
+        self.assertFalse(_site_option_enabled(
+            "umami-only", "search-console", "web", available, surfaces
+        ))
+        self.assertTrue(_site_option_enabled(
+            "search-site", "search-console", "web", available, surfaces
+        ))
+
     def test_forms_panel_never_claims_agreement_for_incomplete_coverage(self):
         partial = _forms_html({
             "submissions": 1,
@@ -53,6 +87,65 @@ class WebTests(unittest.TestCase):
         })
         self.assertIn("evidence agree for the complete selected scope", complete)
 
+    def test_provider_comparison_html_discloses_discontinuous_date_ranges(self):
+        dates = {
+            "count": 2,
+            "first": "2026-07-01",
+            "last": "2026-07-03",
+            "ranges": [
+                {"start": "2026-07-01", "end": "2026-07-01"},
+                {"start": "2026-07-03", "end": "2026-07-03"},
+            ],
+        }
+        route = {
+            "status": "withheld",
+            "reason": "route_analytics_not_enabled",
+        }
+        semantics = {
+            "pageview_definition": "pageviews",
+            "time_basis": "UTC",
+            "sampling": "none",
+            "data_state": "final",
+        }
+        provider = {
+            "complete_dates": dates,
+            "first_available_date": "2026-07-01",
+            "data_through": "2026-07-03",
+            "route_reconciliation": route,
+            "semantics": semantics,
+        }
+        comparison = {
+            "site_id": "example-site",
+            "evidence_state": "aligned",
+            "low_volume_warning": False,
+            "google_only_dates": {"count": 0, "first": None, "last": None, "ranges": []},
+            "umami_only_dates": {"count": 0, "first": None, "last": None, "ranges": []},
+            "paired_dates": dates,
+            "first_paired_date": "2026-07-01",
+            "last_paired_date": "2026-07-03",
+            "totals": {
+                "google_pageviews": 20,
+                "umami_pageviews": 20,
+                "absolute_difference": 0,
+                "google_to_umami_ratio": 1,
+            },
+            "providers": {
+                "google-analytics": provider,
+                "umami": provider,
+            },
+            "semantics": [],
+            "coverage_limits": [],
+        }
+
+        html = _provider_comparisons_html(
+            {"provider_comparisons": [comparison]},
+            {"example-site": "Example Site"},
+        )
+
+        self.assertNotIn("2 (2026-07-01 to 2026-07-03)", html)
+        self.assertIn("2026-07-01 to 2026-07-01", html)
+        self.assertIn("2026-07-03 to 2026-07-03", html)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup); root = Path(self.temporary.name)
         fixture = root / "fixture.json"; write_fixture(fixture); path = root / "platform.toml"; path.write_text(config_text(root / "state.db", fixture), encoding="utf-8")
@@ -73,14 +166,127 @@ class WebTests(unittest.TestCase):
 
     def test_dashboard_is_server_rendered_and_has_security_headers(self):
         status, headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
-        self.assertEqual(status, 200); self.assertIn("Forms delivery", body); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertEqual(status, 200); self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
         self.assertIn("camera=()", headers["Permissions-Policy"]); self.assertIn("microphone=()", headers["Permissions-Policy"])
-        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn("Report tools", body); self.assertIn('src="/assets/app.js"', body)
+        self.assertIn('data-chart="umami.pageviews"', body); self.assertIn('src="/assets/app.js"', body)
         self.assertIn('id="time-series-chart"', body); self.assertIn("script-src 'self'", headers["Content-Security-Policy"])
         self.assertNotIn("Access-Control-Allow-Origin", headers); self.assertEqual(headers["Cache-Control"], "no-store")
-        self.assertIn('id="geography-map"', body)
-        self.assertIn("World visitor geography", body)
-        self.assertIn("County boundaries are orientation only", body)
+        self.assertIn('class="dashboard-app"', body)
+        self.assertIn('data-theme="hyperpunk" data-page="overview"', body)
+        self.assertIn('class="app-nav" aria-label="Application"', body)
+        self.assertIn('id="theme-selector" aria-label="Color theme"', body)
+        self.assertIn('<option value="ultraviolet">Ultraviolet</option>', body)
+        self.assertIn('<option value="ember">Ember</option>', body)
+        self.assertIn('<h1>All properties</h1>', body)
+        self.assertIn('id="property-selector" name="site"', body)
+        self.assertIn('<option value="all" selected>All properties</option>', body)
+        self.assertNotIn('class="report-nav"', body)
+        self.assertNotIn('class="subnav"', body)
+        self.assertNotIn("Forms delivery", body)
+        self.assertNotIn('id="geography-map"', body)
+        self.assertIn("Provider pageview comparison", body)
+        self.assertIn('aria-label="GA4 and Umami pageview comparability"', body)
+        self.assertIn("Non comparable", body)
+        self.assertNotIn(">0 paired dates<", body)
+        self.assertIn("Core feeds 100%", body)
+        self.assertIn("Page views over time", body)
+        self.assertGreaterEqual(body.count('data-area-fill="true"'), 1)
+        self.assertEqual(
+            body.count('data-area-fill="true"'),
+            body.count('<canvas class="time-series-chart"'),
+        )
+        self.assertEqual(
+            body.count('tabindex="0"'),
+            body.count('<canvas class="time-series-chart"'),
+        )
+        self.assertIn("Traffic by property", body)
+        self.assertIn("Index coverage", body)
+        self.assertIn("Data details", body)
+        self.assertIn('data-metric="umami.visits" data-state="unavailable"', body)
+        self.assertIn("No exact-window total stored", body)
+        self.assertIn('name="search_type"', body)
+        self.assertNotIn("source=umami&amp;search_type=", body)
+
+    def test_dashboard_visuals_state_exact_metric_definitions(self):
+        result = {
+            "site_ids": ["one", "two"],
+            "rows": [
+                {"site_id": "one", "metric": "umami.pageviews", "value": 80, "unit": "count"},
+                {"site_id": "two", "metric": "umami.pageviews", "value": 20, "unit": "count"},
+                {"site_id": "one", "metric": "search.impressions", "value": 1000, "unit": "count"},
+                {"site_id": "one", "metric": "search.clicks", "value": 25, "unit": "count"},
+            ],
+            "series": [{
+                "site_id": "one", "metric": "umami.pageviews", "unit": "count",
+                "points": [{"date": "2026-07-01", "value": 80}],
+            }],
+            "index_coverage": {"properties": [{
+                "site_id": "one", "published_pages": 200,
+                "indexed_pages": 150, "indexed_percentage": 75.0,
+            }]},
+        }
+
+        html = _dashboard_visuals_html(result, {"one": "One", "two": "Two"})
+
+        self.assertIn("Traffic by property", html)
+        self.assertIn("80.0% share", html)
+        self.assertNotIn("Daily attention", html)
+        self.assertIn("Search performance", html)
+        self.assertIn("<strong>1,000</strong>", html)
+        self.assertIn("<b>2.50%</b> CTR", html)
+        self.assertIn("Index coverage", html)
+        self.assertIn("150 indexed / 200 pages", html)
+        self.assertIn(">Indexed</span>", html)
+        self.assertIn(">Not indexed</span>", html)
+
+    def test_overview_cards_do_not_confuse_missing_prior_with_missing_current_value(self):
+        result = {
+            "summary_totals": {
+                "umami.visits": {
+                    "metric": "umami.visits", "source": "umami", "unit": "count",
+                    "value": 215, "previous_value": None, "change_percent": None,
+                    "coverage_status": "complete", "comparison_available": False,
+                },
+            },
+            "index_coverage": {"properties": []},
+        }
+
+        html = _overview_cards_html(result)
+
+        self.assertIn('data-metric="umami.visits" data-state="observed"', html)
+        self.assertIn('<strong>215</strong><small>Umami</small>', html)
+        self.assertNotIn("Prior unavailable", html)
+        self.assertNotIn("Unknown", html)
+
+    def test_geography_source_switch_refreshes_claims_and_limits_live_region_noise(self):
+        self.store.upsert([total_point(
+            client_id="example-client", site_id="example-site", source="umami",
+            metric="umami.country-visits", unit="count",
+            start=datetime(2026, 7, 1, tzinfo=UTC), end=datetime(2026, 7, 2, tzinfo=UTC),
+            value=7, dimensions={"country_code": "US", "country_code_system": "iso-alpha2"},
+        )])
+        status, _headers, body = self.request(
+            "/?report=summary&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("Audience by country", body)
+        self.assertIn("Umami visits", body)
+        self.assertIn('aria-label="US: 7 Umami visits"', body)
+        self.assertNotIn('id="geography-map"', body)
+
+        script = self.request("/assets/app.js")[2]
+        self.assertIn("function updateGeographyDisclosures(payload)", script)
+        self.assertIn("title.textContent = `${payload.label} by geography", script)
+        self.assertIn("sourceMetric.textContent = `${payload.label}; metric ${payload.metric}", script)
+        self.assertIn("suppression.textContent = `Buckets below ${payload.suppression.threshold}", script)
+        self.assertIn("methodology.textContent = payload.methodology", script)
+        self.assertIn("county.textContent = payload.counties.reason", script)
+        self.assertIn("region.textContent = payload.region_support.status", script)
+        self.assertIn("updateGeographyDisclosures(payload);", script)
+        self.assertIn("if (payload.source !== requestedSource)", script)
+        self.assertIn("function setGeographyLoadingState(label, status, announcement)", script)
+        self.assertIn("announcement.textContent = `${payload.label} geography loaded.`", script)
 
     def test_geography_api_and_local_map_assets_are_privacy_bounded(self):
         self.store.upsert([total_point(
@@ -114,34 +320,37 @@ class WebTests(unittest.TestCase):
         )
 
         self.assertEqual(status, 200)
-        self.assertIn("Decision summary", body)
-        self.assertIn("What needs attention", body)
-        self.assertIn("Engagement and lead health", body)
-        self.assertIn("Site pulse", body)
-        self.assertIn("Data operations", body)
-        self.assertIn("Measurement roadmap", body)
-        self.assertIn("not attribution", body)
-        self.assertIn("Scope: Example Site", body)
-        self.assertIn("Qualified leads and revenue", body)
-        self.assertIn("Core Web Vitals and errors", body)
+        self.assertNotIn("Decision summary", body)
+        self.assertNotIn("What needs attention", body)
+        self.assertNotIn("Measurement roadmap", body)
+        self.assertNotIn("Qualified leads and revenue", body)
+        self.assertIn("All properties", body)
+        self.assertIn("Current window summary", body)
+        self.assertIn("Page views over time", body)
+        self.assertIn("Traffic by property", body)
         self.assertIn('<th scope="row" class="metric-name">Example Site</th>', body)
-        self.assertIn('<caption class="sr-only">Per-site decision metrics and data coverage</caption>', body)
-        self.assertIn('<th scope="col">Umami visits</th>', body)
-        self.assertIn('class="attention-severity">Review</p>', body)
-        self.assertIn("no capability snapshot", body)
-        self.assertIn('class="dashboard-primary"', body)
-        self.assertIn('class="trust-card" data-state="complete"', body)
-        self.assertIn('class="panel attention-panel"', body)
-        self.assertIn('class="panel control-panel"', body)
-        self.assertNotIn('class="panel control-panel" open', body)
-        self.assertIn('class="panel decision-panel evidence-panel"', body)
-        self.assertIn('style=area', body)
-        self.assertIn('<details class="data-notices">', body)
+        self.assertNotIn('<caption class="sr-only">Per-site decision metrics and data coverage</caption>', body)
+        self.assertNotIn('class="attention-severity">Review</p>', body)
+        self.assertNotIn("no capability snapshot", body)
+        self.assertNotIn('class="dashboard-primary"', body)
+        self.assertNotIn('class="panel control-panel"', body)
+        self.assertIn('class="panel data-details"', body)
+        self.assertIn('style=line', body)
+        self.assertIn('id="chart-live-status" role="status"', body)
+        self.assertNotIn('id="chart-status" role="status"', body)
         payload = json.loads(self.request(
             "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
         )[2])
         self.assertIn("decision_support", payload)
         self.assertTrue(payload["decision_support"]["measurement_gaps"])
+        self.assertEqual(
+            payload["provider_comparisons"][0]["evidence_state"],
+            "non_comparable",
+        )
+        csv_body = self.request(
+            "/api/v1/report.csv?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2]
+        self.assertIn("provider_comparison", csv_body)
 
     def test_report_api_projects_safe_operational_capabilities(self):
         self.store.save_capability(CapabilitySnapshot(
@@ -162,7 +371,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("Private provider detail", repr(support))
         self.assertEqual(support["capabilities"][0]["warning_count"], 1)
 
-    def test_portfolio_summary_uses_loaded_decision_metrics(self):
+    def test_portfolio_summary_does_not_pull_metrics_outside_report_definition(self):
         self.store.upsert([MetricPoint(
             "example-client", "example-site", "fixture", "umami.visits",
             "count", datetime(2026, 7, 1, tzinfo=UTC),
@@ -177,10 +386,47 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertIn(
-            '<article class="kpi-card" data-metric="umami.visits" data-state="observed">',
+            '<article class="overview-metric" data-metric="umami.visits" data-state="unavailable"',
             body,
         )
-        self.assertIn('<strong class="kpi-value">7</strong>', body)
+        self.assertIn("No exact-window total stored", body)
+
+    def test_complete_kpi_discloses_configured_subset_of_report_sites(self):
+        result = {
+            "subreport_id": None,
+            "site_ids": ["one", "two"],
+            "rows": [{
+                "metric": "umami.pageviews", "site_id": "one",
+                "source": "umami", "unit": "count", "value": 7,
+            }],
+            "summary_totals": {
+                "umami.pageviews": {
+                    "metric": "umami.pageviews", "source": "umami",
+                    "unit": "count", "value": 7, "previous_value": None,
+                    "change_percent": None, "coverage_status": "complete",
+                    "covered_cells": 2, "expected_cells": 2,
+                    "comparison_available": False,
+                },
+            },
+            "coverage": {"by_site_source": [
+                {
+                    "site_id": "one", "source": "umami",
+                    "metric_status": {"umami.pageviews": "complete"},
+                },
+                {
+                    "site_id": "two", "source": "umami",
+                    "metric_status": {"umami.pageviews": "not_configured"},
+                },
+            ]},
+            "forms_pipeline": None,
+            "decision_support": {"supporting_metrics": {}},
+        }
+
+        html = _summary_cards(result, ("umami.pageviews",))
+
+        self.assertIn('<strong class="kpi-value">7</strong>', html)
+        self.assertIn("Umami; scope 1 contributing site of 1 configured site", html)
+        self.assertIn("1 of 2 report sites configured", html)
 
     def test_portfolio_summary_withholds_mixed_decision_sources(self):
         result = {
@@ -220,6 +466,76 @@ class WebTests(unittest.TestCase):
         self.assertIn("+12.5%", neutral)
         self.assertIn('class="trend down"', bounce_new)
 
+    def test_claim_integrity_helpers_keep_unknown_zero_and_mixed_source_distinct(self):
+        unknown_coverage = _coverage_summary_html({
+            "coverage": {"covered_cells": 0, "expected_cells": 0},
+            "complete": True,
+        })
+        self.assertIn("Not measurable for this selection", unknown_coverage)
+        self.assertNotIn("100%", unknown_coverage)
+        self.assertEqual(
+            _snapshot_status_text({"source_health": []}),
+            "Stored snapshot · no feed evidence in this selection",
+        )
+
+        detail = _metrics_table({"rows": [
+            {
+                "metric": "search.clicks", "site_id": "one",
+                "source": "search-console", "unit": "count", "value": 5,
+                "previous_value": 0, "change_percent": None,
+                "comparison_available": True, "coverage_status": "complete",
+            },
+            {
+                "metric": "forms.submissions", "site_id": "one",
+                "source": "cloudflare-forms", "unit": "count", "value": 0,
+                "previous_value": 0, "change_percent": None,
+                "comparison_available": True, "coverage_status": "complete",
+            },
+            {
+                "metric": "umami.pageviews", "site_id": "one",
+                "source": "umami", "unit": "count", "value": 4,
+                "previous_value": None, "change_percent": None,
+                "comparison_available": False, "coverage_status": "partial",
+            },
+        ]}, {"one": "One"})
+        self.assertIn("New vs 0 prior", detail)
+        self.assertIn("No change (0 vs 0)", detail)
+        self.assertIn("Prior unavailable (coverage or source not comparable)", detail)
+
+        mixed = {
+            "site_id": None,
+            "rows": [
+                {"metric": "search.clicks", "site_id": "one", "source": "fixture", "unit": "count", "value": 2},
+                {"metric": "search.clicks", "site_id": "one", "source": "search-console", "unit": "count", "value": 3},
+            ],
+            "coverage": {"by_site_source": [{
+                "site_id": "one", "source": "search-console",
+                "metric_status": {"search.clicks": "complete"},
+                "configured_providers": ["fixture", "search-console"],
+                "metric_evidence_providers": {"search.clicks": ["fixture", "search-console"]},
+            }]},
+        }
+        performance = _performance_by_site_html(mixed, {"one": "One"})
+        self.assertIn("Withheld", performance)
+        self.assertIn("Multiple provider sources", performance)
+
+        missing_observation = {
+            "site_id": None,
+            "site_ids": ["one"],
+            "rows": [],
+            "summary_totals": {"umami.visits": {"value": None}},
+            "coverage": {"by_site_source": [{
+                "site_id": "one", "source": "umami",
+                "metric_status": {"umami.visits": "unavailable"},
+                "configured_providers": ["umami"],
+            }]},
+        }
+        missing_html = _performance_by_site_html(
+            missing_observation, {"one": "One", "outside": "Outside"}
+        )
+        self.assertIn("No stored observation", missing_html)
+        self.assertNotIn("Outside", missing_html)
+
     def test_search_console_click_copy_does_not_claim_visits(self):
         notes = [item[2] for item in (*PORTFOLIO_SUMMARY, *SEARCH_SUMMARY)]
 
@@ -229,13 +545,33 @@ class WebTests(unittest.TestCase):
     def test_decision_support_mobile_css_collapses_without_page_overflow(self):
         css = self.request("/assets/app.css")[2]
 
-        self.assertIn(".decision-grid", css)
-        self.assertIn(".attention-list", css)
-        self.assertIn(".roadmap-grid", css)
-        self.assertIn(".decision-grid,.engagement-grid", css)
-        self.assertIn(".dashboard-primary", css)
-        self.assertIn(".trust-card", css)
-        self.assertIn("@media(max-width:760px)", css)
+        self.assertIn(".dashboard-header", css)
+        self.assertIn(".overview-metrics", css)
+        self.assertIn(".trend-grid", css)
+        self.assertIn(".source-reading-grid", css)
+        self.assertIn(".property-field select", css)
+        self.assertIn("@media(max-width:620px)", css)
+        self.assertIn("@media(prefers-reduced-motion:reduce)", css)
+        self.assertIn("overflow-x:auto", css)
+        self.assertIn("align-items:start", css)
+        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", css)
+
+    def test_attention_panel_prioritizes_three_items_and_collapses_the_rest(self):
+        body = _attention_html({"attention_items": [
+            {
+                "severity": "review",
+                "title": f"Issue {index}",
+                "evidence": f"Evidence {index}",
+                "action": f"Action {index}",
+            }
+            for index in range(1, 5)
+        ]})
+
+        self.assertIn('class="attention-more"', body)
+        self.assertIn("Show 2 more items", body)
+        self.assertIn('<ol class="attention-list" start="3">', body)
+        self.assertLess(body.index("Issue 2"), body.index('class="attention-more"'))
+        self.assertGreater(body.index("Issue 3"), body.index('class="attention-more"'))
 
     def test_plot_builder_keeps_visual_controls_open(self):
         status, _headers, body = self.request(
@@ -246,6 +582,41 @@ class WebTests(unittest.TestCase):
         self.assertIn('class="panel control-panel" open', body)
         self.assertNotIn('class="dashboard-primary"', body)
         self.assertIn('style=line', body)
+
+    def test_series_and_plot_requests_skip_provider_route_comparison_work(self):
+        route_metrics = {"google.page-path-views", "umami.route-pageviews"}
+        paths = (
+            "/api/v1/series?report=summary&source=umami&metric=umami.pageviews"
+            "&start=2026-07-01&end=2026-07-02",
+            "/?report=summary&view=plot&source=umami&metric=umami.pageviews"
+            "&start=2026-07-01&end=2026-07-02",
+        )
+        for path in paths:
+            calls = []
+            original_query = self.store.query
+
+            def query_spy(**kwargs):
+                calls.append(tuple(kwargs["metric_ids"]))
+                return original_query(**kwargs)
+
+            with self.subTest(path=path), patch.object(
+                self.store, "query", side_effect=query_spy
+            ), patch.object(
+                ReportService,
+                "_provider_comparisons",
+                side_effect=AssertionError("provider comparison executed"),
+            ):
+                self.assertEqual(self.request(path)[0], 200)
+            self.assertFalse(
+                route_metrics.intersection(
+                    metric for call in calls for metric in call
+                )
+            )
+
+        report_payload = json.loads(self.request(
+            "/api/v1/report?report=summary&start=2026-07-01&end=2026-07-02"
+        )[2])
+        self.assertEqual(len(report_payload["provider_comparisons"]), 1)
 
     def test_invalid_host_is_rejected(self): self.assertEqual(self.request("/healthz", "attacker.invalid")[0], 400)
 
@@ -325,7 +696,7 @@ class WebTests(unittest.TestCase):
     def test_generated_all_sites_forms_submit_without_a_blank_query(self):
         status, _headers, body = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")
         self.assertEqual(status, 200)
-        self.assertIn('<option value="all" selected>All sites</option>', body)
+        self.assertIn('<option value="all" selected>All properties</option>', body)
         self.assertEqual(
             self.request("/?report=summary&start=2026-07-01&end=2026-07-02&metric=umami.pageviews&site=all")[0],
             200,
@@ -392,15 +763,13 @@ metric_groups = ["traffic"]
         try:
             status, forms_body = request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")
             self.assertEqual(status, 200)
-            self.assertNotIn('value="second-site"', forms_body)
+            self.assertIn('<option value="second-site">Second Site</option>', forms_body)
+            self.assertNotIn('name="subreport"', forms_body)
             status, overview_body = request(
                 "/?report=summary&metric=forms.submissions&start=2026-07-01&end=2026-07-02"
             )
             self.assertEqual(status, 200)
-            self.assertIn(
-                'value="second-site" data-sources="umami" hidden disabled',
-                overview_body,
-            )
+            self.assertIn('<option value="second-site">Second Site</option>', overview_body)
             unsupported_dashboard = (
                 "/?report=summary&metric=forms.submissions&site=second-site"
                 "&start=2026-07-01&end=2026-07-02"
@@ -446,6 +815,8 @@ metric_groups = ["traffic"]
         path = "/?report=summary&view=plot&source=umami&metric=umami.pageviews&style=area&compare=1&start=2026-07-01&end=2026-07-02"
         status, _headers, body = self.request(path)
         self.assertEqual(status, 200); self.assertIn("Time-series Plot Builder", body)
+        self.assertIn('class="dashboard-app app-page plot-page"', body)
+        self.assertLess(body.index('class="panel chart-panel"'), body.index('class="panel control-panel"'))
         self.assertIn('name="source"', body); self.assertIn('name="style"', body); self.assertIn('name="compare"', body)
         self.assertIn("Load series JSON", body); self.assertIn("Download series CSV", body)
 
@@ -453,6 +824,10 @@ metric_groups = ["traffic"]
         status, _headers, json_body = self.request(api)
         self.assertEqual(status, 200); self.assertIn('"metric": "umami.pageviews"', json_body)
         self.assertIn('"style": "area"', json_body); self.assertIn('"value": 12', json_body)
+        series_payload = json.loads(json_body)
+        self.assertEqual(series_payload["unit"], "count")
+        self.assertEqual(series_payload["available_search_types"], ["web"])
+        self.assertIsNone(series_payload["search_type"])
 
         status, headers, csv_body = self.request(api.replace("/series?", "/series.csv?"))
         self.assertEqual(status, 200); self.assertIn("period,date,metric,site_id,source,unit,value", csv_body)
@@ -462,10 +837,54 @@ metric_groups = ["traffic"]
     def test_script_asset_is_same_origin_and_invalid_plot_source_is_rejected(self):
         status, _headers, body = self.request("/assets/app.js")
         self.assertEqual(status, 200); self.assertIn("ResizeObserver", body); self.assertIn("fetch(canvas.dataset.seriesUrl", body)
+        self.assertIn('const themeStorageKey = "boho-analytics-theme"', body)
+        self.assertIn('new Set(["hyperpunk", "ultraviolet", "ember"])', body)
+        self.assertIn("document.body.dataset.theme = theme", body)
         self.assertIn("contiguousSegments", body)
         self.assertIn("comparison unavailable", body)
+        self.assertIn("formatMetricValue", body)
+        self.assertIn("formatTooltipValue", body)
+        self.assertIn("tooltip.replaceChildren", body)
+        self.assertIn('event.key === "ArrowLeft"', body)
+        self.assertIn('event.key === "Escape"', body)
+        self.assertIn("formatCountValue", body)
+        self.assertIn("niceCountStep", body)
+        self.assertIn('if (unit === "count") return formatCountValue(number)', body)
+        self.assertIn('unit === "count" ? Math.max(1, Math.round(max / niceCountStep(max))) : 4', body)
+        self.assertIn("maximumFractionDigits: 0", body)
+        self.assertIn('[1e9, "B"]', body)
+        self.assertIn('[1e6, "M"]', body)
+        self.assertIn('[1e3, "K"]', body)
+        self.assertIn('unit === "ratio"', body)
+        self.assertIn('unit === "seconds"', body)
+        self.assertIn('unit === "bytes"', body)
+        self.assertIn("lowerIsBetter", body)
+        self.assertIn('const effectiveStyle = lowerIsBetter ? "line" : payload.style', body)
+        self.assertIn('canvas.dataset.areaFill === "true"', body)
+        self.assertIn("function fillArea(item, color)", body)
+        self.assertIn('configuredColor("--chart-grid", "#e4e4de")', body)
+        self.assertIn('const defaultColors = ["#e86d3d"', body)
+        css_body = self.request("/assets/app.css")[2]
+        self.assertIn("--chart-area-alpha:.1", css_body)
+        self.assertIn("--series-1:#37e6ff", css_body)
+        self.assertIn(".chart-tooltip{", css_body)
+        self.assertIn(".dashboard-app .chart-tooltip{", css_body)
+        self.assertIn('selectedSource !== "search-console"', body)
+        self.assertIn("updateStyleOptions", body)
+        self.assertIn("canvas.onpointermove = null", body)
+        self.assertIn("if (legend) legend.replaceChildren()", body)
+        self.assertNotIn("createLinearGradient", body)
+        self.assertIn('requestedSource === "search-console"', body)
+        self.assertIn('url.searchParams.delete("search_type")', body)
         invalid = "/api/v1/series?report=summary&source=search-console&metric=umami.pageviews&start=2026-07-01&end=2026-07-02"
         self.assertEqual(self.request(invalid)[0], 400)
+
+        unsafe_position_style = (
+            "/api/v1/series?report=summary&view=plot&source=search-console"
+            "&metric=search.position&style=area&search_type=web"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(self.request(unsafe_position_style)[0], 400)
 
     def test_series_rejects_an_unknown_metric_instead_of_substituting_one(self):
         invalid = "/api/v1/series?report=summary&source=umami&metric=made.up&start=2026-07-01&end=2026-07-02"
@@ -534,13 +953,13 @@ metric_groups = ["traffic"]
         result = {
             "subreport_id": "traffic",
             "rows": [{
-                "metric": "google.active-users", "site_id": "example-site",
+                "metric": "google.sessions", "site_id": "example-site",
                 "source": "google-analytics", "unit": "count", "value": 7,
                 "previous_value": None,
             }],
             "summary_totals": {
-                "google.active-users": {
-                    "metric": "google.active-users", "source": "google-analytics",
+                "google.sessions": {
+                    "metric": "google.sessions", "source": "google-analytics",
                     "unit": "count", "aggregation": "sum", "value": 7,
                     "previous_value": None, "change_percent": None,
                     "coverage_status": "complete", "comparison_available": False,
@@ -548,11 +967,11 @@ metric_groups = ["traffic"]
             },
             "forms_pipeline": None,
         }
-        html = _summary_cards(result, ("umami.visitors", "google.active-users"))
+        html = _summary_cards(result, ("umami.visitors", "google.sessions"))
         self.assertIn("Umami visitors", html)
-        self.assertIn("GA active-user days", html)
+        self.assertIn("GA4 sessions", html)
         self.assertIn('data-metric="umami.visitors" data-state="unknown"', html)
-        self.assertIn('data-metric="google.active-users" data-state="observed"', html)
+        self.assertIn('data-metric="google.sessions" data-state="observed"', html)
 
     def test_search_cards_use_weighted_portfolio_totals_not_summed_site_rates(self):
         result = {
@@ -575,15 +994,130 @@ metric_groups = ["traffic"]
         self.assertNotIn("8.0%", html)
         self.assertNotIn("132.8", html)
 
+    def test_discover_position_is_explicitly_unavailable(self):
+        result = {
+            "subreport_id": "search",
+            "search_type": "discover",
+            "rows": [],
+            "summary_totals": {
+                "search.position": {
+                    "metric": "search.position",
+                    "source": "search-console",
+                    "unit": "position",
+                    "aggregation": "weighted",
+                    "value": None,
+                    "previous_value": None,
+                    "change_percent": None,
+                    "coverage_status": "unavailable",
+                    "comparison_available": False,
+                }
+            },
+            "forms_pipeline": None,
+        }
+        html = _summary_cards(result, ("search.position",))
+        self.assertIn("Not available", html)
+        self.assertIn("Unsupported surface", html)
+        self.assertIn("does not define average position", html)
+
+        search_binding = self.config.bindings[0]
+        object.__setattr__(search_binding, "options", {
+            "route_analytics": {"search_types": ["all"]},
+        })
+        object.__setattr__(
+            self.config.reports[0],
+            "metric_ids",
+            (*self.config.reports[0].metric_ids, "search.position"),
+        )
+        status, _headers, body = self.request(
+            "/api/v1/series?report=summary&view=plot"
+            "&source=search-console&metric=search.position"
+            "&style=line&search_type=discover"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["series"], [])
+        self.assertIn(
+            "does not define average position", payload["availability_note"]
+        )
+        self.assertIn(payload["availability_note"], payload["warnings"])
+
+    def test_route_observations_hide_legacy_discover_position_zeroes(self):
+        start = datetime(2026, 7, 1, tzinfo=UTC)
+
+        def route_position(search_type, value):
+            return MetricPoint(
+                "example-client", "example-site", "search-console",
+                "search.route-position", "position", start,
+                start + timedelta(days=1), TimeGrain.DAY, Decimal(value),
+                tuple(sorted((
+                    ("aggregation", "byPage"),
+                    ("data_state", "final"),
+                    ("observation_scope", "page"),
+                    ("provider_date", "2026-07-01"),
+                    ("provider_timezone", "America/Los_Angeles"),
+                    ("route", "/story/"),
+                    ("search_type", search_type),
+                ))),
+                Completeness.FINAL, start + timedelta(hours=12),
+            )
+
+        self.store.upsert([
+            route_position("discover", "0"),
+            route_position("web", "4"),
+        ])
+        status, _headers, body = self.request(
+            "/api/v1/route-observations?report=summary&site=example-site"
+            "&source=search-console&metric=search.route-position"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["total_rows"], 1)
+        self.assertEqual(payload["rows"][0]["value"], "4")
+        self.assertEqual(
+            payload["rows"][0]["dimensions"]["search_type"], "web"
+        )
+
+        status, _headers, body = self.request(
+            "/api/v1/route-observations.csv?report=summary&site=example-site"
+            "&source=search-console&metric=search.route-position"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        exported = list(csv.DictReader(io.StringIO(body)))
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(
+            json.loads(exported[0]["dimensions"])["search_type"], "web"
+        )
+        self.assertNotIn("discover", body)
+
+    def test_route_observations_page_is_summary_first_and_bounded(self):
+        status, _headers, body = self.request(
+            "/route-observations?report=summary&site=example-site"
+            "&start=2026-07-01&end=2026-07-02"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn('class="dashboard-app app-page routes-page"', body)
+        self.assertIn('<h1>Routes</h1>', body)
+        self.assertIn("Matching rows", body)
+        self.assertIn("Provider mix", body)
+        self.assertIn("Browser display is capped at 50 rows", body)
+        self.assertIn('<details class="panel raw-data-details">', body)
+        self.assertIn('src="/assets/app.js"', body)
+
     def test_forms_cards_preserve_unknown_pipeline_values(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
-        self.assertIn('data-metric="forms.pending" data-state="unknown"', body)
-        self.assertIn('data-metric="forms.failed" data-state="unknown"', body)
+        self.assertNotIn('data-metric="forms.pending"', body)
+        self.assertNotIn('data-metric="forms.failed"', body)
+        self.assertIn('data-metric="umami.pageviews"', body)
 
     def test_partial_card_and_metric_table_disclose_coverage(self):
         body = self.request("/?report=summary&start=2026-06-30&end=2026-07-02")[2]
         self.assertIn('data-metric="umami.pageviews" data-state="partial"', body)
-        self.assertIn("Partial data", body)
+        self.assertIn("partial coverage", body)
         self.assertIn("<th>Coverage</th>", body)
 
     def test_weighted_accessible_chart_uses_window_aggregate_not_sum_of_daily_rates(self):
@@ -600,17 +1134,40 @@ metric_groups = ["traffic"]
         body = _chart_html(result, "search.ctr", {"example-site": "Example Site"})
         self.assertIn("15.0% window aggregate", body)
         self.assertNotIn("30.0% total", body)
+        daily_unique = {
+            "series": [{
+                "metric": "umami.daily-visitors", "site_id": "example-site",
+                "source": "umami", "unit": "count",
+                "points": [
+                    {"date": "2026-07-01", "value": 8},
+                    {"date": "2026-07-02", "value": 7},
+                ],
+            }],
+            "rows": [],
+        }
+        unique_body = _chart_html(
+            daily_unique, "umami.daily-visitors", {"example-site": "Example Site"}
+        )
+        self.assertIn("Daily uniques · no window-unique total", unique_body)
+        self.assertNotIn("15 window total", unique_body)
 
     def test_subreport_navigation_and_form_preserve_scope_and_window(self):
         body = self.request("/?report=summary&subreport=forms&start=2026-07-01&end=2026-07-02")[2]
-        self.assertIn('name="subreport" value="forms"', body)
-        self.assertIn("subreport=forms", body); self.assertIn("start=2026-07-01", body); self.assertIn("end=2026-07-02", body)
+        self.assertNotIn('name="subreport"', body)
+        self.assertNotIn("subreport=forms", body)
+        self.assertIn('name="start" value="2026-07-01"', body)
+        self.assertIn('name="end" value="2026-07-02"', body)
+        self.assertIn("All properties", body)
 
     def test_site_scope_is_validated_and_preserved(self):
         path = "/?report=summary&site=example-site&start=2026-07-01&end=2026-07-02"
         status, _headers, body = self.request(path)
-        self.assertEqual(status, 200); self.assertIn('value="example-site" data-sources=', body); self.assertIn('selected>Example Site</option>', body)
+        self.assertEqual(status, 200); self.assertIn('<option value="example-site" selected>Example Site</option>', body)
+        self.assertIn('<h1>Example Site</h1>', body)
         self.assertIn("site=example-site", body)
+        self.assertNotIn("Traffic by property", body)
+        self.assertIn("Page views over time", body)
+        self.assertIn("Index coverage", body)
         self.assertEqual(self.request("/?report=summary&site=unknown&start=2026-07-01&end=2026-07-02")[0], 400)
 
     def test_early_valid_dashboard_window_does_not_underflow_quick_presets(self):
@@ -627,6 +1184,10 @@ metric_groups = ["traffic"]
     def test_css_charts_need_no_inline_style_permission(self):
         status, _headers, body = self.request("/assets/app.css")
         self.assertEqual(status, 200); self.assertIn(".h-50{height:100%}", body)
+        self.assertIn('.dashboard-app[data-theme="hyperpunk"]', body)
+        self.assertIn('.dashboard-app[data-theme="ultraviolet"]', body)
+        self.assertIn('.dashboard-app[data-theme="ember"]', body)
+        self.assertIn(".app-page .kpi-card:before{background:var(--app-accent)}", body)
         page_headers = self.request("/?report=summary&start=2026-07-01&end=2026-07-02")[1]
         self.assertNotIn("unsafe-inline", page_headers["Content-Security-Policy"])
 
@@ -634,6 +1195,9 @@ metric_groups = ["traffic"]
         status, headers, body = self.request(f"/site-graph?site={self.graph_site_key}&page=%2Fservices%2F")
         self.assertEqual(status, 200)
         self.assertIn("Site Graph", body)
+        self.assertIn('class="dashboard-app app-page site-graph-page"', body)
+        self.assertIn('id="theme-selector" aria-label="Color theme"', body)
+        self.assertIn("Deep analysis &amp; evidence", body)
         self.assertIn("Structural evidence", body)
         self.assertIn("Analytical basis stays compiled contextual", body)
         self.assertIn("Goal distance", body)

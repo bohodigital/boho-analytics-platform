@@ -16,7 +16,7 @@ from importlib.resources import files
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from .build_info import build_identity
-from .catalog import METRICS, SOURCE_SEMANTICS
+from .catalog import METRICS, SOURCE_SEMANTICS, search_console_metric_supported
 from .credentials import ReferenceCredentialProvider, require_text
 from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
@@ -47,8 +47,10 @@ ROUTE_OBSERVATION_METRICS = tuple(sorted(
 ))
 ROUTE_OBSERVATION_DIMENSIONS = frozenset({
     "channel", "country_code", "country_code_system", "data_state", "device",
-    "domain", "event_name", "observation_scope", "page_title", "referrer_domain",
-    "referrer_route", "route", "search_appearance",
+    "dimension_type", "dimension_value", "dimension_value_kind", "domain",
+    "event_name", "observation_scope", "page_title", "provider_date",
+    "provider_timezone", "query_text", "query_visibility", "referrer_domain",
+    "referrer_route", "route", "search_appearance", "search_type",
 })
 ROUTE_OBSERVATION_LIMIT = 500
 ROUTE_OBSERVATION_MAX_DAYS = 366
@@ -283,36 +285,36 @@ def site_graph_core21_projection(graph_store, payload, layers):
 
 
 METRIC_LABELS = {
-    "umami.pageviews": "Page views",
-    "umami.sessions": "Sessions",
-    "umami.visitors": "Visitors",
-    "umami.visits": "Visits",
-    "umami.bounces": "Bounces",
-    "umami.total-time": "Visit time",
-    "umami.country-visits": "Country visits",
-    "umami.region-visits": "Region visits",
-    "cloudflare.requests": "Edge requests",
-    "cloudflare.visits": "Edge visits",
-    "cloudflare.bytes": "Response bytes",
-    "cloudflare.country-visits": "Country edge visits",
-    "google.active-users": "Active users",
+    "umami.pageviews": "Umami page views",
+    "umami.daily-visitors": "Umami daily unique visitors",
+    "umami.visitors": "Umami exact-window visitors",
+    "umami.visits": "Umami visits",
+    "umami.bounces": "Umami bounced visits",
+    "umami.total-time": "Umami visit time",
+    "umami.country-visits": "Umami country visits",
+    "umami.region-visits": "Umami region visits",
+    "cloudflare.requests": "Cloudflare edge requests",
+    "cloudflare.visits": "Cloudflare edge visits",
+    "cloudflare.bytes": "Cloudflare response bytes",
+    "cloudflare.country-visits": "Cloudflare country visits",
+    "google.active-users": "GA active-user days",
     "google.sessions": "GA sessions",
     "google.pageviews": "GA page views",
     "google.events": "GA events",
     "google.key-events": "Key events",
     "google.country-sessions": "Country GA sessions",
     "google.region-sessions": "Region GA sessions",
-    "search.clicks": "Search clicks",
-    "search.impressions": "Search impressions",
-    "search.ctr": "Search CTR",
-    "search.position": "Average position",
-    "search.country-clicks": "Country search clicks",
-    "forms.submissions": "Form submissions",
-    "forms.pending": "Pending notifications",
-    "forms.sent": "Sent notifications",
-    "forms.failed": "Failed notifications",
-    "forms.inbox-deliveries": "Inbox deliveries",
-    "forms.inbox-unread": "Unread notifications",
+    "search.clicks": "Search Console clicks",
+    "search.impressions": "Search Console impressions",
+    "search.ctr": "Search Console CTR",
+    "search.position": "Search Console average position",
+    "search.country-clicks": "Search Console country clicks",
+    "forms.submissions": "Durable form leads",
+    "forms.pending": "Pending form notifications",
+    "forms.sent": "Sent form notifications",
+    "forms.failed": "Failed form notifications",
+    "forms.inbox-deliveries": "Inbox delivery evidence",
+    "forms.inbox-unread": "Unread inbox evidence",
 }
 
 SOURCE_LABELS = {
@@ -327,7 +329,7 @@ SOURCE_LABELS = {
 
 CHART_PRIORITY = (
     "umami.pageviews",
-    "umami.sessions",
+    "umami.daily-visitors",
     "google.pageviews",
     "google.sessions",
     "cloudflare.visits",
@@ -339,31 +341,31 @@ CHART_PRIORITY = (
 )
 
 PORTFOLIO_SUMMARY = (
-    ("Organic clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
-    ("Umami visits", ("umami.visits",), "Exact-window Umami visits"),
-    ("GA sessions", ("google.sessions",), "Google Analytics sessions"),
+    ("Umami page views", ("umami.pageviews",), "Page views recorded by Umami"),
+    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
+    ("Search impressions", ("search.impressions",), "Google Search Console result impressions"),
+    ("Search clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
 )
 
 TRAFFIC_SUMMARY = (
     ("Umami page views", ("umami.pageviews",), "Umami-recorded page views"),
-    ("GA page views", ("google.pageviews",), "Google Analytics screen and page views"),
-    ("Umami visitors", ("umami.visitors",), "Unique within each exact provider window; summed by site"),
-    ("GA active-user days", ("google.active-users",), "Daily active users summed; not unique across days"),
+    ("Umami visits", ("umami.visits",), "Exact-window visits recorded by Umami"),
+    ("Umami visitors", ("umami.visitors",), "Unique visitors within each provider window"),
+    ("GA4 sessions", ("google.sessions",), "Sessions recorded by Google Analytics"),
 )
 
 SEARCH_SUMMARY = (
-    ("Impressions", ("search.impressions",), "Search result visibility"),
+    ("Impressions", ("search.impressions",), "Search result visibility on the selected Search Console surface"),
     ("Clicks", ("search.clicks",), "Clicks recorded by Google Search Console"),
-    ("CTR", ("search.ctr",), "Clicks per impression"),
-    ("Average position", ("search.position",), "Impression-weighted rank"),
+    ("CTR", ("search.ctr",), "Clicks divided by impressions"),
+    ("Average position", ("search.position",), "Impression-weighted result position; lower is better"),
 )
 
 FORMS_SUMMARY = (
-    ("Submissions", ("forms.submissions",), "Stored form records"),
-    ("Inbox deliveries", ("forms.inbox-deliveries",), "Mailbox delivery evidence"),
-    ("Pending", ("forms.pending",), "Awaiting notification"),
-    ("Failed", ("forms.failed",), "Notification failures"),
+    ("Durable leads", ("forms.submissions",), "Accepted records in the forms database"),
+    ("Inbox delivery evidence", ("forms.inbox-deliveries",), "Matching messages observed in the configured mailbox"),
+    ("Pending form notifications", ("forms.pending",), "Accepted records awaiting notification"),
+    ("Failed form notifications", ("forms.failed",), "Accepted records whose notification is marked failed"),
 )
 
 
@@ -382,7 +384,7 @@ BASE_CSS = """
 .operation-card[data-state="never_run"],.operation-card[data-state="running"]{border-color:#e0b16d;background:var(--amber-soft)}
 .pulse-source{display:block;color:var(--muted);font-size:10px;font-weight:700}
 .table-panel{overflow:hidden;margin-bottom:18px}.table-panel .panel-heading{padding:20px 20px 0}.table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 14px;border-bottom:1px solid #ecebe6;white-space:nowrap}th{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}td{font-size:13px}tbody tr:hover{background:#fbfaf7}.metric-name{font-weight:750}.source-chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#efefeb;color:#505852;font-size:11px;font-weight:700}.positive{color:var(--green);font-weight:750}.negative{color:var(--red);font-weight:750}.muted{color:var(--muted)}.footer{display:flex;justify-content:space-between;gap:20px;color:var(--muted);font-size:12px}.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}
-.plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
+.plot-form{grid-template-columns:repeat(4,minmax(135px,1fr))}.check-field{display:flex;min-height:42px;align-items:center;gap:9px;padding:9px 11px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.check-field input{width:17px;min-height:auto;height:17px;margin:0}.check-field span{font-size:13px}.chart-stage{position:relative;min-height:390px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff 0%,#fbfaf7 100%);overflow:hidden}.time-series-chart{display:block;width:100%;height:390px}.time-series-chart:focus-visible{outline:3px solid rgba(232,109,61,.32);outline-offset:-3px}.chart-status{position:absolute;left:18px;top:14px;z-index:2;max-width:calc(100% - 36px);padding:6px 9px;border:1px solid rgba(222,221,213,.9);border-radius:8px;background:rgba(255,255,255,.9);color:var(--muted);font-size:11px;pointer-events:none}.chart-tooltip{position:absolute;z-index:5;min-width:170px;max-width:min(260px,calc(100% - 16px));padding:10px 11px;border:1px solid #d5d9d5;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 12px 30px rgba(24,34,30,.17);color:var(--ink);font-size:11px;line-height:1.35;pointer-events:none}.chart-tooltip[hidden],.chart-tooltip-guide[hidden]{display:none}.chart-tooltip-date{display:block;margin-bottom:7px;color:var(--ink);font-size:12px;font-weight:850}.chart-tooltip-values{display:grid;gap:5px}.chart-tooltip-row{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:7px;align-items:center}.chart-tooltip-swatch{width:7px;height:7px;border-radius:50%;background:var(--accent)}.chart-tooltip-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}.chart-tooltip-value{padding-left:5px;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:800}.chart-tooltip-guide{position:absolute;z-index:3;top:52px;bottom:42px;width:1px;background:rgba(82,90,85,.28);pointer-events:none}.chart-legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin:13px 0 0;padding:0;list-style:none;color:var(--ink-2);font-size:12px}.chart-legend li{display:flex;align-items:center;gap:7px}.legend-swatch{width:18px;height:3px;border-radius:4px;background:var(--accent)}.legend-tone-0{background:#e86d3d}.legend-tone-1{background:#277962}.legend-tone-2{background:#5869a6}.legend-tone-3{background:#b27b24}.legend-tone-4{background:#9b4d7c}.legend-tone-5{background:#2e7ea1}.chart-fallback{margin-top:16px}.chart-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.plot-note{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;color:var(--muted);font-size:12px}.plot-note b{color:var(--ink-2)}.plot-mode{border-color:#f1b195!important;background:var(--accent-soft)!important;color:#7d351a!important}
 .graph-form{grid-template-columns:minmax(160px,1fr) minmax(190px,1.25fr) minmax(130px,.7fr) 2fr auto}.layer-picker{display:flex;min-width:0;flex-wrap:wrap;gap:7px 12px;min-height:42px;padding:8px 10px;border:1px solid #c8c9c3;border-radius:9px;background:#fff}.layer-picker label{display:flex;align-items:center;gap:5px;color:var(--ink-2);font-size:12px;font-weight:700}.layer-picker input{width:15px;height:15px;min-height:0;margin:0}.graph-stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(235px,.38fr);gap:12px;align-items:start;overflow:hidden;padding:12px;border:1px solid #e3e4de;border-radius:14px;background:linear-gradient(180deg,#fff,#fbfaf7)}.site-graph-svg{display:block;width:100%;height:auto;min-height:300px}.graph-edge{stroke:#aab0ac;stroke-width:1.7;opacity:.58;cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease;vector-effect:non-scaling-stroke}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{opacity:1;stroke-width:4;outline:none}.graph-edge.is-related{opacity:.9;stroke-width:2.6}.graph-edge.is-dimmed{opacity:.08}.graph-edge.action{stroke:#e86d3d}.graph-edge.related{stroke:#5869a6}.graph-node-group{cursor:pointer}.graph-node-group:focus{outline:none}.graph-node{fill:#fff;stroke:#355f52;stroke-width:2;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}.graph-node.goal{fill:var(--green-soft);stroke:var(--green)}.graph-node.unreachable{fill:var(--red-soft);stroke:var(--red)}.graph-node.selected{fill:var(--accent-soft);stroke:var(--accent);stroke-width:4}.graph-node-group:hover .graph-node,.graph-node-group:focus .graph-node,.graph-node-group.is-active .graph-node{stroke-width:4;filter:drop-shadow(0 4px 10px rgba(25,35,31,.18))}.graph-node-group.is-related .graph-node{stroke-width:3}.graph-node-group.is-dimmed .graph-node{opacity:.22}.graph-label{fill:var(--ink);font-size:11px;font-weight:750;text-anchor:middle;opacity:0;pointer-events:none;transition:opacity .16s ease}.graph-node-group:hover .graph-label,.graph-node-group:focus .graph-label,.graph-node-group.is-active .graph-label,.graph-node-group.is-related .graph-label{opacity:1}.graph-inspector{min-width:0;padding:12px;border:1px solid #e3e4de;border-radius:12px;background:rgba(255,255,255,.86);color:var(--muted);font-size:12px}.graph-inspector strong{display:block;color:var(--ink);font-size:13px}.graph-inspector p{margin:6px 0 0}.graph-inspector.is-pinned{border-color:#f1b195;background:var(--accent-soft)}.graph-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.graph-disclosure{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 16px;padding:14px;border:1px solid #dfded7;border-radius:13px;background:#fbfaf7}.graph-disclosure p{min-width:0;margin:0;overflow-wrap:anywhere;color:var(--muted);font-size:12px}.graph-disclosure strong{display:block;color:var(--ink);font-size:13px}.graph-reasons{grid-column:1/-1;margin:0;padding-left:20px;color:var(--muted);font-size:12px}.graph-actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.graph-actions a{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:12px;font-weight:750;text-decoration:none}.graph-view-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:18px}.graph-view-grid .section-panel{margin-bottom:0}.view-note{margin:8px 0 0;color:var(--muted);font-size:12px}.matrix-scroll{overflow:auto;max-height:520px}.matrix-table th,.matrix-table td{text-align:center;padding:8px;min-width:36px}.matrix-table th:first-child,.matrix-table td:first-child{text-align:left;position:sticky;left:0;background:#fff;z-index:1}.matrix-hit{background:var(--accent-soft);color:#7d351a;font-weight:850}.edge-tools{display:grid;grid-template-columns:minmax(180px,1fr) minmax(130px,.45fr) minmax(110px,.35fr) auto;gap:10px;align-items:end;padding:0 20px 16px}.edge-table-panel{margin-bottom:18px}.edge-identity{white-space:normal;overflow-wrap:anywhere}.edge-evidence{max-width:360px;white-space:normal;overflow-wrap:anywhere}.pager{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 20px;color:var(--muted);font-size:12px}.pager a{font-weight:750}.distance-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}.distance-item{padding:12px 8px;border:1px solid #e6e5df;border-radius:10px;background:#fbfaf7;text-align:center}.distance-item b{display:block;font-size:22px}.distance-item span{color:var(--muted);font-size:11px}.graph-meta{display:flex;min-width:0;flex-wrap:wrap;gap:8px;margin:0 0 18px}.graph-meta span{max-width:100%;padding:5px 8px;overflow-wrap:anywhere;border-radius:999px;background:#efefeb;color:var(--ink-2);font-size:11px;font-weight:750}.graph-empty{padding:42px 20px;text-align:center}.graph-empty h2{margin:0 0 8px}.graph-empty p{max-width:620px;margin:auto;color:var(--muted)}
 .graph-stage{background:radial-gradient(ellipse at 50% 42%,rgba(255,240,232,.95),rgba(255,255,255,.92) 42%,#fbfaf7 100%)}.graph-depth-plane{fill:#efe9df;opacity:.55}.graph-edge{fill:none;stroke-linecap:round;stroke-linejoin:round}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.34}.graph-edge.menu{stroke:#8b8f8c}.graph-edge.utility{stroke:#9a855f}.graph-edge.breadcrumb{stroke:#87918f;stroke-dasharray:5 5}.graph-node-shadow{fill:#1f2925;opacity:.12;filter:blur(3px)}.graph-node{filter:url(#node-lift)}.graph-node.depth-front{stroke-width:3}.graph-label{paint-order:stroke;stroke:#fff7;stroke-width:3px}.graph-label .graph-label-title{font-weight:850}.graph-label .graph-label-route{fill:var(--muted);font-size:9px;font-weight:700}.graph-edge-glow{stroke:#fff;stroke-width:5;opacity:.35}.graph-layout-note{display:inline-block;margin-left:7px;color:var(--muted);font-size:11px;font-weight:750}
 .graph-stage{grid-template-columns:minmax(0,1fr) minmax(255px,.34fr);gap:14px;padding:16px}.graph-map{position:relative;min-width:0}.graph-map-help{max-width:760px;margin:0 0 8px;color:var(--ink-2);font-size:12px;font-weight:750}.graph-canvas-toolbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 8px}.graph-canvas-toolbar button{min-height:32px;padding:5px 9px;border-color:#c8c9c3;background:rgba(255,255,255,.88);color:var(--ink-2);font-size:12px;font-weight:800}.graph-canvas-toolbar button:hover{background:#fff;color:var(--ink)}.graph-zoom-status{padding:4px 7px;border-radius:999px;background:#efefeb;color:var(--muted);font-size:11px;font-weight:800}.site-graph-svg{min-height:430px;cursor:grab;touch-action:none;user-select:none}.graph-map.is-panning .site-graph-svg{cursor:grabbing}.graph-viewport{transform-origin:0 0}.graph-depth-plane{opacity:.42}.graph-cluster-label{fill:var(--muted);font-size:12px;font-weight:850;letter-spacing:.08em;text-transform:uppercase;paint-order:stroke;stroke:#fff8;stroke-width:4px}.graph-node-group.is-key .graph-label,.graph-node-group.goal .graph-label,.graph-node-group.selected .graph-label{opacity:1}.graph-label .graph-label-route{display:none}.graph-node-group.is-dimmed .graph-label{opacity:.12}.graph-node-shadow{opacity:.1}.graph-edge{opacity:.48}.graph-edge:hover,.graph-edge:focus,.graph-edge.is-active{stroke-width:3}.graph-edge.is-related{stroke-width:2.2}.graph-edge.menu,.graph-edge.utility,.graph-edge.breadcrumb{opacity:.2}
@@ -396,34 +398,176 @@ BASE_CSS = """
 
 VISUAL_REFRESH_CSS = """
 :root{--ink:#12201b;--ink-2:#263a32;--paper:#f1f4f2;--surface:#fff;--line:#dce4df;--muted:#5c6b64;--accent:#e96d3c;--accent-soft:#fff0e9;--green:#13795b;--green-soft:#e5f5ef;--amber:#9a5a10;--amber-soft:#fff5df;--red:#a64138;--red-soft:#fdecea;--shadow:0 18px 48px rgba(20,39,31,.07);--shadow-soft:0 8px 24px rgba(20,39,31,.055)}
-body{background:radial-gradient(circle at 8% 0%,#fff 0,transparent 28%),linear-gradient(180deg,#f6f8f7 0,#eef2ef 100%);font-size:14px}.topbar{position:sticky;top:0;z-index:10;background:rgba(18,32,27,.96);border-bottom:1px solid rgba(255,255,255,.09);backdrop-filter:blur(16px)}.topbar-inner{max-width:1360px;padding-top:14px;padding-bottom:14px}.brand-mark{border:0;background:linear-gradient(135deg,#ff9b72,#e96d3c);color:#1b211e;box-shadow:inset 0 1px rgba(255,255,255,.5)}.live-state{padding:7px 10px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.055)}
-.shell{max-width:1360px;padding-top:26px}.report-nav{margin-bottom:14px}.report-nav a,.subnav a,.quick-links a{border-color:#d8e0db;background:rgba(255,255,255,.72);box-shadow:0 1px 2px rgba(20,39,31,.03);transition:transform .15s ease,border-color .15s ease,background .15s ease}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{transform:translateY(-1px);border-color:#aebcb4}.report-nav a.active,.subnav a.active{background:#183129;border-color:#183129}.subnav{margin:14px 0 18px}
-.hero{align-items:center;margin-bottom:18px;padding:30px 32px;border:1px solid rgba(255,255,255,.11);border-radius:26px;background:radial-gradient(circle at 82% 18%,rgba(233,109,60,.27),transparent 30%),linear-gradient(135deg,#142a22 0%,#1c3b31 58%,#244a3d 100%);box-shadow:0 24px 60px rgba(17,39,31,.18);color:#fff}.hero .eyebrow{color:#ffae8e}.hero h1{max-width:760px;font-size:clamp(32px,4.5vw,52px)}.hero-copy{color:#c7d5cf}.trust-card{min-width:205px;padding:16px 17px;border:1px solid rgba(255,255,255,.17);border-radius:18px;background:rgba(255,255,255,.09);box-shadow:inset 0 1px rgba(255,255,255,.08);backdrop-filter:blur(10px)}.trust-card[data-state="partial"]{background:rgba(255,191,105,.11)}.trust-label{display:block;color:#bfcec8;font-size:10px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}.trust-value{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin:6px 0;color:#fff}.trust-value strong{font-size:25px;letter-spacing:-.04em}.trust-value span{color:#d8e3df;font-size:12px;font-weight:750}.coverage-track{height:6px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.15)}.coverage-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#5ad0a0,#8ce6bd)}.trust-card[data-state="partial"] .coverage-fill{background:linear-gradient(90deg,#eaa04f,#ffd08b)}
-.panel{border-color:rgba(205,217,210,.92);border-radius:20px;box-shadow:var(--shadow-soft)}.kpi-grid{gap:12px}.kpi-card{min-height:142px;padding:17px 17px 16px;border-radius:18px;box-shadow:var(--shadow-soft)}.kpi-card:before{content:"";position:absolute;left:0;top:0;width:100%;height:4px;background:linear-gradient(90deg,#e96d3c,#f2a37f)}.kpi-card:nth-child(2):before{background:linear-gradient(90deg,#168264,#62c4a2)}.kpi-card:nth-child(3):before{background:linear-gradient(90deg,#586aa8,#8998ce)}.kpi-card:nth-child(4):before{background:linear-gradient(90deg,#a97924,#d4aa59)}.kpi-card:after{right:-38px;bottom:-50px;width:125px;height:125px;opacity:.72}.kpi-value{margin-top:18px;font-size:38px}.kpi-note{max-width:92%;line-height:1.42}
-.dashboard-primary{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,.72fr);gap:18px;align-items:stretch;margin-bottom:18px}.dashboard-primary>.chart-panel,.dashboard-primary>.attention-panel{margin-bottom:0}.chart-panel{padding:23px}.chart-stage{min-height:430px;border-color:#dfe7e2;border-radius:16px;background:linear-gradient(180deg,#fbfdfc 0%,#f6faf7 100%)}.time-series-chart{height:430px}.chart-status{left:20px;top:16px;border-color:#dfe7e2;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 4px 14px rgba(20,39,31,.06)}.source-chip{background:#edf3ef;color:#385248}
-.attention-panel{padding:21px;background:linear-gradient(180deg,#fff,#fbfdfc)}.attention-panel .panel-heading{margin-bottom:16px}.attention-list{gap:10px}.attention-item{grid-template-columns:auto minmax(0,1fr);padding:14px;border-color:#e4ebe7;border-radius:15px;background:#f7faf8}.attention-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.attention-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.attention-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.attention-rank{width:30px;height:30px;border-radius:50%;background:#23443a}.attention-copy h3{font-size:15px;line-height:1.3}.attention-copy p{line-height:1.45}.attention-severity{color:#6b7b73!important}
+body{background:#f2f5f3;font-size:14px}.topbar{position:sticky;top:0;z-index:10;background:#12201b;border-bottom:1px solid rgba(255,255,255,.09)}.topbar-inner{max-width:1360px;padding-top:11px;padding-bottom:11px}.brand-mark{border:0;background:#ff9369;color:#1b211e}.live-state{padding:6px 10px;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.055)}.live-dot{display:none}
+.shell{max-width:1360px;padding-top:18px}.report-nav{margin-bottom:10px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}.report-nav a,.subnav a,.quick-links a{flex:0 0 auto;border-color:#d8e0db;background:#fff;box-shadow:0 1px 2px rgba(20,39,31,.03);transition:border-color .15s ease,background .15s ease}.report-nav a:hover,.subnav a:hover,.quick-links a:hover{border-color:#aebcb4}.report-nav a.active,.subnav a.active{background:#183129;border-color:#183129}.subnav{margin:10px 0 12px}.scope-summary{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0 0!important;color:var(--muted)!important}.scope-summary span{font-size:12px;font-weight:750}
+.hero{align-items:center;margin-bottom:12px;padding:20px 22px;border:1px solid #234138;border-radius:18px;background:#183129;box-shadow:0 12px 30px rgba(17,39,31,.12);color:#fff}.hero .eyebrow{color:#ffb093}.hero h1{max-width:760px;font-size:clamp(29px,3.6vw,40px)}.hero-copy{max-width:820px;margin-top:7px;color:#d4dfda;font-size:14px}.trust-card{min-width:220px;padding:13px 14px;border:1px solid rgba(255,255,255,.17);border-radius:14px;background:rgba(255,255,255,.08)}.trust-card[data-state="partial"],.trust-card[data-state="unknown"]{background:rgba(255,191,105,.1)}.trust-label{display:block;color:#c8d4cf;font-size:10px;font-weight:850;letter-spacing:.11em;text-transform:uppercase}.trust-value{display:flex;justify-content:space-between;gap:14px;align-items:baseline;margin:4px 0;color:#fff}.trust-value strong{font-size:22px;letter-spacing:-.03em}.trust-value span{color:#e0e8e4;font-size:11px;font-weight:750}.coverage-track{height:5px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.15)}.coverage-fill{display:block;height:100%;border-radius:inherit;background:#63d1a8}.trust-card[data-state="partial"] .coverage-fill,.trust-card[data-state="unknown"] .coverage-fill{background:#eeb05f}
+.panel{border-color:rgba(205,217,210,.92);border-radius:16px;box-shadow:var(--shadow-soft)}.kpi-grid{gap:10px;margin-bottom:12px}.kpi-card{min-height:124px;padding:15px 16px;border-radius:15px;box-shadow:var(--shadow-soft)}.kpi-card:before{content:"";position:absolute;left:0;top:0;width:100%;height:3px;background:#e96d3c}.kpi-card:after{display:none}.kpi-value{margin-top:14px;font-size:34px}.kpi-note{max-width:100%;line-height:1.35}.kpi-context{display:block;margin-top:5px;color:var(--muted);font-size:11px}
+.dashboard-primary{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(300px,.68fr);gap:12px;align-items:start;margin-bottom:12px}.dashboard-primary>.chart-panel,.dashboard-primary>.attention-panel{margin-bottom:0}.chart-panel{padding:18px}.panel .eyebrow{color:#883b1d}.chart-stage{min-height:350px;border-color:#dfe7e2;border-radius:13px;background:#f8fbf9}.time-series-chart{height:350px}.chart-status{left:16px;top:13px;border-color:#dfe7e2;border-radius:8px;background:rgba(255,255,255,.94);box-shadow:0 3px 10px rgba(20,39,31,.05)}.source-chip{background:#edf3ef;color:#385248}
+.attention-panel{padding:21px;background:linear-gradient(180deg,#fff,#fbfdfc)}.attention-panel .panel-heading{margin-bottom:16px}.attention-list{gap:10px}.attention-item{grid-template-columns:auto minmax(0,1fr);padding:14px;border-color:#e4ebe7;border-radius:15px;background:#f7faf8}.attention-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.attention-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.attention-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.attention-rank{width:30px;height:30px;border-radius:50%;background:#23443a}.attention-copy h3{font-size:15px;line-height:1.3}.attention-copy p{line-height:1.45}.attention-severity{color:#6b7b73!important}.attention-more{margin-top:10px;border-top:1px solid #e4ebe7;padding-top:10px}.attention-more>summary{cursor:pointer;color:#385248;font-size:12px;font-weight:800}.attention-more>.attention-list{margin-top:10px}
 .decision-panel{padding:22px}.decision-card,.engagement-card,.roadmap-card{border-color:#e2e9e5;border-radius:15px;background:#f8faf9}.decision-value{font-size:32px}.decision-grid{gap:10px}.engagement-grid{gap:10px}.split-grid{gap:14px}.section-panel{padding:21px}.health-item,.pipeline-item,.operation-card{border-color:#e2e9e5;border-radius:13px;background:#f8faf9}
-.control-panel{padding:0;overflow:hidden}.control-summary{margin:0;padding:17px 20px;cursor:pointer;list-style:none;align-items:center}.control-summary::-webkit-details-marker{display:none}.control-summary:after{content:"+";display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:50%;background:#edf3ef;color:#27453a;font-size:20px;font-weight:500}.control-panel[open] .control-summary:after{content:"−"}.control-content{padding:0 20px 19px;border-top:1px solid #e9eeeb}.control-content .filter-form{padding-top:18px}.control-content .tools-row{margin-bottom:0}.data-notices{margin:0 0 18px;border:1px solid #edd7af;border-radius:15px;background:#fffaf0}.data-notices>summary{cursor:pointer;padding:13px 16px;color:#744711;font-weight:800}.data-notices .alerts{margin:0;padding:0 12px 12px}.data-notices .alert{border:0;background:rgba(255,255,255,.62)}
+.control-panel{padding:0;overflow:hidden;margin-bottom:12px}.control-summary{margin:0;padding:13px 16px;cursor:pointer;list-style:none;align-items:center}.control-summary::-webkit-details-marker{display:none}.control-summary:after{content:"+";display:grid;place-items:center;flex:0 0 28px;height:28px;border-radius:50%;background:#edf3ef;color:#27453a;font-size:18px;font-weight:500}.control-panel[open] .control-summary:after{content:"−"}.control-content{padding:0 16px 16px;border-top:1px solid #e9eeeb}.control-content .filter-form{padding-top:15px}.control-content .tools-row{margin-bottom:0}.data-notices{margin:0 0 12px;border:1px solid #edd7af;border-radius:13px;background:#fffaf0}.data-notices>summary{cursor:pointer;padding:11px 14px;color:#744711;font-weight:800}.data-notices .alerts{margin:0;padding:0 10px 10px}.data-notices .alert{border:0;background:rgba(255,255,255,.62)}
 .control-summary:focus,.data-notices>summary:focus,.evidence-panel>summary:focus{outline:3px solid rgba(233,109,60,.3);outline-offset:-3px}
-.evidence-panel{padding:0;overflow:hidden}.evidence-panel>summary{cursor:pointer;list-style:none;padding:19px 21px}.evidence-panel>summary::-webkit-details-marker{display:none}.evidence-panel>summary:after{content:"View";padding:5px 9px;border-radius:999px;background:#edf3ef;color:#385248;font-size:11px;font-weight:800}.evidence-panel[open]>summary:after{content:"Hide"}.evidence-body{padding:0 21px 21px}.evidence-panel .operations-grid,.evidence-panel .roadmap-grid{margin-top:0}.table-panel{border-radius:20px}.table-scroll{scrollbar-color:#bdc9c2 transparent}.footer{padding:8px 2px 0}
+.evidence-panel{padding:0;overflow:hidden}.evidence-panel>summary{cursor:pointer;list-style:none;padding:16px 18px}.evidence-panel>summary::-webkit-details-marker{display:none}.evidence-panel>summary:after{content:"View";padding:5px 9px;border-radius:999px;background:#edf3ef;color:#385248;font-size:11px;font-weight:800}.evidence-panel[open]>summary:after{content:"Hide"}.evidence-body{padding:0 18px 18px}.evidence-panel .operations-grid,.evidence-panel .roadmap-grid{margin-top:0}.evidence-bundle{margin-bottom:12px}.evidence-bundle .panel{box-shadow:none}.table-panel{border-radius:16px}.table-scroll{scrollbar-color:#bdc9c2 transparent}.performance-panel{margin-bottom:12px}.performance-panel .panel-heading{padding:17px 18px 0}.performance-table th:first-child,.performance-table td:first-child{position:sticky;left:0;z-index:1;background:#fff}.performance-value{display:block;color:var(--ink);font-size:15px;font-weight:850}.performance-meta{display:block;color:var(--muted);font-size:10px;font-weight:700}.performance-meta[data-state="partial"],.performance-meta[data-state="withheld"]{color:var(--amber)}.footer{padding:8px 2px 0}
 @media(max-width:1080px){.dashboard-primary{grid-template-columns:1fr}.attention-panel .attention-list{grid-template-columns:repeat(2,minmax(0,1fr))}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:1/-1}}
-@media(max-width:760px){.hero{padding:24px}.trust-card{width:100%}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:14px}.attention-panel .attention-list{grid-template-columns:1fr}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:auto}.chart-stage{min-height:340px}.time-series-chart{height:340px}.control-summary{display:flex}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:480px){.shell{padding-top:18px}.hero{padding:22px 19px;border-radius:21px}.hero h1{font-size:34px}.kpi-grid{grid-template-columns:1fr}.kpi-card{min-height:130px}.chart-panel,.attention-panel,.decision-panel,.section-panel{padding:17px}.chart-stage{min-height:300px}.time-series-chart{height:300px}.live-state{border-radius:12px}}
+@media(max-width:760px){.hero{padding:18px}.trust-card{width:100%}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:12px}.attention-panel .attention-list{grid-template-columns:1fr}.attention-panel .attention-item:last-child:nth-child(odd){grid-column:auto}.chart-stage{min-height:320px}.time-series-chart{height:320px}.control-summary{display:flex}.filter-form,.plot-form{grid-template-columns:1fr}.filter-form button{grid-column:auto}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.performance-table{min-width:720px}}
+@media(max-width:480px){.shell{padding-top:12px}.report-nav{flex-wrap:wrap;overflow-x:visible}.hero{padding:17px 16px;border-radius:16px}.hero h1{font-size:29px}.kpi-grid{grid-template-columns:1fr}.kpi-card{min-height:116px}.chart-panel,.attention-panel,.decision-panel,.section-panel{padding:15px}.chart-stage{min-height:290px}.time-series-chart{height:290px}.live-state{border-radius:10px}.topbar-inner{gap:9px}.brand span{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.report-nav a,.subnav a,.quick-links a{transition:none}}
 """
 
 HEIGHT_CLASSES = "".join(f".h-{level}{{height:{level * 2}%}}" for level in range(51))
 WIDTH_CLASSES = "".join(f".p-{level}{{width:{level}%}}" for level in range(101))
+HEATMAP_CLASSES = "".join(
+    f".heatmap-grid.days-{days}{{grid-template-columns:minmax(112px,auto) repeat({days},minmax(24px,1fr))}}"
+    for days in range(1, 367)
+)
 GEOGRAPHY_CSS = """
-.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
+.geography-panel{padding:21px;margin-bottom:18px}.geography-controls{display:flex;align-items:end;gap:12px}.geography-controls .field{min-width:210px}.geography-grid{display:grid;grid-template-columns:1.18fr .82fr;gap:14px}.map-card{min-width:0;padding:14px;border:1px solid #e1e4dd;border-radius:15px;background:linear-gradient(180deg,#fbfdfb,#f5f3ed)}.map-card h3{margin:0;font-size:14px}.map-card>p{margin:3px 0 11px;color:var(--muted);font-size:12px}.geo-svg{display:block;width:100%;height:auto;min-height:280px;border-radius:12px;background:#e7f0ed}.geo-shape{stroke:#fff;stroke-width:.65;vector-effect:non-scaling-stroke;cursor:pointer;transition:filter .12s ease,opacity .12s ease}.geo-shape[data-interactive="false"]{cursor:default}.geo-shape:hover,.geo-shape:focus{filter:brightness(.88);outline:none;stroke:#17201d;stroke-width:1.4}.geo-shape.is-selected{stroke:#17201d;stroke-width:2}.county-shape{fill:rgba(255,255,255,.15);stroke:#6f7b76;stroke-width:.35;vector-effect:non-scaling-stroke;pointer-events:none}.geo-status{margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#edf3ef;color:#33473f;font-size:12px}.geo-disclosure{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:12px}.geo-disclosure p{margin:0;padding:10px;border:1px solid #e2e4de;border-radius:10px;color:var(--muted);font-size:11px}.geo-disclosure strong{display:block;color:var(--ink);font-size:12px}.geography-fallback{margin-top:12px}.geography-fallback>summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:750}.geo-empty{padding:18px;color:var(--muted);text-align:center}.geo-suppressed{color:var(--amber);font-weight:750}
 @media(max-width:900px){.geography-grid{grid-template-columns:1fr}.geo-svg{min-height:240px}.geo-disclosure{grid-template-columns:1fr}}
 @media(max-width:560px){.geography-panel{padding:16px}.geography-controls{display:grid;grid-template-columns:1fr}.geography-controls .field{min-width:0}.geo-svg{min-height:210px}.map-card{padding:10px}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + HEIGHT_CLASSES + WIDTH_CLASSES
+INDEX_COVERAGE_CSS = """
+.index-coverage-panel{margin-bottom:12px}.index-coverage-panel .panel-heading{padding:18px 18px 0}.index-coverage-table td{vertical-align:middle}.index-value{display:block;color:var(--ink);font-size:16px;font-weight:850}.index-note{display:block;max-width:320px;white-space:normal;color:var(--muted);font-size:10px;font-weight:700}.index-pct{font-size:20px;font-weight:900;color:var(--green)}.index-pending{color:var(--amber);font-size:12px;font-weight:800}.index-meter{width:130px;height:6px;margin-top:5px;overflow:hidden;border-radius:999px;background:#e5ebe7}.index-meter>span{display:block;height:100%;border-radius:inherit;background:#e7a94e}.index-coverage-table tr[data-state="complete"] .index-meter>span{background:#4caf88}.index-method{margin:0;padding:12px 18px 16px;border-top:1px solid #ecebe6;color:var(--muted);font-size:11px}.index-method strong{color:var(--ink-2)}
+@media(max-width:760px){.index-coverage-table{min-width:760px}}
+"""
+DASHBOARD_VISUAL_CSS = """
+.visual-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px}.visual-panel{padding:18px}.visual-panel .panel-heading{margin-bottom:16px}.visual-panel .panel-heading p{max-width:620px}.rank-list{display:grid;gap:13px}.rank-row{display:grid;grid-template-columns:minmax(125px,.7fr) minmax(170px,1.3fr) auto;gap:12px;align-items:center}.rank-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:800}.rank-track{height:12px;overflow:hidden;border-radius:999px;background:#e9eeeb}.rank-fill{display:block;height:100%;border-radius:inherit;background:#277962}.rank-fill.search{background:#e96d3c}.rank-fill.indexed{background:#277962}.rank-fill.unindexed{background:#e6b15e}.rank-value{text-align:right;font-size:12px;font-weight:850}.rank-value small{display:block;color:var(--muted);font-size:10px;font-weight:700}.heatmap{overflow-x:auto}.heatmap-grid{display:grid;gap:4px;align-items:center;min-width:520px}.heat-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800}.heat-date{color:var(--muted);font-size:9px;text-align:center}.heat-cell{display:block;aspect-ratio:1.1;border-radius:5px;background:#edf2ef}.heat-1{background:#d6ebe2}.heat-2{background:#a9d7c5}.heat-3{background:#70b99d}.heat-4{background:#378c70}.heat-5{background:#146149}.visual-legend{display:flex;justify-content:flex-end;gap:4px;align-items:center;margin-top:10px;color:var(--muted);font-size:10px}.visual-legend i{width:14px;height:8px;border-radius:3px;background:#edf2ef}.visual-legend i:nth-of-type(2){background:#a9d7c5}.visual-legend i:nth-of-type(3){background:#146149}.capture-row{display:grid;gap:7px}.capture-meta{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.capture-meta b{font-size:12px}.capture-meta span{color:var(--muted);font-size:10px;font-weight:750}.capture-track{height:10px;overflow:hidden;border-radius:999px;background:#f0eee8}.capture-track>span{display:block;height:100%;border-radius:inherit;background:#e96d3c}.index-stack{display:flex;height:13px;overflow:hidden;border-radius:999px;background:#e6b15e}.index-stack .indexed{height:100%;background:#277962}.index-stack .unindexed{height:100%;background:#e6b15e}.visual-footnote{margin:14px 0 0;color:var(--muted);font-size:10px}.signal-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}.signal-item{min-width:0;padding:11px 13px;border:1px solid #dce4df;border-radius:12px;background:#fff}.signal-item[data-severity="immediate"]{border-color:#efc3be;background:#fff3f1}.signal-item[data-severity="review"]{border-color:#f0d8a8;background:#fffaf0}.signal-item[data-severity="clear"]{border-color:#bfe0d2;background:#edf9f4}.signal-item span{display:block;color:var(--muted);font-size:9px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}.signal-item b{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.dashboard-primary{display:block}.dashboard-primary>.chart-panel{margin-bottom:12px}.attention-panel{display:none}.index-coverage-panel{display:none}.performance-panel{display:none}.kpi-note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kpi-note .sr-only{white-space:normal}.evidence-body>.index-coverage-panel,.evidence-body>.performance-panel{display:block}.evidence-bundle>summary h2{font-size:15px}.evidence-bundle>summary p{font-size:11px}.chart-panel .plot-note{margin-top:8px}.chart-panel .metric-description{font-size:12px}.chart-panel .panel-heading{margin-bottom:12px}
+@media(max-width:900px){.visual-grid{grid-template-columns:1fr}.signal-strip{grid-template-columns:1fr 1fr}.signal-item:last-child:nth-child(odd){grid-column:1/-1}}
+@media(max-width:620px){.visual-panel{padding:15px}.rank-row{grid-template-columns:minmax(92px,.75fr) minmax(100px,1.25fr) auto;gap:8px}.signal-strip{grid-template-columns:1fr}.signal-item:last-child:nth-child(odd){grid-column:auto}.kpi-note{font-size:10px}}
+"""
+ALL_IN_ONE_CSS = """
+.dashboard-app{background:#f3f6f4;color:#13211c}.dashboard-app .topbar{position:sticky}.dashboard-app .topbar-inner{max-width:1480px;padding:10px 24px}.dashboard-app .brand{gap:10px}.dashboard-app .brand-mark{width:32px;height:32px;border-radius:8px;font-size:12px}.dashboard-app .brand strong{font-size:14px}.dashboard-app .live-state{padding:0;border:0;border-radius:0;background:transparent;color:#c7d3ce;font-size:12px}
+.dashboard-app .shell{max-width:1480px;padding:22px 24px 40px}.dashboard-header{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;margin-bottom:14px}.dashboard-title h1{margin:0;font-size:clamp(28px,3vw,40px);line-height:1.05;letter-spacing:-.045em}.dashboard-meta{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:7px;color:#5b6a63;font-size:12px;font-weight:700}.coverage-state{display:inline-flex;align-items:center;gap:6px}.coverage-state:before{content:"";width:7px;height:7px;border-radius:50%;background:#1e8061}.coverage-state[data-state="partial"]:before,.coverage-state[data-state="unknown"]:before{background:#b46b18}
+.dashboard-controls{display:flex;gap:8px;align-items:flex-end}.property-form{display:flex;gap:8px;align-items:flex-end}.property-field{display:grid;gap:4px}.property-field span{color:#56665e;font-size:10px;font-weight:850;letter-spacing:.08em;text-transform:uppercase}.property-field select{width:230px;min-height:40px;padding:8px 34px 8px 11px;border-color:#cbd6d0;border-radius:9px;font-weight:800}.scope-apply{min-height:40px;padding:8px 12px}.tool-menu{position:relative}.tool-menu>summary{display:flex;min-height:40px;align-items:center;padding:8px 12px;border:1px solid #cbd6d0;border-radius:9px;background:#fff;color:#263b32;font-size:12px;font-weight:850;cursor:pointer;list-style:none}.tool-menu>summary::-webkit-details-marker{display:none}.tool-menu[open]>summary{border-color:#789487}.tool-menu-items{position:absolute;right:0;top:46px;z-index:12;width:230px;padding:7px;border:1px solid #cad6d0;border-radius:11px;background:#fff;box-shadow:0 18px 44px rgba(20,39,31,.16)}.tool-menu-items a,.tool-menu-items button{display:block;width:100%;min-height:0;padding:9px 10px;border:0;border-radius:7px;background:transparent;color:#263b32;font-size:12px;font-weight:750;text-align:left;text-decoration:none}.tool-menu-items a:hover{background:#edf3ef}.tool-menu-items hr{height:1px;margin:5px 4px;border:0;background:#e3e9e5}
+.window-bar{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-bottom:12px;padding:9px 11px;border:1px solid #dbe4df;border-radius:11px;background:#fff}.window-bar strong{font-size:12px}.window-links{display:flex;gap:4px}.window-links a{padding:5px 8px;border-radius:7px;color:#53645c;font-size:11px;font-weight:850;text-decoration:none}.window-links a:hover,.window-links a.active{background:#e8efeb;color:#17372c}.custom-window{position:relative}.custom-window>summary{cursor:pointer;list-style:none;color:#53645c;font-size:11px;font-weight:850}.custom-window>summary::-webkit-details-marker{display:none}.custom-window-form{position:absolute;right:0;top:30px;z-index:11;display:grid;grid-template-columns:repeat(2,150px) auto;gap:8px;align-items:end;padding:12px;border:1px solid #cad6d0;border-radius:11px;background:#fff;box-shadow:0 18px 44px rgba(20,39,31,.16)}.custom-window-form .field span{font-size:10px}.custom-window-form input{min-height:38px}.custom-window-form button{min-height:38px}
+.overview-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-bottom:12px}.overview-metric{min-width:0;padding:15px 15px 13px;border:1px solid #d9e3de;border-radius:13px;background:#fff;box-shadow:0 6px 18px rgba(20,39,31,.04)}.overview-metric[data-state="unavailable"]{background:#f8faf9}.overview-metric-head{display:flex;justify-content:space-between;gap:7px;align-items:center;color:#53645c;font-size:10px;font-weight:850;letter-spacing:.055em;text-transform:uppercase}.overview-metric strong{display:block;margin:13px 0 7px;overflow:hidden;text-overflow:ellipsis;font-size:clamp(25px,2.2vw,34px);line-height:1;font-weight:880;letter-spacing:-.04em}.overview-metric[data-state="unavailable"] strong{color:#6c7973;font-size:23px}.overview-metric small{display:block;min-height:28px;color:#66756e;font-size:10px;line-height:1.35}.metric-delta{padding:3px 5px;border-radius:6px;background:#eef2ef;color:#52615a;font-size:9px;letter-spacing:0}.metric-delta.up{background:#e4f4ed;color:#0f7052}.metric-delta.down{background:#fbe9e7;color:#9a3d35}
+.trend-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(360px,1fr);gap:12px;margin-bottom:12px}.series-panel{padding:17px}.compact-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:14px}.compact-heading h2{margin:0;font-size:16px;line-height:1.2;letter-spacing:-.02em}.compact-heading span,.compact-heading small{display:block;margin-top:3px;color:#68776f;font-size:10px;font-weight:700}.series-panel .chart-stage{min-height:290px;border:0;border-radius:10px;background:#f8faf9}.series-panel .time-series-chart{height:290px}.series-panel .chart-legend{gap:7px 14px;margin-top:10px;font-size:10px}.series-panel .legend-swatch{width:14px}.series-panel .chart-fallback{margin-top:8px}.series-panel .chart-fallback>summary{font-size:10px}.dashboard-app .chart-status{display:none}
+.dashboard-app .visual-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.dashboard-app .visual-panel{padding:17px}.dashboard-app .rank-list{gap:11px}.dashboard-app .rank-row{grid-template-columns:minmax(112px,.78fr) minmax(150px,1.4fr) auto}.dashboard-app .rank-track,.dashboard-app .capture-track{height:9px}.dashboard-app .rank-fill{background:#287761}.dashboard-app .capture-track>span{background:#df6840}.dashboard-app .rank-value small{font-size:9px}.dashboard-app .index-stack{height:11px}.index-legend{display:flex;gap:12px;align-items:center}.index-legend span{display:flex!important;gap:5px;align-items:center;margin:0!important;font-size:9px!important}.index-legend i{width:9px;height:9px;border-radius:2px}.index-legend .indexed{background:#287761}.index-legend .unindexed{background:#d9a34d}
+.search-funnel{display:grid;gap:11px}.search-funnel>div{display:grid;grid-template-columns:82px minmax(100px,1fr) auto;gap:10px;align-items:center}.search-funnel span{font-size:10px;font-weight:800}.search-funnel strong{font-size:12px}.funnel-track{height:10px;overflow:hidden;border-radius:999px;background:#edf1ef}.funnel-track i{display:block;height:100%;border-radius:inherit;background:#df6840}.search-summary-row{display:flex;gap:24px;margin-top:15px;padding-top:12px;border-top:1px solid #e6ece8;color:#627169;font-size:10px}.search-summary-row b{margin-right:3px;color:#16261f;font-size:15px}
+.country-list{display:grid;gap:8px}.country-row{display:grid;grid-template-columns:30px minmax(100px,1fr) auto;gap:9px;align-items:center}.country-row>span:first-child{font-size:10px;font-weight:850}.country-row strong{font-size:11px}.country-track{height:8px;overflow:hidden;border-radius:999px;background:#edf1ef}.country-track>span{display:block;height:100%;border-radius:inherit;background:#287761}
+.source-readings{padding:17px;margin-bottom:12px}.source-reading-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;border:1px solid #e0e7e3;border-radius:11px}.source-reading{min-width:0;padding:12px 13px;border-right:1px solid #e0e7e3}.source-reading:last-child{border-right:0}.source-reading span,.source-reading small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#65736c;font-size:9px;font-weight:800}.source-reading strong{display:block;margin:7px 0 5px;overflow:hidden;text-overflow:ellipsis;font-size:20px;line-height:1}.data-details{margin-bottom:10px;overflow:hidden}.data-details>summary{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;cursor:pointer;list-style:none;color:#33483f;font-size:12px;font-weight:850}.data-details>summary::-webkit-details-marker{display:none}.data-details>summary:after{content:"Open";color:#68776f;font-size:10px}.data-details[open]>summary:after{content:"Close"}.data-details-body{padding:0 14px 14px}.data-details .table-panel,.data-details .split-grid{box-shadow:none}.dashboard-app .footer{justify-content:flex-end;padding-top:4px;font-size:10px}
+@media(max-width:1200px){.overview-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.source-reading-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.source-reading:nth-child(3){border-right:0}.source-reading:nth-child(-n+3){border-bottom:1px solid #e0e7e3}}
+@media(max-width:940px){.dashboard-header{align-items:flex-start;flex-direction:column}.dashboard-controls{width:100%;justify-content:space-between}.property-field select{width:min(64vw,320px)}.trend-grid{grid-template-columns:1fr}.dashboard-app .visual-grid{grid-template-columns:1fr}}
+@media(max-width:620px){.dashboard-app .topbar-inner,.dashboard-app .shell{padding-left:14px;padding-right:14px}.dashboard-app .live-state{display:none}.dashboard-controls{align-items:flex-end}.property-form{flex:1}.property-field{flex:1}.property-field select{width:100%}.window-bar{align-items:flex-start;flex-wrap:wrap}.custom-window-form{position:fixed;left:14px;right:14px;top:110px;grid-template-columns:1fr}.overview-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-metric{padding:13px 12px}.overview-metric strong{font-size:27px}.trend-grid{display:block}.trend-grid .series-panel{margin-bottom:12px}.series-panel .chart-stage{min-height:255px}.series-panel .time-series-chart{height:255px}.source-reading-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.source-reading,.source-reading:nth-child(3){border-right:1px solid #e0e7e3;border-bottom:1px solid #e0e7e3}.source-reading:nth-child(even){border-right:0}.source-reading:nth-last-child(-n+2){border-bottom:0}.dashboard-app .rank-row{grid-template-columns:minmax(88px,.7fr) minmax(90px,1.3fr) auto}.index-legend{margin-top:8px}.compact-heading{flex-wrap:wrap}.tool-menu-items{position:fixed;left:14px;right:14px;top:70px;width:auto}.search-funnel>div{grid-template-columns:66px minmax(80px,1fr) auto}}
+"""
+HYPERPUNK_CSS = """
+.dashboard-app{color-scheme:dark;--ink:#d8e2e0;--ink-2:#b8c7c4;--paper:#050607;--surface:#0b0e12;--line:#202a34;--muted:#899895;--accent:#37e6ff;--accent-soft:rgba(55,230,255,.11);--green:#6ee7b7;--green-soft:rgba(110,231,183,.1);--amber:#ffc268;--amber-soft:rgba(255,194,104,.1);--red:#ff7c91;--red-soft:rgba(255,124,145,.1);--shadow:0 16px 40px rgba(0,0,0,.42);--shadow-soft:0 8px 24px rgba(0,0,0,.32);--series-1:#37e6ff;--series-2:#ff4fd8;--series-3:#9b8cff;--series-4:#b8f34a;--series-5:#ffb44d;--series-6:#ff6b7a;--chart-grid:#202a34;--chart-axis:#83928f;--chart-area-alpha:.1;background:#050607;color:var(--ink);accent-color:var(--accent)}
+.dashboard-app .topbar{background:#050607;border-bottom:1px solid #19232d;box-shadow:0 8px 26px rgba(0,0,0,.38)}.dashboard-app .brand-mark{border:1px solid rgba(55,230,255,.34);background:#090d12;color:#70ecff;box-shadow:0 0 18px rgba(55,230,255,.12)}.dashboard-app .brand strong{color:#edf5f3}.dashboard-app .brand span,.dashboard-app .live-state{color:#8e9d9a}
+.dashboard-app .panel,.dashboard-app .overview-metric,.dashboard-app .window-bar,.dashboard-app .source-readings{border-color:#202a34;background:#0b0e12;box-shadow:var(--shadow-soft)}.dashboard-app .overview-metric{border-top:2px solid rgba(55,230,255,.72)}.dashboard-app .overview-metric:nth-child(3),.dashboard-app .overview-metric:nth-child(4),.dashboard-app .overview-metric:nth-child(5){border-top-color:rgba(255,79,216,.72)}.dashboard-app .overview-metric:nth-child(6){border-top-color:rgba(184,243,74,.72)}.dashboard-app .overview-metric[data-state="unavailable"]{background:#090c10}.dashboard-app .overview-metric-head,.dashboard-app .overview-metric small,.dashboard-app .dashboard-meta,.dashboard-app .property-field span,.dashboard-app .compact-heading span,.dashboard-app .compact-heading small{color:#899895}.dashboard-app .overview-metric strong,.dashboard-app .search-summary-row b,.dashboard-app .performance-value,.dashboard-app .index-value{color:#e3ecea}
+.dashboard-app input,.dashboard-app select,.dashboard-app .check-field,.dashboard-app .layer-picker{border-color:#293641;background:#090c10;color:#d8e2e0}.dashboard-app input:focus,.dashboard-app select:focus,.dashboard-app button:focus,.dashboard-app a:focus,.dashboard-app summary:focus{outline-color:rgba(55,230,255,.34);border-color:#37e6ff}.dashboard-app button,.dashboard-app .scope-apply{border-color:#37e6ff;background:#10252b;color:#bff7ff}.dashboard-app button:hover{background:#16323a}.dashboard-app .tool-menu>summary{border-color:#293641;background:#0b0f14;color:#c8d5d2}.dashboard-app .tool-menu[open]>summary{border-color:#37e6ff}.dashboard-app .tool-menu-items,.dashboard-app .custom-window-form{border-color:#293641;background:#0b0e12;box-shadow:0 18px 50px rgba(0,0,0,.58)}.dashboard-app .tool-menu-items a,.dashboard-app .tool-menu-items button{color:#c8d5d2}.dashboard-app .tool-menu-items a:hover{background:#131a21}.dashboard-app .tool-menu-items hr{background:#202a34}
+.dashboard-app .window-links a,.dashboard-app .custom-window>summary{color:#91a09d}.dashboard-app .window-links a:hover,.dashboard-app .window-links a.active{background:rgba(55,230,255,.11);color:#70ecff}.dashboard-app .coverage-state:before{background:#6ee7b7;box-shadow:0 0 12px rgba(110,231,183,.38)}.dashboard-app .coverage-state[data-state="partial"]:before,.dashboard-app .coverage-state[data-state="unknown"]:before{background:#ffc268;box-shadow:0 0 12px rgba(255,194,104,.32)}
+.dashboard-app .metric-delta{background:#151b21;color:#94a39f}.dashboard-app .metric-delta.up{background:rgba(110,231,183,.11);color:#7cebbe}.dashboard-app .metric-delta.down{background:rgba(255,124,145,.11);color:#ff91a2}.dashboard-app .series-panel .chart-stage{background:#07090c}.dashboard-app .time-series-chart:focus-visible{outline-color:rgba(55,230,255,.45)}.dashboard-app .chart-tooltip{border-color:#34434f;background:rgba(8,11,15,.97);box-shadow:0 16px 38px rgba(0,0,0,.58);color:#d8e2e0}.dashboard-app .chart-tooltip-date,.dashboard-app .chart-tooltip-value{color:#edf5f3}.dashboard-app .chart-tooltip-label{color:#a5b3b0}.dashboard-app .chart-tooltip-guide{background:rgba(112,236,255,.25)}.dashboard-app .chart-legend{color:#a5b3b0}.dashboard-app .legend-tone-0{background:var(--series-1)}.dashboard-app .legend-tone-1{background:var(--series-2)}.dashboard-app .legend-tone-2{background:var(--series-3)}.dashboard-app .legend-tone-3{background:var(--series-4)}.dashboard-app .legend-tone-4{background:var(--series-5)}.dashboard-app .legend-tone-5{background:var(--series-6)}.dashboard-app .chart-fallback>summary{color:#899895}
+.dashboard-app .rank-track,.dashboard-app .capture-track,.dashboard-app .funnel-track,.dashboard-app .country-track{background:#171e25}.dashboard-app .rank-fill,.dashboard-app .country-track>span{background:#37e6ff}.dashboard-app .capture-track>span,.dashboard-app .funnel-track i{background:#ff4fd8}.dashboard-app .index-stack{background:#4a391f}.dashboard-app .index-stack .indexed,.dashboard-app .index-legend .indexed{background:#b8f34a}.dashboard-app .index-stack .unindexed,.dashboard-app .index-legend .unindexed{background:#ffb44d}.dashboard-app .capture-meta span,.dashboard-app .rank-value small,.dashboard-app .search-summary-row,.dashboard-app .source-reading span,.dashboard-app .source-reading small{color:#899895}.dashboard-app .search-summary-row{border-top-color:#202a34}
+.dashboard-app .source-reading-grid{border-color:#202a34}.dashboard-app .source-reading{border-color:#202a34}.dashboard-app .data-details>summary{color:#b8c7c4}.dashboard-app .data-details>summary:after{color:#70ecff}.dashboard-app .data-details-body{border-top:1px solid #171f27}.dashboard-app .source-chip,.dashboard-app .capability-chip,.dashboard-app .graph-meta span{background:#151c23;color:#aebdba}
+.dashboard-app .health-item,.dashboard-app .pipeline-item,.dashboard-app .operation-card,.dashboard-app .decision-card,.dashboard-app .engagement-card,.dashboard-app .roadmap-card,.dashboard-app .attention-item,.dashboard-app .signal-item,.dashboard-app .chart-card,.dashboard-app .graph-disclosure,.dashboard-app .distance-item{border-color:#202a34;background:#0e1217}.dashboard-app .pipeline-value,.dashboard-app .decision-value,.dashboard-app .graph-disclosure strong{color:#d8e2e0!important}.dashboard-app .data-notices{border-color:#4a391f;background:#110e09}.dashboard-app .data-notices>summary{color:#ffc268}.dashboard-app .data-notices .alert,.dashboard-app .alert{border-color:#4a391f;background:#151006;color:#e9c994}.dashboard-app .alert-mark{background:#9d6828}.dashboard-app .attention-item[data-severity="clear"],.dashboard-app .signal-item[data-severity="clear"]{border-color:#24493b;background:#0b1713}.dashboard-app .attention-item[data-severity="review"],.dashboard-app .signal-item[data-severity="review"]{border-color:#4a391f;background:#151006}.dashboard-app .attention-item[data-severity="immediate"],.dashboard-app .signal-item[data-severity="immediate"]{border-color:#4a2931;background:#170c10}
+.dashboard-app table{color:#cdd8d5}.dashboard-app th,.dashboard-app td{border-bottom-color:#1b242c}.dashboard-app th{color:#81908d}.dashboard-app tbody tr:hover{background:#10161c}.dashboard-app .performance-table th:first-child,.dashboard-app .performance-table td:first-child,.dashboard-app .matrix-table th:first-child,.dashboard-app .matrix-table td:first-child{background:#0b0e12}.dashboard-app .positive{color:#6ee7b7}.dashboard-app .negative{color:#ff7c91}.dashboard-app .index-pct{color:#b8f34a}.dashboard-app .index-pending,.dashboard-app .geo-suppressed{color:#ffc268}.dashboard-app .index-meter{background:#171e25}.dashboard-app .index-coverage-table tr[data-state="complete"] .index-meter>span{background:#b8f34a}.dashboard-app .index-meter>span{background:#ffb44d}.dashboard-app .index-method{border-top-color:#202a34}.dashboard-app .empty-state{border-color:#293641;color:#899895}.dashboard-app ::selection{background:rgba(255,79,216,.28);color:#fff}.dashboard-app *{scrollbar-color:#34434f #080a0d}
+"""
+PRODUCTION_UI_CSS = """
+.dashboard-app[data-theme="hyperpunk"]{--app-bg:#050607;--app-surface:#0b0e12;--app-surface-2:#0e1319;--app-control:#090c10;--app-line:#202a34;--app-line-strong:#34434f;--app-text:#d8e2e0;--app-muted:#899895;--app-accent:#37e6ff;--app-accent-soft:rgba(55,230,255,.11);--app-secondary:#ff4fd8;--app-good:#6ee7b7;--app-warn:#ffc268;--app-bad:#ff7c91}
+.dashboard-app[data-theme="ultraviolet"]{--ink:#ddd9eb;--ink-2:#c3bfd2;--paper:#050408;--surface:#0d0a13;--line:#2b223b;--muted:#938da1;--accent:#a78bfa;--accent-soft:rgba(167,139,250,.12);--green:#55e6c1;--green-soft:rgba(85,230,193,.1);--amber:#ffd166;--amber-soft:rgba(255,209,102,.1);--red:#ff7893;--red-soft:rgba(255,120,147,.1);--series-1:#a78bfa;--series-2:#55e6c1;--series-3:#55bdf2;--series-4:#f472d0;--series-5:#ffd166;--series-6:#ff7893;--chart-grid:#2b223b;--chart-axis:#958ea4;--app-bg:#050408;--app-surface:#0d0a13;--app-surface-2:#120e1a;--app-control:#0a0710;--app-line:#2b223b;--app-line-strong:#493a60;--app-text:#ddd9eb;--app-muted:#938da1;--app-accent:#a78bfa;--app-accent-soft:rgba(167,139,250,.12);--app-secondary:#55e6c1;--app-good:#55e6c1;--app-warn:#ffd166;--app-bad:#ff7893}
+.dashboard-app[data-theme="ember"]{--ink:#e7dfd7;--ink-2:#cbbfb5;--paper:#070503;--surface:#110c08;--line:#36271d;--muted:#9d9086;--accent:#ff8a4c;--accent-soft:rgba(255,138,76,.12);--green:#b8e36b;--green-soft:rgba(184,227,107,.1);--amber:#ffc857;--amber-soft:rgba(255,200,87,.1);--red:#ff6f7d;--red-soft:rgba(255,111,125,.1);--series-1:#ff8a4c;--series-2:#b8e36b;--series-3:#ffd166;--series-4:#ff6f7d;--series-5:#c792ea;--series-6:#5ed7d7;--chart-grid:#36271d;--chart-axis:#9d9086;--app-bg:#070503;--app-surface:#110c08;--app-surface-2:#17100b;--app-control:#0d0906;--app-line:#36271d;--app-line-strong:#59402e;--app-text:#e7dfd7;--app-muted:#9d9086;--app-accent:#ff8a4c;--app-accent-soft:rgba(255,138,76,.12);--app-secondary:#b8e36b;--app-good:#b8e36b;--app-warn:#ffc857;--app-bad:#ff6f7d}
+.dashboard-app[data-theme]{background:var(--app-bg);color:var(--app-text);accent-color:var(--app-accent)}
+.dashboard-app[data-theme] .topbar{background:var(--app-bg);border-bottom-color:var(--app-line)}
+.dashboard-app[data-theme] .panel,.dashboard-app[data-theme] .overview-metric,.dashboard-app[data-theme] .window-bar,.dashboard-app[data-theme] .source-readings{border-color:var(--app-line);background:var(--app-surface)}
+.dashboard-app[data-theme] input,.dashboard-app[data-theme] select,.dashboard-app[data-theme] .check-field,.dashboard-app[data-theme] .layer-picker{border-color:var(--app-line-strong);background:var(--app-control);color:var(--app-text)}
+.dashboard-app[data-theme] button,.dashboard-app[data-theme] .scope-apply{border-color:var(--app-accent);background:var(--app-accent-soft);color:var(--app-accent)}
+.dashboard-app[data-theme] button:hover{background:color-mix(in srgb,var(--app-accent) 18%,var(--app-surface))}
+.dashboard-app[data-theme] input:focus,.dashboard-app[data-theme] select:focus,.dashboard-app[data-theme] button:focus,.dashboard-app[data-theme] a:focus,.dashboard-app[data-theme] summary:focus{outline-color:color-mix(in srgb,var(--app-accent) 38%,transparent);border-color:var(--app-accent)}
+.dashboard-app[data-theme] .brand-mark{border-color:color-mix(in srgb,var(--app-accent) 38%,transparent);background:var(--app-control);color:var(--app-accent);box-shadow:0 0 18px color-mix(in srgb,var(--app-accent) 14%,transparent)}
+.dashboard-app[data-theme] .tool-menu>summary,.dashboard-app[data-theme] .tool-menu-items,.dashboard-app[data-theme] .custom-window-form{border-color:var(--app-line-strong);background:var(--app-surface);color:var(--app-text)}
+.dashboard-app[data-theme] .tool-menu-items a,.dashboard-app[data-theme] .tool-menu-items button{color:var(--app-text)}.dashboard-app[data-theme] .tool-menu-items a:hover{background:var(--app-surface-2)}
+.dashboard-app[data-theme] .source-chip,.dashboard-app[data-theme] .capability-chip,.dashboard-app[data-theme] .graph-meta span,.dashboard-app[data-theme] .graph-zoom-status{background:var(--app-surface-2);color:var(--ink-2)}
+.dashboard-app[data-theme] .chart-stage,.dashboard-app[data-theme] .series-panel .chart-stage,.dashboard-app[data-theme] .chart-card,.dashboard-app[data-theme] .graph-stage,.dashboard-app[data-theme] .graph-inspector,.dashboard-app[data-theme] .graph-disclosure,.dashboard-app[data-theme] .distance-item,.dashboard-app[data-theme] .signal-item{border-color:var(--app-line);background:var(--app-control)}
+.dashboard-app[data-theme] .chart-tooltip{border-color:var(--app-line-strong);background:color-mix(in srgb,var(--app-surface) 96%,transparent);color:var(--app-text)}
+.dashboard-app[data-theme] .chart-tooltip-date,.dashboard-app[data-theme] .chart-tooltip-value{color:var(--app-text)}.dashboard-app[data-theme] .chart-tooltip-label{color:var(--app-muted)}
+.dashboard-app[data-theme] .rank-track,.dashboard-app[data-theme] .capture-track,.dashboard-app[data-theme] .funnel-track,.dashboard-app[data-theme] .country-track,.dashboard-app[data-theme] .index-meter{background:var(--app-surface-2)}
+.dashboard-app[data-theme] .rank-fill,.dashboard-app[data-theme] .country-track>span{background:var(--series-1)}.dashboard-app[data-theme] .capture-track>span,.dashboard-app[data-theme] .funnel-track i{background:var(--series-2)}
+.dashboard-app[data-theme] .graph-node{fill:var(--app-surface);stroke:var(--app-accent)}.dashboard-app[data-theme] .graph-label,.dashboard-app[data-theme] .graph-cluster-label{fill:var(--app-text)}.dashboard-app[data-theme] .graph-cluster-label{stroke:var(--app-bg)}
+.dashboard-app[data-theme] table{color:var(--app-text)}.dashboard-app[data-theme] th,.dashboard-app[data-theme] td{border-bottom-color:var(--app-line)}.dashboard-app[data-theme] th{color:var(--app-muted)}.dashboard-app[data-theme] tbody tr:hover{background:var(--app-surface-2)}
+.app-topbar-inner{max-width:1480px}.app-brand{flex:0 0 auto;color:inherit;text-decoration:none}.app-nav{display:flex;flex:0 0 auto;gap:4px;align-items:center}.app-nav a{padding:7px 9px;border-radius:8px;color:var(--app-muted);font-size:11px;font-weight:850;text-decoration:none}.app-nav a:hover{background:var(--app-surface-2);color:var(--app-text)}.app-nav a.active{background:var(--app-accent-soft);color:var(--app-accent)}
+.app-header-actions{display:flex;min-width:0;gap:12px;align-items:center}.app-header-actions .live-state{min-width:0;max-width:min(36vw,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.theme-field{display:flex;flex:0 0 auto;gap:7px;align-items:center;color:var(--app-muted);font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}.theme-field select{width:auto;min-height:34px;padding:5px 28px 5px 9px;border-radius:8px;font-size:11px;font-weight:800;text-transform:none;letter-spacing:0}.app-page .shell{max-width:1480px;padding-top:22px}.app-page .hero{align-items:center;margin-bottom:14px;border-color:var(--app-line);background:linear-gradient(135deg,var(--app-accent-soft),var(--app-surface));color:var(--app-text);box-shadow:var(--shadow-soft)}.app-page .hero h1{font-size:clamp(26px,3vw,38px)}.app-page .hero-copy{max-width:820px;margin-top:7px;color:var(--ink-2);font-size:13px}.app-page .eyebrow{margin-bottom:5px;color:var(--app-accent);font-size:10px}.app-page .coverage-badge{background:color-mix(in srgb,var(--app-good) 12%,transparent);color:var(--app-good)}.app-page .trust-card{border-color:var(--app-line-strong);background:var(--app-accent-soft)}.app-page .trust-label,.app-page .trust-value span{color:var(--ink-2)}.app-page .trust-value{color:var(--app-text)}
+.app-page .kpi-grid{margin-bottom:12px}.app-page .kpi-card{min-height:128px;padding:15px;border-color:var(--app-line);background:var(--app-surface);box-shadow:var(--shadow-soft)}.app-page .kpi-card:before{background:var(--app-accent)}.app-page .kpi-card:after{background:var(--app-accent-soft)}.app-page .kpi-value{font-size:30px}.app-page .kpi-note{white-space:normal}.app-page .control-panel{padding:0;overflow:visible}.app-page .control-summary{display:flex;margin:0;padding:14px 16px;cursor:pointer;list-style:none}.app-page .control-summary::-webkit-details-marker{display:none}.app-page .control-summary:after{content:"Open";display:block;flex:0 0 auto;width:auto;height:auto;margin-left:auto;border-radius:0;background:transparent;color:var(--app-accent);font-size:10px;font-weight:850}.app-page .control-panel[open] .control-summary:after{content:"Close"}.app-page .control-content{padding:0 16px 16px;border-top-color:var(--app-line)}.app-page .quick-links{margin-bottom:12px}.app-page .quick-links a{border-color:var(--app-line);background:var(--app-surface);color:var(--ink-2)}.app-page .quick-links a:hover{border-color:var(--app-line-strong);background:var(--app-surface-2)}
+.raw-data-details{overflow:hidden;margin-bottom:18px}.raw-data-details>summary{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:15px 18px;cursor:pointer;list-style:none;font-weight:850}.raw-data-details>summary::-webkit-details-marker{display:none}.raw-data-details>summary:after{content:"Open table";color:var(--app-accent);font-size:10px}.raw-data-details[open]>summary:after{content:"Close table"}.raw-data-details .table-panel{margin:0;border:0;border-top:1px solid var(--app-line);border-radius:0;box-shadow:none}.app-filter-summary{color:var(--app-muted);font-size:11px;font-weight:700}.observation-source-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}.observation-source{padding:14px;border:1px solid var(--app-line);border-radius:12px;background:var(--app-surface)}.observation-source span{display:block;color:var(--app-muted);font-size:10px;font-weight:850;text-transform:uppercase}.observation-source strong{display:block;margin-top:7px;font-size:24px}.observation-source i{display:block;height:5px;margin-top:10px;border-radius:999px;background:var(--app-surface-2);overflow:hidden}.observation-source i b{display:block;height:100%;background:var(--app-accent)}
+@media(max-width:980px){.app-topbar-inner{align-items:flex-start;flex-wrap:wrap}.app-nav{order:3;width:100%;overflow-x:auto}.app-header-actions{margin-left:auto}.app-page .graph-form{grid-template-columns:repeat(2,minmax(0,1fr))}.observation-source-grid{grid-template-columns:1fr}}
+@media(max-width:650px){.app-header-actions .live-state{display:none}.theme-field span{display:none}.app-nav{padding-bottom:2px}.app-page .graph-form{grid-template-columns:1fr}.app-page .hero{display:block}.app-page .coverage-badge{margin-top:10px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + PRODUCTION_UI_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
-  const colors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
+  const themeStorageKey = "boho-analytics-theme";
+  const availableThemes = new Set(["hyperpunk", "ultraviolet", "ember"]);
+  let savedTheme = "hyperpunk";
+  try {
+    const candidate = window.localStorage.getItem(themeStorageKey);
+    if (availableThemes.has(candidate)) savedTheme = candidate;
+  } catch (_error) {
+    // Storage can be unavailable in hardened or private browsing contexts.
+  }
+  document.body.dataset.theme = savedTheme;
+
+  const defaultColors = ["#e86d3d", "#277962", "#5869a6", "#b27b24", "#9b4d7c", "#2e7ea1"];
   const format = new Intl.NumberFormat(undefined, {maximumFractionDigits: 2});
+  const integerFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 0});
+  const exactFormat = new Intl.NumberFormat(undefined, {maximumFractionDigits: 4});
+  const tooltipDateFormat = new Intl.DateTimeFormat(undefined, {year: "numeric", month: "short", day: "numeric", timeZone: "UTC"});
+
+  function formatCountValue(number) {
+    const magnitude = Math.abs(number);
+    const compact = [
+      [1e9, "B"],
+      [1e6, "M"],
+      [1e3, "K"],
+    ].find(([threshold]) => magnitude >= threshold);
+    if (!compact) return integerFormat.format(Math.round(number));
+    const [threshold, suffix] = compact;
+    return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: 2}).format(number / threshold)}${suffix}`;
+  }
+
+  function niceCountStep(maximum, targetTicks = 5) {
+    const raw = Math.max(1, maximum / targetTicks);
+    const magnitude = 10 ** Math.floor(Math.log10(raw));
+    const normalized = raw / magnitude;
+    const factor = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+    return Math.max(1, factor * magnitude);
+  }
+
+  function formatMetricValue(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "unavailable";
+    if (unit === "ratio") return `${(number * 100).toFixed(1)}%`;
+    if (unit === "position") return number.toFixed(1);
+    if (unit === "seconds") {
+      const rounded = Math.max(0, Math.round(number));
+      const hours = Math.floor(rounded / 3600);
+      const minutes = Math.floor((rounded % 3600) / 60);
+      const seconds = rounded % 60;
+      if (hours) return `${format.format(hours)}h ${String(minutes).padStart(2, "0")}m`;
+      if (minutes) return `${format.format(minutes)}m ${String(seconds).padStart(2, "0")}s`;
+      return `${seconds}s`;
+    }
+    if (unit === "bytes") {
+      const suffixes = ["B", "KB", "MB", "GB", "TB"];
+      let scaled = number;
+      let index = 0;
+      while (Math.abs(scaled) >= 1024 && index < suffixes.length - 1) {
+        scaled /= 1024;
+        index += 1;
+      }
+      return `${new Intl.NumberFormat(undefined, {maximumFractionDigits: index ? 1 : 0}).format(scaled)} ${suffixes[index]}`;
+    }
+    if (unit === "count") return formatCountValue(number);
+    return format.format(number);
+  }
+
+  function formatTooltipValue(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "No value";
+    if (unit === "count") return integerFormat.format(Math.round(number));
+    if (unit === "ratio") return `${exactFormat.format(number * 100)}%`;
+    if (unit === "bytes") return `${integerFormat.format(Math.round(number))} B`;
+    if (unit === "seconds") return `${exactFormat.format(number)} s`;
+    return exactFormat.format(number);
+  }
 
   function updateMetricOptions() {
     const source = document.querySelector('select[name="source"]');
@@ -443,11 +587,14 @@ JS = r"""
     const source = document.querySelector('select[name="source"]');
     const metric = document.querySelector('select[name="metric"]');
     const site = document.querySelector('select[name="site"]');
+    const searchType = document.querySelector('select[name="search_type"]');
     const selectedSource = source?.value || metric?.selectedOptions[0]?.dataset.source || "";
     if (!selectedSource || !site) return;
     let first = null;
     for (const option of site.options) {
-      const supported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
+      const sourceSupported = option.value === "all" || (option.dataset.sources || "").split(",").includes(selectedSource);
+      const surfaceSupported = selectedSource !== "search-console" || option.value === "all" || !searchType?.value || (option.dataset.searchTypes || "").split(",").includes(searchType.value);
+      const supported = sourceSupported && surfaceSupported;
       option.hidden = !supported;
       option.disabled = !supported;
       if (supported && first === null) first = option;
@@ -455,13 +602,65 @@ JS = r"""
     if (site.selectedOptions[0]?.disabled && first) first.selected = true;
   }
 
+  function updateStyleOptions() {
+    const metric = document.querySelector('select[name="metric"]');
+    const style = document.querySelector('select[name="style"]');
+    if (!metric || !style) return;
+    const lineOnly = metric.selectedOptions[0]?.dataset.lowerIsBetter === "true";
+    for (const option of style.options) {
+      option.disabled = lineOnly && option.value !== "line";
+    }
+    if (lineOnly && style.value !== "line") style.value = "line";
+  }
+
   function drawChart(canvas, payload) {
+    const pageStyle = getComputedStyle(document.body);
+    const configuredColor = (name, fallback) => pageStyle.getPropertyValue(name).trim() || fallback;
+    const colors = defaultColors.map((fallback, index) => configuredColor(`--series-${index + 1}`, fallback));
+    const chartGrid = configuredColor("--chart-grid", "#e4e4de");
+    const chartAxis = configuredColor("--chart-axis", "#727974");
+    const areaAlpha = Number.parseFloat(pageStyle.getPropertyValue("--chart-area-alpha")) || .14;
     const series = payload.series || [];
     const comparison = payload.comparison_series || [];
-    const status = document.getElementById("chart-status");
-    const legend = document.getElementById("chart-legend");
+    const unit = payload.unit || series[0]?.unit || "count";
+    const lowerIsBetter = Boolean(payload.lower_is_better);
+    const panel = canvas.closest(".series-panel,.chart-panel") || document;
+    const status = panel.querySelector("[data-chart-status]") || document.getElementById("chart-status");
+    const liveStatus = panel.querySelector("[data-chart-live-status]") || document.getElementById("chart-live-status");
+    const legend = panel.querySelector("[data-chart-legend]") || document.getElementById("chart-legend");
+    const stage = canvas.closest(".chart-stage");
+    let tooltip = stage?.querySelector("[data-chart-tooltip]");
+    let tooltipGuide = stage?.querySelector("[data-chart-tooltip-guide]");
+    if (stage && !tooltip) {
+      tooltip = document.createElement("div");
+      tooltip.className = "chart-tooltip";
+      tooltip.dataset.chartTooltip = "";
+      tooltip.setAttribute("role", "tooltip");
+      tooltip.hidden = true;
+      stage.append(tooltip);
+    }
+    if (stage && !tooltipGuide) {
+      tooltipGuide = document.createElement("span");
+      tooltipGuide.className = "chart-tooltip-guide";
+      tooltipGuide.dataset.chartTooltipGuide = "";
+      tooltipGuide.setAttribute("aria-hidden", "true");
+      tooltipGuide.hidden = true;
+      stage.append(tooltipGuide);
+    }
     if (!series.length) {
-      status.textContent = "No stored daily values match this selection.";
+      const context = canvas.getContext("2d");
+      if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+      if (legend) legend.replaceChildren();
+      canvas.onpointermove = null;
+      canvas.onpointerleave = null;
+      canvas.onpointerdown = null;
+      canvas.onfocus = null;
+      canvas.onblur = null;
+      canvas.onkeydown = null;
+      if (tooltip) tooltip.hidden = true;
+      if (tooltipGuide) tooltipGuide.hidden = true;
+      if (status) status.textContent = payload.availability_note || "No stored daily values match this selection.";
+      if (liveStatus) liveStatus.textContent = status?.textContent || "No stored daily values match this selection.";
       canvas.dataset.rendered = "empty";
       return;
     }
@@ -479,12 +678,21 @@ JS = r"""
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
     const allValues = [...series, ...comparison].flatMap(item => item.points.map(point => Number(point.value)));
-    let min = Math.min(0, ...allValues);
-    let max = Math.max(0, ...allValues);
+    let min = lowerIsBetter ? Math.min(...allValues) : Math.min(0, ...allValues);
+    let max = lowerIsBetter ? Math.max(...allValues) : Math.max(0, ...allValues);
     if (min === max) max = min + 1;
     const padding = (max - min) * .08;
-    if (max > 0) max += padding;
-    if (min < 0) min -= padding;
+    if (lowerIsBetter) {
+      max += padding;
+      min = Math.max(0, min - padding);
+    } else if (unit === "count") {
+      min = 0;
+      const countStep = niceCountStep(max);
+      max = Math.max(countStep, Math.ceil(max / countStep) * countStep);
+    } else {
+      if (max > 0) max += padding;
+      if (min < 0) min -= padding;
+    }
     const dateMs = value => Date.parse(value + "T00:00:00Z");
     const currentStart = dateMs(payload.window.start.slice(0, 10));
     const currentEnd = dateMs(payload.window.end.slice(0, 10));
@@ -496,14 +704,15 @@ JS = r"""
 
     ctx.font = "11px system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    ctx.strokeStyle = "#e4e4de";
-    ctx.fillStyle = "#727974";
+    ctx.strokeStyle = chartGrid;
+    ctx.fillStyle = chartAxis;
     ctx.lineWidth = 1;
-    for (let step = 0; step <= 4; step++) {
-      const value = max - (max - min) * step / 4;
-      const py = margin.top + plotHeight * step / 4;
+    const gridIntervals = unit === "count" ? Math.max(1, Math.round(max / niceCountStep(max))) : 4;
+    for (let step = 0; step <= gridIntervals; step++) {
+      const value = max - (max - min) * step / gridIntervals;
+      const py = margin.top + plotHeight * step / gridIntervals;
       ctx.beginPath(); ctx.moveTo(margin.left, py); ctx.lineTo(width - margin.right, py); ctx.stroke();
-      ctx.textAlign = "right"; ctx.fillText(format.format(value), margin.left - 9, py);
+      ctx.textAlign = "right"; ctx.fillText(formatMetricValue(value, unit), margin.left - 9, py);
     }
     const dateAt = index => new Date(currentStart + index * 86400000).toISOString().slice(0, 10);
     const tickIndexes = [...new Set([0, Math.floor((dayCount - 1) / 2), dayCount - 1])];
@@ -524,7 +733,24 @@ JS = r"""
       return segments;
     }
 
-    function path(item, color, dashed, fill) {
+    function fillArea(item, color) {
+      if (item.points.length < 2) return;
+      const startMs = currentStart;
+      for (const segment of contiguousSegments(item.points)) {
+        if (segment.length < 2) continue;
+        ctx.beginPath();
+        segment.forEach((point, index) => {
+          const px = xPoint(point, startMs), py = y(Number(point.value));
+          if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        });
+        ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
+        ctx.lineTo(xPoint(segment[0], startMs), y(min));
+        ctx.closePath();
+        ctx.save(); ctx.fillStyle = color; ctx.globalAlpha = areaAlpha; ctx.fill(); ctx.restore();
+      }
+    }
+
+    function path(item, color, dashed) {
       if (!item.points.length) return;
       const startMs = dashed ? comparisonStart : currentStart;
       for (const segment of contiguousSegments(item.points)) {
@@ -533,18 +759,6 @@ JS = r"""
           const px = xPoint(point, startMs), py = y(Number(point.value));
           if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
         });
-        if (fill && segment.length > 1) {
-          ctx.lineTo(xPoint(segment[segment.length - 1], startMs), y(min));
-          ctx.lineTo(xPoint(segment[0], startMs), y(min)); ctx.closePath();
-          const gradient = ctx.createLinearGradient(0, margin.top, 0, height - margin.bottom);
-          gradient.addColorStop(0, color + "42"); gradient.addColorStop(1, color + "08");
-          ctx.fillStyle = gradient; ctx.fill();
-          ctx.beginPath();
-          segment.forEach((point, index) => {
-            const px = xPoint(point, startMs), py = y(Number(point.value));
-            if (index === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-          });
-        }
         ctx.strokeStyle = color; ctx.globalAlpha = dashed ? .55 : 1; ctx.lineWidth = dashed ? 1.5 : 2.5;
         ctx.setLineDash(dashed ? [6, 5] : []); ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
       }
@@ -555,7 +769,8 @@ JS = r"""
       }
     }
 
-    if (payload.style === "bar") {
+    const effectiveStyle = lowerIsBetter ? "line" : payload.style;
+    if (effectiveStyle === "bar") {
       const groupWidth = Math.max(2, Math.min(18, plotWidth / dayCount * .7));
       const barWidth = Math.max(1.5, groupWidth / series.length);
       series.forEach((item, seriesIndex) => {
@@ -566,10 +781,12 @@ JS = r"""
           ctx.fillRect(xPoint(point,currentStart) - groupWidth / 2 + seriesIndex * barWidth, Math.min(valueY, zeroY), barWidth - 1, Math.max(1, Math.abs(zeroY - valueY)));
         });
       });
-      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true));
     } else {
-      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true, false));
-      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false, payload.style === "area"));
+      const fillCurves = effectiveStyle === "area" || canvas.dataset.areaFill === "true";
+      if (fillCurves) series.forEach((item, seriesIndex) => fillArea(item, colors[seriesIndex % colors.length]));
+      comparison.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], true));
+      series.forEach((item, seriesIndex) => path(item, colors[seriesIndex % colors.length], false));
     }
 
     if (legend) {
@@ -587,25 +804,104 @@ JS = r"""
     }
     const rangeText = `${dateAt(0)} through ${dateAt(dayCount - 1)}`;
     const comparisonText = payload.compare && !payload.comparison_available ? " - comparison unavailable" : "";
-    status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`;
+    const directionText = lowerIsBetter ? " - lower is better" : "";
+    const surfaceText = payload.search_type ? ` - ${payload.search_type} search surface` : "";
+    const statusText = `${payload.metric_label} (${unit})${directionText}${surfaceText} - ${series.length} series - ${rangeText}${comparisonText}`;
+    if (status) status.textContent = statusText;
+    if (liveStatus && liveStatus.dataset.summary !== statusText) {
+      liveStatus.dataset.summary = statusText;
+      liveStatus.textContent = statusText;
+    }
     canvas.dataset.rendered = "true";
+    const hideTooltip = () => {
+      if (tooltip) tooltip.hidden = true;
+      if (tooltipGuide) tooltipGuide.hidden = true;
+      if (status) status.textContent = statusText;
+      if (liveStatus) liveStatus.textContent = statusText;
+    };
+    const showTooltip = (index, pointerY) => {
+      index = Math.max(0, Math.min(dayCount - 1, index));
+      canvas._tooltipIndex = index;
+      const selectedDate = dateAt(index);
+      const values = series.map((item, seriesIndex) => {
+        const point = item.points.find(candidate => candidate.date === selectedDate);
+        return {
+          colorIndex: seriesIndex % colors.length,
+          label: payload.site_names[item.site_id] || item.site_id,
+          value: point ? formatTooltipValue(point.value, unit) : "No value",
+        };
+      });
+      const accessibleText = `${selectedDate} - ${values.map(item => `${item.label}: ${item.value}`).join(" - ")}`;
+      if (status) status.textContent = accessibleText;
+      if (liveStatus) liveStatus.textContent = accessibleText;
+      if (!tooltip || !tooltipGuide || !stage) return;
+
+      const dateLabel = document.createElement("strong");
+      dateLabel.className = "chart-tooltip-date";
+      dateLabel.textContent = tooltipDateFormat.format(new Date(`${selectedDate}T00:00:00Z`));
+      const valueList = document.createElement("div");
+      valueList.className = "chart-tooltip-values";
+      values.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "chart-tooltip-row";
+        const swatch = document.createElement("i");
+        swatch.className = `chart-tooltip-swatch legend-tone-${item.colorIndex}`;
+        swatch.setAttribute("aria-hidden", "true");
+        const label = document.createElement("span");
+        label.className = "chart-tooltip-label";
+        label.textContent = item.label;
+        const value = document.createElement("strong");
+        value.className = "chart-tooltip-value";
+        value.textContent = item.value;
+        row.append(swatch, label, value);
+        valueList.append(row);
+      });
+      tooltip.replaceChildren(dateLabel, valueList);
+      tooltip.hidden = false;
+      tooltipGuide.hidden = false;
+
+      const stageBounds = stage.getBoundingClientRect();
+      const canvasBounds = canvas.getBoundingClientRect();
+      const pointX = canvasBounds.left - stageBounds.left + xIndex(index);
+      const tooltipWidth = tooltip.offsetWidth;
+      const tooltipHeight = tooltip.offsetHeight;
+      const roomRight = stageBounds.width - pointX;
+      const preferredLeft = roomRight >= tooltipWidth + 24 ? pointX + 12 : pointX - tooltipWidth - 12;
+      const maxLeft = Math.max(8, stageBounds.width - tooltipWidth - 8);
+      const centeredTop = (pointerY ?? stageBounds.height / 2) - tooltipHeight / 2;
+      tooltip.style.left = `${Math.max(8, Math.min(maxLeft, preferredLeft))}px`;
+      tooltip.style.top = `${Math.max(8, Math.min(stageBounds.height - tooltipHeight - 8, centeredTop))}px`;
+      tooltipGuide.style.left = `${Math.max(margin.left, Math.min(stageBounds.width - margin.right, pointX))}px`;
+    };
     canvas.onpointermove = event => {
       const bounds = canvas.getBoundingClientRect();
-      const index = Math.max(0, Math.min(dayCount - 1, Math.round((event.clientX - bounds.left - margin.left) / plotWidth * (dayCount - 1))));
-      const selectedDate = dateAt(index);
-      const values = series.map(item => {
-        const point = item.points.find(candidate => candidate.date === selectedDate);
-        return `${payload.site_names[item.site_id] || item.site_id}: ${point ? format.format(Number(point.value)) : "no value"}`;
-      });
-      status.textContent = `${selectedDate} - ${values.join(" - ")}`;
+      const index = Math.round((event.clientX - bounds.left - margin.left) / plotWidth * (dayCount - 1));
+      showTooltip(index, event.clientY - (stage?.getBoundingClientRect().top || bounds.top));
     };
-    canvas.onpointerleave = () => { status.textContent = `${payload.metric_label} - ${series.length} series - ${rangeText}${comparisonText}`; };
+    canvas.onpointerdown = canvas.onpointermove;
+    canvas.onpointerleave = hideTooltip;
+    canvas.onfocus = () => showTooltip(canvas._tooltipIndex ?? dayCount - 1);
+    canvas.onblur = hideTooltip;
+    canvas.onkeydown = event => {
+      const currentIndex = canvas._tooltipIndex ?? dayCount - 1;
+      const nextIndex = event.key === "ArrowLeft" ? currentIndex - 1
+        : event.key === "ArrowRight" ? currentIndex + 1
+        : event.key === "Home" ? 0
+        : event.key === "End" ? dayCount - 1
+        : null;
+      if (nextIndex !== null) {
+        event.preventDefault();
+        showTooltip(nextIndex);
+      } else if (event.key === "Escape") {
+        hideTooltip();
+      }
+    };
   }
 
-  async function loadChart() {
-    const canvas = document.getElementById("time-series-chart");
-    if (!canvas) return;
-    const status = document.getElementById("chart-status");
+  async function loadChart(canvas) {
+    const panel = canvas.closest(".series-panel,.chart-panel") || document;
+    const status = panel.querySelector("[data-chart-status]") || document.getElementById("chart-status");
+    const liveStatus = panel.querySelector("[data-chart-live-status]") || document.getElementById("chart-live-status");
     try {
       const response = await fetch(canvas.dataset.seriesUrl, {headers: {Accept: "application/json"}, credentials: "same-origin"});
       if (!response.ok) throw new Error(`Series request failed (${response.status})`);
@@ -614,9 +910,14 @@ JS = r"""
       drawChart(canvas, payload);
       new ResizeObserver(() => drawChart(canvas, canvas._payload)).observe(canvas);
     } catch (error) {
-      status.textContent = error.message;
+      if (status) status.textContent = error.message;
+      if (liveStatus) liveStatus.textContent = error.message;
       canvas.dataset.rendered = "error";
     }
+  }
+
+  function loadCharts() {
+    document.querySelectorAll("canvas.time-series-chart[data-series-url]").forEach(loadChart);
   }
 
   const svgNamespace = "http://www.w3.org/2000/svg";
@@ -665,15 +966,60 @@ JS = r"""
     return polygons.map(polygon => polygon.map(ring => topoRing(topology, ring)).join("")).join("");
   }
 
+  function setGeographyTableMessage(message) {
+    const body = document.getElementById("geography-table-body");
+    if (!body) return;
+    body.replaceChildren();
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 3; cell.className = "geo-empty"; cell.textContent = message;
+    row.append(cell); body.append(row);
+  }
+
+  function updateGeographyDisclosures(payload) {
+    const title = document.getElementById("geography-title");
+    const sourceMetric = document.getElementById("geography-source-metric");
+    const suppression = document.getElementById("geography-suppression");
+    const methodology = document.getElementById("geography-method");
+    const county = document.getElementById("geography-county-note");
+    const region = document.getElementById("geography-region-note");
+    const worldSvg = document.getElementById("world-geo-map");
+    const usSvg = document.getElementById("us-geo-map");
+    const searchSurface = payload.search_type ? ` (${payload.search_type} search surface)` : "";
+    const sourceScope = payload.search_type ? `; ${payload.search_type} search surface` : "";
+    title.textContent = `${payload.label} by geography${searchSurface}`;
+    sourceMetric.textContent = `${payload.label}; metric ${payload.metric}; ${payload.grain} aggregation${sourceScope}.`;
+    suppression.textContent = `Buckets below ${payload.suppression.threshold} are withheld; ${payload.suppression.withheld_country_rows} country and ${payload.suppression.withheld_us_state_rows} state rows are hidden for this payload.`;
+    methodology.textContent = payload.methodology;
+    county.textContent = payload.counties.reason;
+    region.textContent = payload.region_support.status === "available"
+      ? `${payload.label} includes provider-reported state or region values.`
+      : payload.region_support.reason;
+    worldSvg.setAttribute("aria-label", `${payload.label} world country choropleth${searchSurface}`);
+    usSvg.setAttribute("aria-label", `${payload.label} United States state choropleth${searchSurface}; county boundaries are orientation only`);
+  }
+
+  function setGeographyLoadingState(label, status, announcement) {
+    document.getElementById("geography-title").textContent = "Geographic activity";
+    document.getElementById("geography-source-metric").textContent = `${label} selected; awaiting its stored aggregate payload.`;
+    document.getElementById("geography-suppression").textContent = "Suppression counts are loading for the selected payload.";
+    document.getElementById("geography-method").textContent = "Method disclosure is loading for the selected payload.";
+    document.getElementById("geography-county-note").textContent = "County availability is loading for the selected payload.";
+    document.getElementById("geography-region-note").textContent = "State and region availability is loading for the selected payload.";
+    document.getElementById("world-geo-map").replaceChildren();
+    document.getElementById("us-geo-map").replaceChildren();
+    setGeographyTableMessage("Loading geography rows for the selected source and metric.");
+    status.textContent = `Loading ${label} geography...`;
+    announcement.textContent = `Loading ${label} geography.`;
+  }
+
   function updateGeographyTable(payload) {
     const body = document.getElementById("geography-table-body");
     if (!body) return;
     body.replaceChildren();
     if (!payload.countries.length) {
-      const row = document.createElement("tr");
-      const cell = document.createElement("td"); cell.colSpan = 3; cell.className = "geo-empty";
-      cell.textContent = "No unsuppressed country rows are stored for this source and exact window.";
-      row.append(cell); body.append(row); return;
+      setGeographyTableMessage("No unsuppressed country rows are stored for this source and exact window.");
+      return;
     }
     for (const item of payload.countries) {
       const row = document.createElement("tr");
@@ -764,6 +1110,7 @@ JS = r"""
     const worldSvg = document.getElementById("world-geo-map");
     const usSvg = document.getElementById("us-geo-map");
     const status = document.getElementById("geography-status");
+    const announcement = document.getElementById("geography-announcement");
     const source = document.getElementById("geography-source");
     try {
       const [worldResponse, usResponse] = await Promise.all([
@@ -772,22 +1119,49 @@ JS = r"""
       ]);
       if (!worldResponse.ok || !usResponse.ok) throw new Error("Local map boundary request failed.");
       const world = await worldResponse.json(); const us = await usResponse.json();
+      let renderVersion = 0;
       const render = async () => {
+        const version = ++renderVersion;
+        const requestedSource = source.value;
+        const requestedLabel = source.selectedOptions[0].textContent;
         const url = new URL(stage.dataset.geographyApi, window.location.href);
-        url.searchParams.set("source", source.value);
-        status.textContent = `Loading ${source.selectedOptions[0].textContent} geography...`;
+        url.searchParams.set("source", requestedSource);
+        if (requestedSource === "search-console" && stage.dataset.searchType) {
+          url.searchParams.set("search_type", stage.dataset.searchType);
+        } else {
+          url.searchParams.delete("search_type");
+        }
+        setGeographyLoadingState(requestedLabel, status, announcement);
         const response = await fetch(url, {headers: {Accept: "application/json"}, credentials: "same-origin"});
+        if (version !== renderVersion) return;
         if (!response.ok) throw new Error(`Geography request failed (${response.status})`);
-        const payload = await response.json();
+        let payload;
+        try {
+          payload = await response.json();
+        } catch (error) {
+          if (version !== renderVersion) return;
+          throw error;
+        }
+        if (version !== renderVersion) return;
+        if (payload.source !== requestedSource) throw new Error("Geography response did not match the selected source.");
+        updateGeographyDisclosures(payload);
         renderWorldMap(worldSvg, world, payload, status); renderUsMap(usSvg, us, payload, status); updateGeographyTable(payload);
         const withheld = payload.suppression.withheld_country_rows + payload.suppression.withheld_us_state_rows;
         status.textContent = `${payload.label}: ${payload.countries.length} countries and ${payload.us_states.length} US states displayed; ${withheld} low-volume rows withheld. ${payload.coverage.note}`;
+        announcement.textContent = `${payload.label} geography loaded.`;
         stage.dataset.rendered = "true";
       };
-      source.addEventListener("change", () => render().catch(error => { status.textContent = error.message; stage.dataset.rendered = "error"; }));
+      const reportError = error => {
+        status.textContent = error.message;
+        announcement.textContent = `Geography could not be loaded. ${error.message}`;
+        stage.dataset.rendered = "error";
+      };
+      source.addEventListener("change", () => render().catch(reportError));
       await render();
     } catch (error) {
-      status.textContent = error.message; stage.dataset.rendered = "error";
+      status.textContent = error.message;
+      announcement.textContent = `Geography could not be loaded. ${error.message}`;
+      stage.dataset.rendered = "error";
     }
   }
 
@@ -1082,14 +1456,36 @@ JS = r"""
   if (source) {
     updateMetricOptions();
     updateSiteOptions();
-    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); });
+    updateStyleOptions();
+    source.addEventListener("change", () => { updateMetricOptions(); updateSiteOptions(); updateStyleOptions(); });
   }
   const metric = document.querySelector('select[name="metric"]');
-  if (!source && metric) {
-    updateSiteOptions();
-    metric.addEventListener("change", updateSiteOptions);
+  if (metric) {
+    if (!source) updateSiteOptions();
+    updateStyleOptions();
+    metric.addEventListener("change", () => { updateSiteOptions(); updateStyleOptions(); });
   }
-  loadChart();
+  const searchType = document.querySelector('select[name="search_type"]');
+  if (searchType) {
+    updateSiteOptions();
+    searchType.addEventListener("change", updateSiteOptions);
+  }
+  const propertySelector = document.getElementById("property-selector");
+  if (propertySelector) {
+    propertySelector.addEventListener("change", () => propertySelector.form?.requestSubmit());
+  }
+  const themeSelector = document.getElementById("theme-selector");
+  if (themeSelector) {
+    themeSelector.value = savedTheme;
+    themeSelector.addEventListener("change", () => {
+      const theme = availableThemes.has(themeSelector.value) ? themeSelector.value : "hyperpunk";
+      document.body.dataset.theme = theme;
+      try { window.localStorage.setItem(themeStorageKey, theme); } catch (_error) {}
+      loadCharts();
+      loadGeography();
+    });
+  }
+  loadCharts();
   loadGeography();
   initSiteGraph();
 })();
@@ -1110,6 +1506,37 @@ def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def _app_header(active: str, status: str) -> str:
+    nav_items = (
+        ("overview", "/", "Overview"),
+        ("plot", "/?view=plot", "Plot"),
+        ("site-graph", "/site-graph", "Site graph"),
+        ("routes", "/route-observations", "Routes"),
+    )
+    nav = "".join(
+        '<a class="{class_name}"{aria_current} href="{href}">{label}</a>'.format(
+            class_name="active" if key == active else "",
+            aria_current=' aria-current="page"' if key == active else "",
+            href=href,
+            label=label,
+        )
+        for key, href, label in nav_items
+    )
+    return (
+        '<header class="topbar"><div class="topbar-inner app-topbar-inner">'
+        '<a class="brand app-brand" href="/" aria-label="Boho Analytics overview">'
+        '<span class="brand-mark">BA</span><strong>Boho Analytics</strong></a>'
+        f'<nav class="app-nav" aria-label="Application">{nav}</nav>'
+        '<div class="app-header-actions"><label class="theme-field" for="theme-selector">'
+        '<span>Theme</span><select id="theme-selector" aria-label="Color theme">'
+        '<option value="hyperpunk">Hyperpunk</option>'
+        '<option value="ultraviolet">Ultraviolet</option>'
+        '<option value="ember">Ember</option>'
+        '</select></label>'
+        f'<div class="live-state">{_e(status)}</div></div></div></header>'
+    )
+
+
 def _compare_flag(query) -> bool:
     value = query.get("compare", [""])[0].casefold()
     if value in {"", "0", "false", "no"}:
@@ -1127,6 +1554,12 @@ def _source_label(source: str) -> str:
     return SOURCE_LABELS.get(source, source.replace("-", " ").title())
 
 
+def _search_type_label(search_type: str) -> str:
+    return {
+        "googleNews": "Google News",
+    }.get(search_type, search_type.replace("_", " ").title())
+
+
 def _format_value(value: int | float | None, unit: str = "count") -> str:
     if value is None:
         return "—"
@@ -1136,8 +1569,14 @@ def _format_value(value: int | float | None, unit: str = "count") -> str:
     if unit == "position":
         return f"{number:.1f}"
     if unit == "seconds":
-        minutes = number / 60
-        return f"{minutes:,.1f} min"
+        rounded = max(0, round(number))
+        hours, remainder = divmod(rounded, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours:,}h {minutes:02d}m"
+        if minutes:
+            return f"{minutes:,}m {seconds:02d}s"
+        return f"{seconds}s"
     if unit == "bytes":
         for suffix in ("B", "KB", "MB", "GB", "TB"):
             if abs(number) < 1024 or suffix == "TB":
@@ -1166,6 +1605,7 @@ def _metric_total(result, metric):
             "covered_cells": summary.get("covered_cells", 0),
             "expected_cells": summary.get("expected_cells", 0),
             "observed": summary.get("observed", False),
+            "comparison_available": bool(summary.get("comparison_available", False)),
         }
     rows = [row for row in result["rows"] if row["metric"] == metric]
     if not rows:
@@ -1173,8 +1613,15 @@ def _metric_total(result, metric):
     if metric in METRICS and METRICS[metric].aggregation in {"weighted", "latest"}:
         return None
     value = sum(float(row["value"]) for row in rows)
-    prior_values = [float(row["previous_value"]) for row in rows if row["previous_value"] is not None]
-    previous = sum(prior_values) if prior_values else None
+    comparison_available = bool(rows) and all(
+        row.get("comparison_available", row.get("previous_value") is not None)
+        for row in rows
+    )
+    prior_values = [
+        float(row["previous_value"])
+        for row in rows if row.get("previous_value") is not None
+    ]
+    previous = sum(prior_values) if comparison_available and len(prior_values) == len(rows) else None
     change = None if previous in {None, 0} else round((value - previous) / previous * 100, 1)
     return {
         "value": value, "previous": previous, "change": change,
@@ -1183,19 +1630,103 @@ def _metric_total(result, metric):
         "covered_cells": 0,
         "expected_cells": 0,
         "observed": True,
+        "comparison_available": comparison_available,
     }
+
+
+def _metric_site_scope(result, metric):
+    """Describe which report sites can actually contribute to a KPI total."""
+
+    definition = METRICS.get(metric)
+    if definition is None:
+        return ""
+    report_site_ids = {
+        str(site_id) for site_id in result.get("site_ids", []) if site_id
+    }
+    buckets = [
+        bucket
+        for bucket in (result.get("coverage") or {}).get("by_site_source", [])
+        if bucket.get("source") == definition.source
+        and bucket.get("site_id")
+        and metric in (bucket.get("metric_status") or {})
+    ]
+    if not report_site_ids:
+        report_site_ids = {str(bucket["site_id"]) for bucket in buckets}
+    configured_site_ids = {
+        str(bucket["site_id"])
+        for bucket in buckets
+        if str(bucket["site_id"]) in report_site_ids
+        and (bucket.get("metric_status") or {}).get(metric) != "not_configured"
+    }
+    if not report_site_ids or not configured_site_ids:
+        return ""
+    contributing_site_ids = {
+        str(row["site_id"])
+        for row in result.get("rows", [])
+        if row.get("metric") == metric
+        and row.get("site_id")
+        and str(row["site_id"]) in report_site_ids
+    }
+    # A complete covered bucket contributes a supported zero when an additive
+    # metric has no fact row, so it belongs in the aggregate's site scope too.
+    contributing_site_ids.update(
+        str(bucket["site_id"])
+        for bucket in buckets
+        if str(bucket["site_id"]) in configured_site_ids
+        and (bucket.get("metric_status") or {}).get(metric) == "complete"
+    )
+    contributing = len(contributing_site_ids)
+    configured = len(configured_site_ids)
+    report_sites = len(report_site_ids)
+
+    def site_label(count):
+        return "site" if count == 1 else "sites"
+
+    scope = (
+        f"scope {contributing} contributing {site_label(contributing)} "
+        f"of {configured} configured {site_label(configured)}"
+    )
+    if configured != report_sites:
+        scope += (
+            f" ({configured} of {report_sites} report "
+            f"{site_label(report_sites)} configured)"
+        )
+    return f"; {scope}"
 
 
 def _trend(change, *, lower_is_better=False, neutral=False):
     if change is None:
-        return '<span class="trend flat">No prior</span>'
+        return '<span class="trend flat">Prior unavailable</span>'
     favorable = change < 0 if lower_is_better else change > 0
     state = "flat" if neutral or change == 0 else "up" if favorable else "down"
     prefix = "+" if change > 0 else ""
     return f'<span class="trend {state}">{prefix}{change:.1f}%</span>'
 
 
-def _summary_cards(result, expected_metrics):
+LOWER_IS_BETTER_METRICS = frozenset({
+    "search.position", "forms.pending", "forms.failed", "umami.bounces",
+})
+
+
+def _comparison_badge(total):
+    if not total or not total.get("comparison_available"):
+        return '<span class="trend flat">Prior unavailable</span>'
+    current = total.get("value")
+    previous = total.get("previous")
+    lower_is_better = total.get("metric") in LOWER_IS_BETTER_METRICS
+    if previous == 0:
+        if current == 0:
+            return '<span class="trend flat">0 vs 0 prior</span>'
+        favorable = current < 0 if lower_is_better else current > 0
+        state = "up" if favorable else "down"
+        return f'<span class="trend {state}">New vs 0 prior</span>'
+    change = total.get("change")
+    if change is None and current is not None and previous not in {None, 0}:
+        change = (float(current) - float(previous)) / float(previous) * 100
+    return _trend(change, lower_is_better=lower_is_better)
+
+
+def _summary_cards(result, expected_metrics, site_names=None):
     expected = set(expected_metrics)
     if expected and all(metric.startswith("forms.") for metric in expected):
         definitions = FORMS_SUMMARY
@@ -1233,11 +1764,13 @@ def _summary_cards(result, expected_metrics):
                     "covered_cells": 0,
                     "expected_cells": 0,
                     "observed": False,
+                    "comparison_available": False,
                 }
                 selected_metric = metric
                 break
         observed = total is not None and total["value"] is not None
         partial = bool(total and total.get("coverage_status") == "partial")
+        site_scope_note = _metric_site_scope(result, selected_metric)
         source_conflict = bool(total and total.get("source") == "mixed")
         withheld = bool(
             total and total["value"] is None and (partial or source_conflict)
@@ -1255,16 +1788,26 @@ def _summary_cards(result, expected_metrics):
             badge = (
                 '<span class="trend partial">Partial data</span>'
                 if partial
-                else _trend(
-                    total["change"],
-                    lower_is_better=total["metric"] in {"search.position", "forms.pending", "forms.failed"},
-                )
+                else _comparison_badge(total)
             )
             coverage_note = (
                 f'; observed {total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
                 if partial else ""
             )
-            detail = f"{note} - {source}{coverage_note}"
+            comparison_note = (
+                "comparison is against the immediately preceding equal-length window"
+                if total.get("comparison_available")
+                else "preceding-window comparison is unavailable"
+            )
+            surface_note = (
+                f'; Search Console surface {result["search_type"]}'
+                if selected_metric.startswith("search.") and result.get("search_type")
+                else ""
+            )
+            detail = (
+                f"{note} - {source}{surface_note}{site_scope_note}"
+                f"{coverage_note}; {comparison_note}"
+            )
         elif withheld:
             value = "Withheld"
             badge = (
@@ -1273,19 +1816,54 @@ def _summary_cards(result, expected_metrics):
                 else '<span class="trend partial">Partial data</span>'
             )
             detail = (
-                f'{note} - aggregate withheld because multiple actual provider sources are present'
+                f'{note} - aggregate withheld because multiple actual provider sources are present{site_scope_note}'
                 if source_conflict
                 else f'{note} - aggregate withheld; observed '
-                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells'
+                f'{total.get("covered_cells", 0)} of {total.get("expected_cells", 0)} configured cells{site_scope_note}'
             )
         else:
-            value = "Unknown"
-            badge = '<span class="trend flat">Not observed</span>'
-            detail = f"{note} - no stored observation"
+            unavailable_position = (
+                selected_metric == "search.position"
+                and not search_console_metric_supported(
+                    selected_metric, result.get("search_type")
+                )
+            )
+            value = "Not available" if unavailable_position else "Unknown"
+            badge = (
+                '<span class="trend flat">Unsupported surface</span>'
+                if unavailable_position
+                else '<span class="trend flat">Not observed</span>'
+            )
+            detail = (
+                "Google does not define average position for Discover or Google News; clicks, impressions, and CTR remain available."
+                if unavailable_position
+                else f"{note} - no stored observation{site_scope_note}"
+            )
         state = "withheld" if withheld else "partial" if partial else "observed" if observed else "unknown"
+        unit = total.get("unit", "count") if total else "count"
+        source_id = total.get("source") if total else None
+        comparison_state = (
+            "available" if total and total.get("comparison_available") else "unavailable"
+        )
+        context_parts = []
+        if total and total.get("source") and total.get("source") != "mixed":
+            context_parts.append(_source_label(total["source"]))
+        elif observed:
+            context_parts.append("Stored data")
+        if selected_metric.startswith("search.") and result.get("search_type"):
+            context_parts.append(_search_type_label(result["search_type"]))
+        if partial:
+            context_parts.append("partial coverage")
+        elif observed:
+            context_parts.append("complete coverage")
+        else:
+            context_parts.append("not observed")
+        visible_context = " · ".join(context_parts)
         cards.append(
-            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
-            f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(detail)}</p></article>'
+            f'<article class="kpi-card" data-metric="{_e(selected_metric)}" data-state="{state}" '
+            f'data-unit="{_e(unit)}" data-source="{_e(source_id or "unavailable")}" '
+            f'data-comparison="{comparison_state}"><div class="kpi-top"><span class="kpi-label">{_e(label)}</span>{badge}</div>'
+            f'<strong class="kpi-value">{_e(value)}</strong><p class="kpi-note">{_e(visible_context)}<span class="sr-only">. {_e(detail)}</span></p></article>'
         )
     return '<section class="kpi-grid" aria-label="Portfolio summary">' + "".join(cards) + "</section>"
 
@@ -1294,17 +1872,46 @@ def _coverage_summary_html(result):
     coverage = result.get("coverage") or {}
     expected = int(coverage.get("expected_cells") or 0)
     covered = int(coverage.get("covered_cells") or 0)
-    percent = round(covered / expected * 100) if expected else (100 if result.get("complete") else 0)
+    measurable = expected > 0
+    percent = round(covered / expected * 100) if measurable else 0
     percent = max(0, min(100, percent))
-    state = "complete" if result.get("complete") else "partial"
-    label = "Trusted window" if state == "complete" else "Coverage to review"
+    state = "complete" if measurable and covered == expected else "partial" if measurable else "unknown"
+    value = f"{percent}%" if measurable else "—"
+    label = f"{covered:,} of {expected:,} expected cells" if measurable else "Not measurable for this selection"
     return (
-        f'<aside class="trust-card" data-state="{state}" aria-label="{_e(label)}: {percent}%">'
-        '<span class="trust-label">Data confidence</span>'
-        f'<span class="trust-value"><strong>{percent}%</strong><span>{_e(label)}</span></span>'
+        f'<aside class="trust-card" data-state="{state}" aria-label="Report coverage: {_e(label)}">'
+        '<span class="trust-label">Report coverage</span>'
+        f'<span class="trust-value"><strong>{_e(value)}</strong><span>{_e(label)}</span></span>'
         f'<span class="coverage-track" aria-hidden="true"><span class="coverage-fill p-{percent}"></span></span>'
         '</aside>'
     )
+
+
+def _snapshot_status_text(result):
+    health = result.get("source_health") or []
+    feed_count = len(health)
+    feed_label = "site-source feed" if feed_count == 1 else "site-source feeds"
+    data_through = sorted({
+        str(item["data_through"])[:10]
+        for item in health if item.get("data_through")
+    })
+    ingested = sorted({
+        str(item["ingested_at"])
+        for item in health if item.get("ingested_at")
+    })
+    if not feed_count:
+        return "Stored snapshot · no feed evidence in this selection"
+    if not data_through:
+        through_text = "data-through dates unavailable"
+    elif len(data_through) == 1:
+        through_text = f"data through {data_through[0]}"
+    else:
+        through_text = f"data-through range {data_through[0]}–{data_through[-1]}"
+    ingest_text = (
+        f"latest ingest {ingested[-1][:16].replace('T', ' ')}Z"
+        if ingested else "ingest time unavailable"
+    )
+    return f"Stored snapshot · {feed_count} {feed_label} · {through_text} · {ingest_text}"
 
 
 def _decision_badge(item):
@@ -1376,7 +1983,7 @@ def _decision_summary_html(support, site_names):
     return (
         '<section class="panel decision-panel" aria-labelledby="decision-summary-title">'
         '<div class="panel-heading"><div><h2 id="decision-summary-title">Decision summary</h2>'
-        '<p>Four outcome and trust signals first; provider inventory stays supporting evidence.</p>'
+        '<p>Outcome and trust calculations with provider inventory retained as supporting evidence.</p>'
         f'</div></div><div class="decision-grid">{cards}</div></section>'
     )
 
@@ -1398,11 +2005,21 @@ def _attention_html(support):
             f'<h3>{_e(item["title"])}</h3><p>{_e(item["evidence"])}</p>'
             f'<p><strong>Next action:</strong> {_e(item["action"])}</p></div></li>'
         )
+    visible_rows = rows[:2]
+    remaining_rows = rows[2:]
+    more_html = ""
+    if remaining_rows:
+        item_label = "item" if len(remaining_rows) == 1 else "items"
+        more_html = (
+            '<details class="attention-more">'
+            f'<summary>Show {len(remaining_rows)} more {item_label}</summary>'
+            f'<ol class="attention-list" start="3">{"".join(remaining_rows)}</ol></details>'
+        )
     return (
         '<section class="panel attention-panel" aria-labelledby="attention-title">'
         '<div class="panel-heading"><div><h2 id="attention-title">What needs attention</h2>'
         '<p>Deterministic evidence and a next action; ordinary movement is not called an anomaly.</p>'
-        f'</div></div><ol class="attention-list">{"".join(rows)}</ol></section>'
+        f'</div></div><ol class="attention-list">{"".join(visible_rows)}</ol>{more_html}</section>'
     )
 
 
@@ -1581,29 +2198,33 @@ def _chart_html(result, metric, site_names):
             ),
             None,
         )
-        aggregate = (
-            aggregate_row["value"]
-            if aggregate_row is not None
-            else sum(float(point["value"]) for point in points)
-        )
         aggregation = METRICS[metric].aggregation if metric in METRICS else "sum"
         coverage_status = (
             aggregate_row.get("coverage_status", "unknown")
             if aggregate_row is not None else "unknown"
         )
-        aggregate_label = (
-            "window aggregate"
-            if aggregation in {"weighted", "latest"}
-            else "observed total (partial)"
-            if coverage_status == "partial"
-            else "window total"
-        )
+        if aggregation == "daily-unique":
+            aggregate_text = "Daily uniques · no window-unique total"
+        else:
+            aggregate = (
+                aggregate_row["value"]
+                if aggregate_row is not None
+                else sum(float(point["value"]) for point in points)
+            )
+            aggregate_label = (
+                "window aggregate"
+                if aggregation in {"weighted", "latest"}
+                else "observed total (partial)"
+                if coverage_status == "partial"
+                else "window total"
+            )
+            aggregate_text = f"{_format_value(aggregate, series['unit'])} {aggregate_label}"
         first = points[0]["date"] if points else ""
         last = points[-1]["date"] if points else ""
         cards.append(
             f'<article class="chart-card" data-chart="{_e(metric)}"><div class="chart-card-head">'
             f'<h3>{_e(site_names.get(series["site_id"], series["site_id"]))}</h3>'
-            f'<span class="chart-total">{_e(_format_value(aggregate, series["unit"]))} {_e(aggregate_label)}</span></div>'
+            f'<span class="chart-total">{_e(aggregate_text)}</span></div>'
             f'<div class="chart-scroll"><div class="bar-grid {density}" role="img" aria-label="{_e(_metric_label(metric))} by day for {site_names.get(series["site_id"], series["site_id"])}">'
             + "".join(bars)
             + f'</div><div class="axis-labels"><span>{_e(first)}</span><span>{_e(last)}</span></div></div>'
@@ -1686,11 +2307,31 @@ def _warnings_html(warnings):
 def _metrics_table(result, site_names):
     rows = []
     for row in result["rows"]:
-        change = row["change_percent"]
-        lower_is_better = row["metric"] in {"search.position", "forms.pending", "forms.failed"}
+        change = row.get("change_percent")
+        lower_is_better = row["metric"] in LOWER_IS_BETTER_METRICS
         favorable = change is not None and (change < 0 if lower_is_better else change > 0)
-        change_class = "muted" if change in {None, 0} else "positive" if favorable else "negative"
-        change_text = "—" if change is None else f'{"+" if change > 0 else ""}{change}%'
+        comparison_available = bool(row.get("comparison_available", False))
+        previous = row.get("previous_value")
+        current = row.get("value")
+        if not comparison_available:
+            change_class = "muted"
+            change_text = "Prior unavailable (coverage or source not comparable)"
+        elif previous == 0 and current == 0:
+            change_class = "muted"
+            change_text = "No change (0 vs 0)"
+        elif previous == 0:
+            favorable = current < 0 if lower_is_better else current > 0
+            change_class = "positive" if favorable else "negative"
+            change_text = "New vs 0 prior"
+        elif change == 0:
+            change_class = "muted"
+            change_text = "No change (0.0%)"
+        elif change is None:
+            change_class = "muted"
+            change_text = "Comparison available; delta unavailable"
+        else:
+            change_class = "positive" if favorable else "negative"
+            change_text = f'{"+" if change is not None and change > 0 else ""}{change:.1f}%'
         rows.append(
             f'<tr><td class="metric-name">{_e(_metric_label(row["metric"]))}</td>'
             f'<td>{_e(site_names.get(row["site_id"], row["site_id"]))}</td>'
@@ -1703,6 +2344,660 @@ def _metrics_table(result, site_names):
     if not rows:
         rows.append('<tr><td colspan="7">No data in this window.</td></tr>')
     return "".join(rows)
+
+
+PERFORMANCE_BY_SITE_METRICS = (
+    "search.clicks", "umami.visits", "umami.pageviews", "forms.submissions",
+)
+
+
+def _site_metric_bucket(result, site_id, metric):
+    source = METRICS[metric].source
+    return next((
+        item for item in (result.get("coverage") or {}).get("by_site_source", [])
+        if item.get("site_id") == site_id and item.get("source") == source
+    ), None)
+
+
+def _performance_cell(result, site_id, metric):
+    matches = [
+        row for row in result.get("rows", [])
+        if row.get("site_id") == site_id and row.get("metric") == metric
+    ]
+    bucket = _site_metric_bucket(result, site_id, metric)
+    coverage_status = (
+        (bucket.get("metric_status") or {}).get(metric, "unavailable")
+        if bucket else "unavailable"
+    )
+    actual_sources = {row.get("source") for row in matches if row.get("source")}
+    evidence_by_metric = (bucket or {}).get("metric_evidence_providers") or {}
+    configured_sources = set(evidence_by_metric.get(metric, []))
+    configured_sources.update((bucket or {}).get("configured_providers") or [])
+    all_sources = actual_sources or configured_sources
+    if len(actual_sources) > 1 or (not actual_sources and len(all_sources) > 1):
+        return (
+            '<span class="performance-value">Withheld</span>'
+            '<span class="performance-meta" data-state="withheld">Multiple provider sources</span>'
+        )
+    if len(matches) > 1:
+        return (
+            '<span class="performance-value">Withheld</span>'
+            '<span class="performance-meta" data-state="withheld">Duplicate aggregate rows</span>'
+        )
+    if matches:
+        row = matches[0]
+        total = {
+            "metric": metric,
+            "value": row.get("value"),
+            "previous": row.get("previous_value"),
+            "change": row.get("change_percent"),
+            "comparison_available": bool(row.get("comparison_available", False)),
+        }
+        source = _source_label(row.get("source", METRICS[metric].source))
+        state = "partial" if coverage_status == "partial" else "observed"
+        return (
+            f'<span class="performance-value">{_e(_format_value(row.get("value"), row.get("unit", METRICS[metric].unit)))}</span>'
+            f'<span class="performance-meta" data-state="{state}">{_e(source)} · {_e(coverage_status.replace("_", " "))}</span>'
+            f'{_comparison_badge(total)}'
+        )
+    if coverage_status == "complete" and METRICS[metric].aggregation == "sum" and len(all_sources) <= 1:
+        source = _source_label(next(iter(all_sources), METRICS[metric].source))
+        return (
+            '<span class="performance-value">0</span>'
+            f'<span class="performance-meta">{_e(source)} · complete query, no value rows</span>'
+            '<span class="trend flat">Prior unavailable</span>'
+        )
+    known_metric = (
+        metric in result.get("summary_totals", {})
+        or metric in ((result.get("decision_support") or {}).get("supporting_metrics") or {})
+    )
+    labels = {
+        "not_configured": "Not configured",
+        "partial": "No complete aggregate",
+        "unavailable": (
+            "No stored observation"
+            if known_metric
+            else "Not in report"
+        ),
+    }
+    label = labels.get(coverage_status, "Not in report")
+    return (
+        f'<span class="performance-value">{_e(label)}</span>'
+        f'<span class="performance-meta" data-state="{_e(coverage_status)}">{_e(coverage_status.replace("_", " "))}</span>'
+    )
+
+
+def _performance_by_site_html(result, site_names):
+    site_ids = list(result.get("site_ids") or site_names)
+    scoped_site = result.get("site_id")
+    if scoped_site:
+        site_ids = [scoped_site]
+    rows = "".join(
+        f'<tr><th scope="row">{_e(site_names.get(site_id, site_id))}</th>'
+        + "".join(
+            f'<td data-metric="{_e(metric)}">{_performance_cell(result, site_id, metric)}</td>'
+            for metric in PERFORMANCE_BY_SITE_METRICS
+        )
+        + "</tr>"
+        for site_id in site_ids
+    )
+    if not rows:
+        rows = '<tr><td colspan="5">No configured sites are in this report scope.</td></tr>'
+    headers = "".join(
+        f'<th scope="col">{_e(_metric_label(metric))}</th>'
+        for metric in PERFORMANCE_BY_SITE_METRICS
+    )
+    return (
+        '<section class="panel table-panel performance-panel" aria-labelledby="performance-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Comparable operating view</p>'
+        '<h2 id="performance-title">Performance by site</h2>'
+        '<p>Provider-separated report rows. Missing, partial, mixed-source, and zero states remain distinct.</p>'
+        '</div></div><div class="table-scroll"><table class="performance-table">'
+        '<caption class="sr-only">Per-site Search Console clicks, Umami visits, Umami page views, and durable form leads</caption>'
+        f'<thead><tr><th scope="col">Site</th>{headers}</tr></thead><tbody>{rows}</tbody>'
+        '</table></div></section>'
+    )
+
+
+def _index_coverage_html(result, site_names):
+    coverage = result.get("index_coverage") or {}
+    properties = coverage.get("properties") or []
+    if not properties:
+        return ""
+    rows = []
+    for item in properties:
+        published = item.get("published_pages")
+        indexed = item.get("indexed_pages")
+        percentage = item.get("indexed_percentage")
+        progress = item.get("inspection_progress") or {}
+        inspected = int(progress.get("inspected") or 0)
+        total = progress.get("total")
+        total_label = f"{int(total):,}" if total is not None else "—"
+        progress_pct = (
+            min(100, round(inspected * 100 / int(total))) if total else 0
+        )
+        if published is None:
+            published_html = '<span class="index-pending">Not collected</span>'
+        else:
+            published_html = f'<span class="index-value">{int(published):,}</span><span class="index-note">Unique URLs in the current sitemap tree</span>'
+        if indexed is None:
+            indexed_html = (
+                '<span class="index-pending">Pending full census</span>'
+                f'<span class="index-note">{int(item.get("confirmed_indexed_so_far") or 0):,} confirmed indexed so far; not presented as the property total</span>'
+            )
+            percentage_html = '<span class="index-pending">Withheld</span><span class="index-note">Requires every current sitemap URL</span>'
+        else:
+            indexed_html = f'<span class="index-value">{int(indexed):,}</span><span class="index-note">Fresh URL Inspection verdict PASS</span>'
+            percentage_html = f'<span class="index-pct">{float(percentage):.2f}%</span><span class="index-note">Indexed ÷ published × 100</span>'
+        inventory_time = item.get("inventory_observed_at")
+        freshness = inventory_time[:10] if isinstance(inventory_time, str) else "Never"
+        rows.append(
+            f'<tr data-state="{_e(item.get("status", "unknown"))}"><th scope="row">{_e(site_names.get(item["site_id"], item["site_id"]))}</th>'
+            f'<td>{published_html}</td><td>{indexed_html}</td><td>{percentage_html}</td>'
+            f'<td><span class="index-value">{inspected:,} / {total_label}</span>'
+            f'<div class="index-meter" role="img" aria-label="{progress_pct}% of current sitemap URLs inspected"><span class="p-{progress_pct}"></span></div>'
+            f'<span class="index-note">Fresh verdict progress</span></td><td><span class="index-value">{_e(freshness)}</span><span class="index-note">Sitemap inventory observed</span></td></tr>'
+        )
+    return (
+        '<section class="panel table-panel index-coverage-panel" aria-labelledby="index-coverage-title">'
+        '<div class="panel-heading"><div><p class="eyebrow">Search discoverability</p>'
+        '<h2 id="index-coverage-title">Published pages and Google index coverage</h2>'
+        '<p>One property at a time, using public sitemap membership and Google URL Inspection—not impressions or deprecated sitemap estimates.</p>'
+        '</div></div><div class="table-scroll"><table class="index-coverage-table">'
+        '<caption class="sr-only">Published sitemap pages, Google-indexed pages, index percentage, and inspection progress by property</caption>'
+        '<thead><tr><th scope="col">Property</th><th scope="col">Published pages</th><th scope="col">Indexed pages</th><th scope="col">Indexed percentage</th><th scope="col">Inspection progress</th><th scope="col">Inventory date</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table></div>'
+        '<p class="index-method"><strong>Definition:</strong> published pages are unique same-host URLs in the current sitemap tree. Indexed pages are URLs whose fresh Google URL Inspection verdict is PASS. The percentage is withheld until the current inventory is fully inspected; Google can lag live changes.</p></section>'
+    )
+
+
+def _site_metric_row(result, site_id, metric):
+    matches = [
+        row for row in result.get("rows", [])
+        if row.get("site_id") == site_id and row.get("metric") == metric
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _ranked_metric_visual(result, site_names, metric, *, title, subtitle, fill_class=""):
+    items = []
+    for site_id in result.get("site_ids", []):
+        row = _site_metric_row(result, site_id, metric)
+        if row is not None and row.get("value") is not None:
+            items.append((site_id, float(row["value"]), row.get("unit", "count")))
+    if not items:
+        return ""
+    items.sort(key=lambda item: item[1], reverse=True)
+    maximum = max((item[1] for item in items), default=0) or 1
+    total = sum(item[1] for item in items)
+    rows = []
+    for site_id, value, unit in items:
+        width = max(1, min(100, round(value / maximum * 100))) if value else 0
+        share = value / total * 100 if total else 0
+        rows.append(
+            '<div class="rank-row">'
+            f'<span class="rank-name" title="{_e(site_names.get(site_id, site_id))}">{_e(site_names.get(site_id, site_id))}</span>'
+            f'<span class="rank-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {_e(_format_value(value, unit))}"><span class="rank-fill {_e(fill_class)} p-{width}"></span></span>'
+            f'<span class="rank-value">{_e(_format_value(value, unit))}<small>{share:.1f}% share</small></span></div>'
+        )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="property-attention-title">'
+        f'<div class="compact-heading"><div><h2 id="property-attention-title">{_e(title)}</h2><span>{_e(subtitle)}</span></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
+    )
+
+
+def _search_capture_visual(result, site_names):
+    items = []
+    for site_id in result.get("site_ids", []):
+        impressions = _site_metric_row(result, site_id, "search.impressions")
+        clicks = _site_metric_row(result, site_id, "search.clicks")
+        if impressions is None or impressions.get("value") is None:
+            continue
+        impression_value = float(impressions["value"])
+        click_value = float(clicks["value"]) if clicks and clicks.get("value") is not None else 0
+        ctr = click_value / impression_value * 100 if impression_value else 0
+        items.append((site_id, impression_value, click_value, ctr))
+    if not items:
+        return ""
+    items.sort(key=lambda item: item[1], reverse=True)
+    if len(items) == 1:
+        site_id, impressions, clicks, ctr = items[0]
+        click_width = max(1, min(100, round(ctr))) if clicks else 0
+        position = _site_metric_row(result, site_id, "search.position")
+        position_value = (
+            _format_value(position["value"], position.get("unit", "position"))
+            if position and position.get("value") is not None else "—"
+        )
+        return (
+            '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
+            '<div class="compact-heading"><div><h2 id="search-capture-title">Search performance</h2>'
+            '<span>Google Search Console</span></div></div>'
+            '<div class="search-funnel">'
+            f'<div><span>Impressions</span><span class="funnel-track"><i class="p-100"></i></span><strong>{impressions:,.0f}</strong></div>'
+            f'<div><span>Clicks</span><span class="funnel-track"><i class="p-{click_width}"></i></span><strong>{clicks:,.0f}</strong></div>'
+            '</div><div class="search-summary-row">'
+            f'<span><b>{ctr:.2f}%</b> CTR</span><span><b>{_e(position_value)}</b> avg. position</span>'
+            '</div></section>'
+        )
+    maximum = max((item[1] for item in items), default=0) or 1
+    rows = []
+    for site_id, impressions, clicks, ctr in items:
+        width = max(1, min(100, round(impressions / maximum * 100))) if impressions else 0
+        click_label = "click" if clicks == 1 else "clicks"
+        rows.append(
+            '<div class="capture-row">'
+            '<div class="capture-meta">'
+            f'<b>{_e(site_names.get(site_id, site_id))}</b>'
+            f'<span>{impressions:,.0f} impressions · {clicks:,.0f} {click_label} · {ctr:.2f}% CTR</span></div>'
+            f'<span class="capture-track" role="img" aria-label="{_e(site_names.get(site_id, site_id))}: {impressions:,.0f} search impressions and {clicks:,.0f} {click_label}"><span class="p-{width}"></span></span></div>'
+        )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="search-capture-title">'
+        '<div class="compact-heading"><div><h2 id="search-capture-title">Search performance</h2>'
+        '<span>Impressions · clicks · CTR</span></div><small>Google Search Console</small></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
+    )
+
+
+def _daily_attention_heatmap(result, site_names, metric="umami.pageviews"):
+    series = [item for item in result.get("series", []) if item.get("metric") == metric]
+    if not series:
+        return ""
+    dates = sorted({point["date"] for item in series for point in item.get("points", [])})
+    if not dates:
+        return ""
+    values = [float(point["value"]) for item in series for point in item.get("points", [])]
+    maximum = max(values, default=0) or 1
+    by_site = {item["site_id"]: {point["date"]: float(point["value"]) for point in item.get("points", [])} for item in series}
+    cells = ['<span class="heat-label" aria-hidden="true"></span>']
+    cells.extend(f'<span class="heat-date">{_e(date[5:])}</span>' for date in dates)
+    for site_id in result.get("site_ids", []):
+        if site_id not in by_site:
+            continue
+        name = site_names.get(site_id, site_id)
+        cells.append(f'<span class="heat-label" title="{_e(name)}">{_e(name)}</span>')
+        for date in dates:
+            value = by_site[site_id].get(date)
+            level = 0 if value is None or value <= 0 else max(1, min(5, round(value / maximum * 5)))
+            label = "not reported" if value is None else _format_value(value)
+            cells.append(
+                f'<span class="heat-cell heat-{level}" role="img" aria-label="{_e(name)}, {_e(date)}: {_e(label)}" title="{_e(name)} · {_e(date)} · {_e(label)}"></span>'
+            )
+    return (
+        '<section class="panel visual-panel" aria-labelledby="attention-heatmap-title">'
+        '<div class="panel-heading"><div><h2 id="attention-heatmap-title">Daily attention</h2>'
+        '<p>Umami page-view intensity by property and day. Blank cells are not reported.</p></div></div>'
+        f'<div class="heatmap"><div class="heatmap-grid days-{len(dates)}">{"".join(cells)}</div></div>'
+        '<div class="visual-legend"><span>Lower</span><i></i><i></i><i></i><span>Higher</span></div></section>'
+    )
+
+
+def _index_coverage_visual(result, site_names):
+    properties = (result.get("index_coverage") or {}).get("properties") or []
+    if result.get("site_id"):
+        properties = [item for item in properties if item.get("site_id") == result["site_id"]]
+    if not properties:
+        return ""
+    rows = []
+    for item in sorted(properties, key=lambda value: float(value.get("indexed_percentage") or -1), reverse=True):
+        published = item.get("published_pages")
+        indexed = item.get("indexed_pages")
+        percentage = item.get("indexed_percentage")
+        if published is None or indexed is None or percentage is None:
+            value_html = '<span class="rank-value">Pending<small>census incomplete</small></span>'
+            bar_html = '<span class="index-stack" role="img" aria-label="Index percentage withheld"></span>'
+        else:
+            indexed_width = max(0, min(100, round(float(percentage))))
+            unindexed_width = 100 - indexed_width
+            value_html = f'<span class="rank-value">{float(percentage):.1f}%<small>{int(indexed):,} indexed / {int(published):,} pages</small></span>'
+            bar_html = (
+                f'<span class="index-stack" role="img" aria-label="{int(indexed):,} of {int(published):,} published pages indexed">'
+                f'<span class="indexed p-{indexed_width}"></span><span class="unindexed p-{unindexed_width}"></span></span>'
+            )
+        name = site_names.get(item["site_id"], item["site_id"])
+        rows.append(f'<div class="rank-row"><span class="rank-name" title="{_e(name)}">{_e(name)}</span>{bar_html}{value_html}</div>')
+    return (
+        '<section class="panel visual-panel" aria-labelledby="index-visual-title">'
+        '<div class="compact-heading"><div><h2 id="index-visual-title">Index coverage</h2>'
+        '<span>Google URL Inspection census</span></div><div class="index-legend" aria-label="Index coverage legend">'
+        '<span><i class="indexed"></i>Indexed</span><span><i class="unindexed"></i>Not indexed</span></div></div>'
+        f'<div class="rank-list">{"".join(rows)}</div></section>'
+    )
+
+
+def _signal_strip_html(support):
+    if not support:
+        return ""
+    items = support.get("attention_items", [])[:3]
+    if not items:
+        return ""
+    cards = "".join(
+        f'<div class="signal-item" data-severity="{_e(item.get("severity", "review"))}"><span>{_e(item.get("severity", "review"))}</span><b title="{_e(item.get("evidence", ""))}">{_e(item.get("title", "Review data"))}</b></div>'
+        for item in items
+    )
+    return f'<section class="signal-strip" aria-label="Current data signals">{cards}</section>'
+
+
+def _dashboard_visuals_html(result, site_names):
+    traffic = _ranked_metric_visual(
+        result, site_names, "umami.pageviews",
+        title="Traffic by property",
+        subtitle="Umami page views",
+    )
+    search = _search_capture_visual(result, site_names)
+    index = _index_coverage_visual(result, site_names)
+    if result.get("site_id"):
+        traffic = ""
+    panels = [item for item in (traffic, search, index) if item]
+    return f'<div class="visual-grid">{"".join(panels)}</div>' if panels else ""
+
+
+CORE_DASHBOARD_METRICS = (
+    "umami.pageviews",
+    "umami.visits",
+    "search.impressions",
+    "search.clicks",
+    "search.ctr",
+)
+
+
+def _compact_delta(total):
+    if not total or not total.get("comparison_available"):
+        return ""
+    change = total.get("change")
+    if change is None:
+        return ""
+    state = "up" if change > 0 else "down" if change < 0 else "flat"
+    prefix = "+" if change > 0 else ""
+    return f'<span class="metric-delta {state}">{prefix}{float(change):.1f}%</span>'
+
+
+def _index_scope_summary(result):
+    properties = (result.get("index_coverage") or {}).get("properties") or []
+    selected_site = result.get("site_id")
+    if selected_site:
+        properties = [item for item in properties if item.get("site_id") == selected_site]
+    complete = [
+        item for item in properties
+        if item.get("published_pages") is not None and item.get("indexed_pages") is not None
+    ]
+    if not complete:
+        return None
+    published = sum(int(item["published_pages"]) for item in complete)
+    indexed = sum(int(item["indexed_pages"]) for item in complete)
+    percentage = indexed / published * 100 if published else 0
+    return {
+        "indexed": indexed,
+        "published": published,
+        "percentage": percentage,
+        "complete_properties": len(complete),
+        "total_properties": len(properties),
+    }
+
+
+def _overview_cards_html(result):
+    definitions = (
+        ("Page views", "umami.pageviews", "Umami"),
+        ("Visits", "umami.visits", "Umami"),
+        ("Search impressions", "search.impressions", "Google Search"),
+        ("Search clicks", "search.clicks", "Google Search"),
+        ("Search CTR", "search.ctr", "Google Search"),
+    )
+    cards = []
+    for label, metric, source in definitions:
+        total = _metric_total(result, metric) if metric in result.get("summary_totals", {}) else None
+        available = bool(total and total.get("value") is not None)
+        partial = bool(available and total.get("coverage_status") == "partial")
+        value = _format_value(total["value"], total.get("unit", "count")) if available else "No data"
+        if available:
+            secondary = source + (" · partial coverage" if partial else "")
+        elif metric == "umami.visits":
+            secondary = "No exact-window total stored"
+        else:
+            secondary = f"{source} did not return a value"
+        cards.append(
+            f'<article class="overview-metric" data-metric="{_e(metric)}" data-state="{"partial" if partial else "observed" if available else "unavailable"}">'
+            f'<div class="overview-metric-head"><span>{_e(label)}</span>{_compact_delta(total)}</div>'
+            f'<strong>{_e(value)}</strong><small>{_e(secondary)}</small></article>'
+        )
+
+    index = _index_scope_summary(result)
+    if index:
+        coverage = f'{index["percentage"]:.1f}% of {index["published"]:,} published pages'
+        if index["complete_properties"] != index["total_properties"]:
+            coverage += f' · {index["complete_properties"]} of {index["total_properties"]} properties measured'
+        index_value = f'{index["indexed"]:,}'
+    else:
+        index_value = "No data"
+        coverage = "No complete URL Inspection census"
+    cards.append(
+        '<article class="overview-metric" data-metric="index.coverage" '
+        f'data-state="{"observed" if index else "unavailable"}"><div class="overview-metric-head">'
+        '<span>Indexed pages</span></div>'
+        f'<strong>{_e(index_value)}</strong><small>{_e(coverage)}</small></article>'
+    )
+    return '<section class="overview-metrics" aria-label="Current window summary">' + "".join(cards) + "</section>"
+
+
+def _source_readings_html(result):
+    definitions = (
+        ("Unique visitors", "umami.visitors", "Umami"),
+        ("GA4 page views", "google.pageviews", "Google Analytics"),
+        ("GA4 sessions", "google.sessions", "Google Analytics"),
+        ("Edge requests", "cloudflare.requests", "Cloudflare"),
+        ("Edge visits", "cloudflare.visits", "Cloudflare"),
+        ("Average position", "search.position", "Google Search"),
+    )
+    readings = []
+    for label, metric, source in definitions:
+        total = _metric_total(result, metric) if metric in result.get("summary_totals", {}) else None
+        if not total or total.get("value") is None:
+            continue
+        definition = METRICS.get(metric)
+        report_sites = {str(item) for item in result.get("site_ids", []) if item}
+        configured_sites = {
+            str(bucket["site_id"])
+            for bucket in (result.get("coverage") or {}).get("by_site_source", [])
+            if definition and bucket.get("source") == definition.source
+            and bucket.get("site_id") in report_sites
+            and (bucket.get("metric_status") or {}).get(metric) != "not_configured"
+        }
+        source_note = source
+        if report_sites and configured_sites and len(configured_sites) < len(report_sites):
+            source_note += f" · {len(configured_sites)} of {len(report_sites)} properties"
+        readings.append(
+            '<div class="source-reading">'
+            f'<span>{_e(label)}</span><strong>{_e(_format_value(total["value"], total.get("unit", "count")))}</strong>'
+            f'<small>{_e(source_note)}</small></div>'
+        )
+    if not readings:
+        return ""
+    return (
+        '<section class="panel source-readings" aria-labelledby="source-readings-title">'
+        '<div class="compact-heading"><h2 id="source-readings-title">Provider metrics</h2></div>'
+        f'<div class="source-reading-grid">{"".join(readings)}</div></section>'
+    )
+
+
+def _geography_summary_html(payload):
+    countries = (payload or {}).get("countries") or []
+    if not countries:
+        return ""
+    rows = countries[:7]
+    maximum = max(float(item.get("value") or 0) for item in rows) or 1
+    bars = []
+    for item in rows:
+        value = float(item.get("value") or 0)
+        width = max(1, min(100, round(value / maximum * 100))) if value else 0
+        bars.append(
+            '<div class="country-row">'
+            f'<span>{_e(item.get("code") or "—")}</span>'
+            f'<span class="country-track" role="img" aria-label="{_e(item.get("code") or "Unknown")}: {_e(_format_value(value))} Umami visits"><span class="p-{width}"></span></span>'
+            f'<strong>{_e(_format_value(value))}</strong></div>'
+        )
+    threshold = int(((payload or {}).get("suppression") or {}).get("threshold") or 0)
+    note = f"Umami visits · countries below {threshold:,} hidden" if threshold else "Umami visits"
+    return (
+        '<section class="panel visual-panel audience-panel" aria-labelledby="audience-title">'
+        '<div class="compact-heading"><div><h2 id="audience-title">Audience by country</h2>'
+        f'<span>{_e(note)}</span></div></div><div class="country-list">{"".join(bars)}</div></section>'
+    )
+
+
+def _core_coverage_label(result):
+    cells = (result.get("coverage") or {}).get("by_metric_cells") or {}
+    selected = [cells[metric] for metric in CORE_DASHBOARD_METRICS if metric in cells]
+    expected = sum(int(item.get("expected") or 0) for item in selected)
+    covered = sum(int(item.get("covered") or 0) for item in selected)
+    if not expected:
+        return "Core feed coverage unavailable", "unknown"
+    percent = round(covered / expected * 100)
+    return f"Core feeds {percent}%", "complete" if covered == expected else "partial"
+
+
+def _updated_at_label(result):
+    ingested = [
+        str(item["ingested_at"]) for item in (result.get("source_health") or [])
+        if item.get("ingested_at")
+    ]
+    if not ingested:
+        return "Update time unavailable"
+    try:
+        timestamp = datetime.fromisoformat(sorted(ingested)[-1].replace("Z", "+00:00"))
+        formatted = timestamp.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+        return f"Updated {formatted} UTC"
+    except (TypeError, ValueError):
+        return "Updated " + sorted(ingested)[-1][:16].replace("T", " ") + " UTC"
+
+
+def _provider_comparisons_html(result, site_names):
+    comparisons = result.get("provider_comparisons", [])
+    if not comparisons:
+        return ""
+
+    rows = []
+    for comparison in comparisons:
+        google = comparison["providers"]["google-analytics"]
+        umami = comparison["providers"]["umami"]
+        paired = comparison["paired_dates"]["count"]
+        paired_label = (
+            f"{paired} paired date" if paired == 1
+            else f"{paired} paired dates" if paired
+            else "No paired dates"
+        )
+        state = comparison["evidence_state"].replace("_", " ").capitalize()
+        totals = comparison["totals"]
+        if totals["google_pageviews"] is None:
+            totals_label = "Withheld"
+        else:
+            ratio = totals["google_to_umami_ratio"]
+            ratio_label = "undefined" if ratio is None else f"{ratio:g}×"
+            totals_label = (
+                f"GA4 {totals['google_pageviews']:,}; "
+                f"Umami {totals['umami_pageviews']:,}; "
+                f"absolute difference {totals['absolute_difference']:,}; "
+                f"GA4-to-Umami ratio {ratio_label}"
+            )
+        low_volume = (
+            '<span class="source-chip">Low volume</span>'
+            if comparison["low_volume_warning"] else ""
+        )
+
+        def range_span(summary):
+            return "; ".join(
+                f"{item['start']} to {item['end']}"
+                for item in summary.get("ranges", [])
+            ) or "none"
+
+        def date_span(summary):
+            if not summary["count"]:
+                return "none"
+            return f"{summary['count']} ({range_span(summary)})"
+
+        def provider_dates(provider):
+            complete = provider["complete_dates"]
+            return (
+                f"{date_span(complete)} complete dates; "
+                f"first available {provider['first_available_date'] or 'unknown'}; "
+                f"data through {provider['data_through'] or 'unknown'}"
+            )
+
+        def route_status(provider):
+            reconciliation = provider["route_reconciliation"]
+            label = reconciliation["status"].replace("_", " ").capitalize()
+            if reconciliation["reason"]:
+                label += f" ({reconciliation['reason'].replace('_', ' ')})"
+            return label
+
+        rows.append(
+            "<tr>"
+            f'<th scope="row" class="metric-name">{_e(site_names.get(comparison["site_id"], comparison["site_id"]))}</th>'
+            f"<td><b>{_e(state)}</b>{low_volume}<br>"
+            f"GA4-only {date_span(comparison['google_only_dates'])}; "
+            f"Umami-only {date_span(comparison['umami_only_dates'])}</td>"
+            f"<td>{_e(provider_dates(google))}</td>"
+            f"<td>{_e(provider_dates(umami))}</td>"
+            f"<td>{_e(paired_label)}<br>"
+            f"{_e(range_span(comparison['paired_dates']))}</td>"
+            f"<td>{_e(totals_label)}</td>"
+            f"<td>GA4: {_e(route_status(google))}<br>"
+            f"Umami: {_e(route_status(umami))}</td>"
+            "</tr>"
+        )
+
+    semantics = next(
+        (
+            comparison.get("semantics", [])
+            for comparison in comparisons
+            if comparison.get("semantics")
+        ),
+        [],
+    )
+    provider_semantics = []
+    first_providers = comparisons[0]["providers"]
+    for label, key in (
+        ("GA4", "google-analytics"),
+        ("Umami", "umami"),
+    ):
+        semantics_record = first_providers[key]["semantics"]
+        provider_semantics.append(
+            f"{label}: {semantics_record['pageview_definition']} "
+            f"{semantics_record['time_basis']}; {semantics_record['sampling']}; "
+            f"{semantics_record['data_state']}."
+        )
+    limits = next(
+        (
+            comparison.get("coverage_limits", [])
+            for comparison in comparisons
+            if comparison.get("coverage_limits")
+        ),
+        [],
+    )
+    disclosure_items = "".join(
+        f"<li>{_e(item)}</li>" for item in (*semantics, *provider_semantics, *limits)
+    )
+    return (
+        '<section class="panel table-panel" '
+        'aria-label="GA4 and Umami pageview comparability">'
+        '<div class="panel-heading"><div><h2>Provider pageview comparison</h2>'
+        '<p>Mature complete overlapping dates only. Providers remain separate '
+        'and neither is declared correct.</p></div></div>'
+        '<div class="table-scroll"><table>'
+        '<caption class="sr-only">GA4 and Umami pageview comparison by site</caption>'
+        '<thead><tr><th scope="col">Site</th><th scope="col">Evidence</th>'
+        '<th scope="col">GA4 coverage</th><th scope="col">Umami coverage</th>'
+        '<th scope="col">Overlap</th><th scope="col">Paired totals</th>'
+        '<th scope="col">Route reconciliation</th></tr></thead><tbody>'
+        + "".join(rows)
+        + "</tbody></table></div>"
+        + (
+            "<details><summary>Semantics and coverage limits</summary><ul>"
+            + disclosure_items + "</ul></details>"
+            if disclosure_items else ""
+        )
+        + "</section>"
+    )
 
 
 def _available_sites_by_source(config, report) -> dict[str, set[str]]:
@@ -1719,6 +3014,24 @@ def _available_sites_by_source(config, report) -> dict[str, set[str]]:
         elif provider in available:
             available[provider].add(binding.site_id)
     return available
+
+
+def _site_option_enabled(
+    site_id: str,
+    selected_source: str,
+    selected_search_type: str | None,
+    available_sites: dict[str, set[str]],
+    search_types_by_site: dict[str, list[str]],
+) -> bool:
+    source_supported = not selected_source or site_id in available_sites.get(
+        selected_source, set()
+    )
+    surface_supported = (
+        selected_source != "search-console"
+        or not selected_search_type
+        or selected_search_type in search_types_by_site.get(site_id, [])
+    )
+    return source_supported and surface_supported
 
 
 def _scoped_coverage(coverage, *, source: str, metric: str, site_id: str | None):
@@ -2685,7 +3998,7 @@ def _site_graph_analysis_panels(payload):
     )
 
 
-def _geography_panel(payload, api_url):
+def _geography_panel(payload, api_url, *, search_type=None):
     source_options = "".join(
         f'<option value="{_e(source)}"{" selected" if source == payload["source"] else ""}>{_e(spec["label"])}</option>'
         for source, spec in SOURCE_CONFIG.items()
@@ -2695,26 +4008,43 @@ def _geography_panel(payload, api_url):
         for row in payload["countries"]
     ) or '<tr><td colspan="3" class="geo-empty">No unsuppressed country rows are stored for this source and exact window.</td></tr>'
     suppression = payload["suppression"]
+    selected_surface = payload.get("search_type")
+    surface_title = f' ({selected_surface} search surface)' if selected_surface else ""
+    surface_scope = f'; {selected_surface} search surface' if selected_surface else ""
+    source_metric = (
+        f'{payload["label"]}; metric {payload["metric"]}; '
+        f'{payload["grain"]} aggregation{surface_scope}.'
+    )
+    region_note = (
+        f'{payload["label"]} includes provider-reported state or region values.'
+        if payload["region_support"]["status"] == "available"
+        else payload["region_support"]["reason"]
+    )
     return (
         '<section class="panel geography-panel" id="geography-map" '
         f'data-geography-api="{_e(api_url)}" data-world-map="/assets/maps/world-countries.geojson" '
+        f'data-search-type="{_e(search_type or "")}" '
         'data-us-map="/assets/maps/us-counties.json" aria-labelledby="geography-title">'
-        '<div class="panel-heading"><div><p class="eyebrow">Geographic demand</p>'
-        '<h2 id="geography-title">World visitor geography</h2>'
-        '<p>Provider-labeled choropleths from stored aggregate dimensions. Darker areas indicate more activity within the selected source; sources are never blended.</p></div>'
+        '<div class="panel-heading"><div><p class="eyebrow">Geographic activity</p>'
+        f'<h2 id="geography-title">{_e(payload["label"])} by geography{_e(surface_title)}</h2>'
+        '<p>Provider-reported aggregate geography for the selected source and metric. Darker areas show a larger value within that source; sources are never blended.</p></div>'
         '<div class="geography-controls"><label class="field"><span>Map source</span>'
         f'<select id="geography-source">{source_options}</select></label></div></div>'
         '<div class="geography-grid"><article class="map-card"><h3>Countries</h3>'
-        '<p>Select the United States to move into state and county-boundary detail.</p>'
-        '<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="World country choropleth"></svg></article>'
+        '<p>Country buckets reported for the selected source and metric.</p>'
+        f'<svg class="geo-svg" id="world-geo-map" viewBox="0 0 960 480" role="img" aria-label="{_e(payload["label"])} world country choropleth{_e(surface_title)}"></svg></article>'
         '<article class="map-card" id="us-geography"><h3>United States</h3>'
-        '<p>State values where the provider supports region data; select a state to reveal county boundaries.</p>'
-        '<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="United States state choropleth and county boundary drilldown"></svg></article></div>'
-        '<div class="geo-status" id="geography-status" role="status">Loading local geography boundaries and stored aggregates...</div>'
-        '<div class="geo-disclosure"><p><strong>Privacy floor</strong>'
-        f'Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are currently hidden.</p>'
-        '<p><strong>County boundaries are orientation only</strong>Current providers do not expose trustworthy county aggregates. No county values are inferred from city names or IP data.</p>'
-        f'<p><strong>Method</strong>{_e(payload["methodology"])}</p></div>'
+        f'<p id="geography-region-note">{_e(region_note)}</p>'
+        f'<svg class="geo-svg" id="us-geo-map" viewBox="0 0 975 610" role="img" aria-label="{_e(payload["label"])} United States state choropleth{_e(surface_title)}; county boundaries are orientation only"></svg></article></div>'
+        '<div class="geo-status" id="geography-status" aria-live="off">Loading local geography boundaries and stored aggregates...</div>'
+        '<p class="sr-only" id="geography-announcement" role="status" aria-live="polite"></p>'
+        '<div class="geo-disclosure"><p><strong>Source and metric</strong>'
+        f'<span id="geography-source-metric">{_e(source_metric)}</span></p>'
+        '<p><strong>Privacy suppression</strong>'
+        f'<span id="geography-suppression">Buckets below {_e(suppression["threshold"])} are withheld; {suppression["withheld_country_rows"]} country and {suppression["withheld_us_state_rows"]} state rows are hidden for this payload.</span></p>'
+        '<p><strong>County boundaries are orientation only</strong>'
+        f'<span id="geography-county-note">{_e(payload["counties"]["reason"])}</span></p>'
+        f'<p><strong>Method</strong><span id="geography-method">{_e(payload["methodology"])}</span></p></div>'
         '<details class="geography-fallback"><summary>Accessible ranked country values and no-JavaScript fallback</summary>'
         '<div class="table-scroll"><table><caption class="sr-only">Geographic activity by country</caption>'
         f'<thead><tr><th scope="col">Country code</th><th scope="col">Value</th><th scope="col">Provider metric</th></tr></thead><tbody id="geography-table-body">{rows}</tbody></table></div></details></section>'
@@ -2747,22 +4077,23 @@ def _route_observation_html(payload):
         for site in payload["available_sites"]
     )
     source_options = '<option value="">All configured providers</option>' + "".join(
-        f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(source)}</option>'
+        f'<option value="{_e(source)}"{" selected" if source == filters["source"] else ""}>{_e(_source_label(source))}</option>'
         for source in payload["available_sources"]
     )
-    metric_options = '<option value="">All accepted route metrics</option>' + "".join(
-        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(metric)}</option>'
+    metric_options = '<option value="">All route metrics</option>' + "".join(
+        f'<option value="{_e(metric)}"{" selected" if metric == filters["metric"] else ""}>{_e(_metric_label(metric))}</option>'
         for metric in payload["available_metrics"]
     )
+    browser_rows = payload["rows"][:50]
     rows = "".join(
         "<tr>"
-        f'<td>{_e(row["site_id"])}</td><td>{_e(row["source"])}</td>'
-        f'<td>{_e(row["metric"])}</td><td>{_e(row["route"] or "Provider dimension")}</td>'
+        f'<td>{_e(row["site_id"])}</td><td>{_e(_source_label(row["source"]))}</td>'
+        f'<td>{_e(_metric_label(row["metric"]))}<small class="performance-meta">{_e(row["metric"])}</small></td><td>{_e(row["route"] or "Provider dimension")}</td>'
         f'<td>{_e(", ".join(f"{key}={value}" for key, value in row["dimensions"].items()))}</td>'
-        f'<td>{_e(row["value"])} {_e(row["unit"])}</td><td>{_e(row["coverage"])}</td>'
+        f'<td>{_e(_format_value(float(row["value"]), row["unit"]))}<small class="performance-meta">{_e(row["unit"])}</small></td><td>{_e(row["coverage"])}</td>'
         f'<td>{_e(row["data_state"])}</td><td>{_e(row["freshness"])}</td>'
         f'<td>{_e(row["provider_limitation"])}</td></tr>'
-        for row in payload["rows"]
+        for row in browser_rows
     ) or '<tr><td colspan="10">No accepted route observations match this bounded window.</td></tr>'
     query = {
         key: value for key, value in (
@@ -2775,14 +4106,43 @@ def _route_observation_html(payload):
             ("route", filters["route"]),
         ) if value
     }
+    dimension_chips = "".join(
+        f'<span class="source-chip">{_e(dimension.replace("_", " "))}</span>'
+        for dimension in payload.get("available_dimensions", [])
+    ) or '<span class="performance-meta">No accepted dimensions in this selection</span>'
+    source_counts = {}
+    for row in payload["rows"]:
+        source_counts[row["source"]] = source_counts.get(row["source"], 0) + 1
+    sample_size = max(1, len(payload["rows"]))
+    source_summary = "".join(
+        '<article class="observation-source">'
+        f'<span>{_e(_source_label(source))}</span><strong>{count:,}</strong>'
+        f'<i aria-hidden="true"><b class="p-{round(count / sample_size * 100)}"></b></i></article>'
+        for source, count in sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))
+    ) or '<p class="empty-state">No matching observations.</p>'
+    cards = (
+        ("Matching rows", payload["total_rows"], "Complete count for these filters"),
+        ("Table rows", len(browser_rows), "Shown in the browser"),
+        ("Export cap", payload["limit"], "Maximum sanitized rows per request"),
+        ("Dimensions", len(payload.get("available_dimensions", [])), "Available stored dimension fields"),
+    )
+    cards_html = "".join(
+        '<article class="kpi-card"><div class="kpi-top">'
+        f'<span class="kpi-label">{_e(label)}</span></div>'
+        f'<strong class="kpi-value">{value:,}</strong><p class="kpi-note">{_e(note)}</p></article>'
+        for label, value, note in cards
+    )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Route observations - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to route observations</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only route observations</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a href="/site-graph">Site Graph</a><a class="active" href="/route-observations">Route observations</a></div>
-<section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} - end exclusive</p><h1>Route observations</h1><p class="hero-copy">Provider-separated, privacy-bounded route and acquisition facts. Search clicks are not sessions; GA4 sessions are not Umami visits.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["displayed_rows"]} of {payload["total_rows"]} rows</span></section>
-<section class="panel control-panel"><div class="panel-heading"><div><h2>Bounded filters</h2><p>Filters never trigger provider collection or alter stored facts.</p></div></div>
+<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body class="dashboard-app app-page routes-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to route observations</a>
+{_app_header("routes", "Stored route evidence")}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">{_e(payload["window"]["start"][:10])} to {_e(payload["window"]["end"][:10])} · end exclusive</p><h1>Routes</h1><p class="hero-copy">Content, acquisition, and search observations by property and provider.</p></div><span class="coverage-badge{" partial" if payload["truncated"] else ""}">{payload["total_rows"]:,} matches</span></section>
+<section class="kpi-grid" aria-label="Route observation summary">{cards_html}</section>
+<section class="panel section-panel"><div class="panel-heading"><div><h2>Provider mix</h2><p>Row counts in the current bounded sample; these are observations, not visits.</p></div></div><div class="observation-source-grid">{source_summary}</div></section>
+<details class="panel control-panel"><summary class="panel-heading control-summary"><div><h2>Filters</h2><p class="app-filter-summary">{_e(filters["site"])} · {_e(_source_label(filters["source"])) if filters["source"] else "all providers"} · {_e(_metric_label(filters["metric"])) if filters["metric"] else "all metrics"}</p></div></summary><div class="control-content">
 <form class="filter-form" method="get" action="/route-observations"><input type="hidden" name="report" value="{_e(filters["report"])}">
 <label class="field"><span>Start</span><input type="date" name="start" value="{_e(payload["window"]["start"][:10])}"></label>
 <label class="field"><span>End (exclusive)</span><input type="date" name="end" value="{_e(payload["window"]["end"][:10])}"></label>
@@ -2790,12 +4150,13 @@ def _route_observation_html(payload):
 <label class="field"><span>Provider</span><select name="source">{source_options}</select></label>
 <label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
 <label class="field"><span>Exact route</span><input name="route" value="{_e(filters["route"])}" placeholder="/services/"></label>
-<button type="submit">Apply filters</button></form></section>
-<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Provider semantics remain separate</strong><br>No visitor or session identifiers, raw queries, or full external referrer URLs are exposed. Search Console completeness remains provider-limited and its provider-date basis is disclosed per row.</div></div></aside>
-<section class="panel table-panel"><div class="panel-heading"><div><h2>Accepted observations</h2><p>Complete matching-row total: {payload["total_rows"]}. Display is bounded to {payload["limit"]}; export uses the same bounded, sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
+<button type="submit">Apply filters</button></form></div></details>
+<details class="panel raw-data-details"><summary><span>Observation table</span><span class="app-filter-summary">Showing {len(browser_rows):,} of {payload["total_rows"]:,} matches</span></summary>
+<section class="table-panel"><div class="panel-heading"><div><h2>Stored observations</h2><p>Browser display is capped at 50 rows; CSV is capped at {payload["limit"]:,} sanitized rows.</p></div><a href="{_e("/api/v1/route-observations.csv?" + urlencode(query))}">Download CSV</a></div>
 <div class="table-scroll"><table><caption class="sr-only">Provider-separated route observations with coverage, freshness, and limitations</caption>
-<thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section>
-<footer class="footer"><span>Read-only compatibility view</span><span>No provider sync, raw query, identifier, or full external referrer data</span></footer></main></body></html>"""
+<thead><tr><th>Site</th><th>Source</th><th>Metric</th><th>Route</th><th>Dimensions</th><th>Value</th><th>Coverage</th><th>State</th><th>Freshness</th><th>Provider limitation</th></tr></thead><tbody>{rows}</tbody></table></div></section></details>
+<details class="panel data-details"><summary>Definitions &amp; privacy</summary><div class="data-details-body"><p>Provider metrics remain separate. Search clicks are not sessions, and GA4 sessions are not Umami visits. No visitor or session identifiers, unscreened query wording, or full external referrer URLs are exposed.</p><div class="capability-strip">{dimension_chips}</div></div></details>
+<footer class="footer"><span>Read-only route evidence</span><span>No browser-side provider access</span></footer></main></body></html>"""
 
 
 def handler_factory(config, store, credentials=None):
@@ -2884,10 +4245,14 @@ def handler_factory(config, store, credentials=None):
                 query = parse_qs(parsed.query, keep_blank_values=True)
                 analytics_fields = {
                     "report", "subreport", "start", "end", "site", "metric",
-                    "source", "style", "compare", "view",
+                    "source", "style", "compare", "view", "search_type",
                 }
-                report_fields = {"report", "subreport", "start", "end", "site"}
-                geography_fields = {"report", "start", "end", "site", "source"}
+                report_fields = {
+                    "report", "subreport", "start", "end", "site", "search_type",
+                }
+                geography_fields = {
+                    "report", "start", "end", "site", "source", "search_type",
+                }
                 graph_fields = {
                     "site", "page", "graph", "layer", "edge_query", "edge_sort",
                     "edge_order", "edge_page",
@@ -3012,11 +4377,19 @@ def handler_factory(config, store, credentials=None):
             )
             rows = []
             for point in points:
-                dimension_names = {key for key, _value in point.dimensions}
+                point_dimensions = dict(point.dimensions)
+                if (
+                    point.source == "search-console"
+                    and not search_console_metric_supported(
+                        point.metric, point_dimensions.get("search_type")
+                    )
+                ):
+                    continue
+                dimension_names = set(point_dimensions)
                 if dimension_names & {"query", "query_cluster"}:
                     continue
                 dimensions = {
-                    key: value for key, value in point.dimensions
+                    key: value for key, value in point_dimensions.items()
                     if key in ROUTE_OBSERVATION_DIMENSIONS
                 }
                 point_route = dimensions.get("route") or dimensions.get("referrer_route")
@@ -3062,6 +4435,9 @@ def handler_factory(config, store, credentials=None):
                 tuple(item["dimensions"].items()), item["window"]["start"],
             ))
             total_rows = len(rows)
+            available_dimensions = sorted({
+                key for row in rows for key in row["dimensions"]
+            })
             return {
                 "schema_version": 1,
                 "read_only": True,
@@ -3081,6 +4457,7 @@ def handler_factory(config, store, credentials=None):
                 "available_sites": list(report.site_ids),
                 "available_sources": available_sources,
                 "available_metrics": list(ROUTE_OBSERVATION_METRICS),
+                "available_dimensions": available_dimensions,
                 "total_rows": total_rows,
                 "displayed_rows": min(total_rows, ROUTE_OBSERVATION_LIMIT),
                 "limit": ROUTE_OBSERVATION_LIMIT,
@@ -3090,6 +4467,7 @@ def handler_factory(config, store, credentials=None):
                 "privacy": {
                     "visitor_or_session_identifiers": False,
                     "raw_queries": False,
+                    "unscreened_query_wording": False,
                     "full_external_referrer_urls": False,
                 },
             }
@@ -3188,9 +4566,9 @@ def handler_factory(config, store, credentials=None):
                     for site in payload["sites"]
                 )
                 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state">Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a>{site_links}</div>
+<title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head><body class="dashboard-app app-page site-graph-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to graph dashboard</a>
+{_app_header("site-graph", "Stored structural evidence")}
+<main class="shell" id="main"><div class="quick-links" aria-label="Available site snapshots">{site_links}</div>
 <section class="panel graph-empty"><h1>Site Graph</h1><h2>No compiled snapshot yet</h2><p>{_e(payload["notice"])} Compile an authorized repository snapshot from the command line; browser requests cannot ingest, build, or compile sites.</p><p>Active projection: contextual. Selected layers: {_e(", ".join(payload["display"]["layers"]))}. Total nodes: 0; total unique edges: 0; total link occurrences: 0.</p></section></main></body></html>"""
                 return self._send(200, "text/html; charset=utf-8", page)
 
@@ -3246,28 +4624,24 @@ def handler_factory(config, store, credentials=None):
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Site Graph - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body><a class="skip-link" href="#main">Skip to graph dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Read-only structural evidence</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Dashboard areas"><a href="/">Analytics</a><a class="active" href="/site-graph">Site Graph</a><a href="/route-observations">Route observations</a></div>
-<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} - Snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site Graph</h1><p class="hero-copy">Inspect internal-link structure with exact completeness disclosures, a safe full-graph mode for small sites, bounded rendering for larger sites, and a complete paginated evidence table.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
-<div class="graph-meta"><span>Site {_e(payload["site"]["display_name"])}</span><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} contextual snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>
-{view_links}
-<section class="panel control-panel"><div class="panel-heading"><div><h2>Graph controls</h2><p>Contextual, related, and action links are shown by default. Browser controls are read-only.</p></div></div>
-<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Neighborhood page route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><label class="field"><span>Graph mode</span><select name="graph">{graph_mode_options}</select></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></section>
-<aside class="alerts" aria-label="Interpretation notice"><div class="alert"><span class="alert-mark">i</span><div><strong>Structural evidence</strong><br>{_e(payload["structural_evidence_notice"])}</div></div></aside>
+<body class="dashboard-app app-page site-graph-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to graph dashboard</a>
+{_app_header("site-graph", "Snapshot " + payload["snapshot"]["captured_at"][:10])}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">Revision {_e(revision)} · snapshot {_e(payload["snapshot"]["captured_at"][:10])}</p><h1>Site graph</h1><p class="hero-copy">Internal-link structure, reachability, and unresolved destinations for {_e(payload["site"]["display_name"])}.</p></div><span class="coverage-badge">{payload["coverage"]["pages"]} pages covered</span></section>
 <section class="kpi-grid" aria-label="Graph overview">{cards_html}</section>
-<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Full structural overview' if payload["display"]["graph_mode"] == 'full' else 'Bounded structural overview'}</h2><p>Active projection: contextual; layers: {_e(", ".join(payload["selected_layers"]))}; unique edges aggregate matching occurrences by source, destination, and layer.</p></div><span class="source-chip">{_e(payload["display"]["graph_mode"])} mode</span></div>{graph_disclosure}{_site_graph_svg(payload)}<p class="graph-caption">Arrows represent aggregated, stored, crawlable internal relationships in the selected layers. Node color marks goals, unreachable pages, and the selected page.</p>{graph_table}</section>
-{analysis_panels}
-{complete_edge_table}
+<details class="panel control-panel"><summary class="panel-heading control-summary"><div><h2>Graph controls</h2><p>{_e(payload["display"]["graph_mode"])} mode · {_e(", ".join(payload["selected_layers"]))}</p></div></summary><div class="control-content">
+<form class="filter-form graph-form" method="get" action="/site-graph"><label class="field"><span>Site</span><select name="site">{site_options}</select></label><label class="field"><span>Focus route</span><input name="page" value="{_e(selected_page)}" placeholder="Structural overview"></label><label class="field"><span>Graph mode</span><select name="graph">{graph_mode_options}</select></label><fieldset class="field"><legend>Link layers</legend><div class="layer-picker">{layer_controls}</div></fieldset><button type="submit">Update graph</button></form></div></details>
+<section class="panel chart-panel"><div class="panel-heading"><div><h2>{'Two-hop page neighborhood' if payload["neighborhood"]["selected_page"] else 'Full structural overview' if payload["display"]["graph_mode"] == 'full' else 'Bounded structural overview'}</h2><p>Hover or focus a node or edge for exact stored details.</p></div><span class="source-chip">{_e(payload["display"]["graph_mode"])} mode</span></div>{_site_graph_svg(payload)}<p class="graph-caption">Arrows are stored crawlable internal relationships. Node color marks goals, unreachable pages, and the selected page.</p></section>
 <section class="panel section-panel"><div class="panel-heading"><div><h2>Goal distance</h2><p>Shortest structural path to a configured goal in the compiled contextual projection.</p></div></div><div class="distance-grid">{bucket_html}</div></section>
-<div class="split-grid"><section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Deterministic Kosaraju components; these are structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section>
-<section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Evidence-linked structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section></div>
-<footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Read-only - loopback-first - no browser ingest, build, compile, or provider sync</span></footer></main></body></html>"""
+<section class="panel table-panel"><div class="panel-heading"><div><h2>Findings</h2><p>Structural review items for this snapshot.</p></div></div><div class="table-scroll"><table><thead><tr><th>Finding</th><th>Severity</th><th>Pages</th></tr></thead><tbody>{finding_rows}</tbody></table></div></section>
+<details class="panel raw-data-details"><summary><span>Deep analysis &amp; evidence</span><span class="app-filter-summary">Matrix, resilience, entry-to-goal, snapshots, edges</span></summary><div class="data-details-body"><div class="graph-meta"><span>Manifest {_e(payload["manifest_hash"][:12])}</span><span>{payload["snapshot"]["count"]} snapshot(s)</span><span>{"Clean repository" if payload["snapshot"]["clean"] else "Dirty override snapshot"}</span></div>{view_links}{graph_disclosure}{graph_table}{analysis_panels}{complete_edge_table}<section class="panel table-panel"><div class="panel-heading"><div><h2>Strongly connected components</h2><p>Structural groups, not audience segments.</p></div></div><div class="table-scroll"><table><thead><tr><th>Component</th><th>Pages</th><th>Internal edges</th><th>Members</th></tr></thead><tbody>{component_rows}</tbody></table></div></section><p class="graph-caption">{_e(payload["structural_evidence_notice"])}</p></div></details>
+<footer class="footer"><span>Captured {_e(payload["snapshot"]["captured_at"])}</span><span>Stored structural evidence · no browser ingest or compile</span></footer></main></body></html>"""
             return self._send(200, "text/html; charset=utf-8", page)
 
         def _request(
             self, query, *, force_overview=False,
             include_decision_support=True,
+            include_provider_comparisons=True,
         ):
             report_id = query.get("report", [config.reports[0].id])[0]
             report = next((item for item in config.reports if item.id == report_id), None)
@@ -3293,7 +4667,9 @@ def handler_factory(config, store, credentials=None):
             )
             return reports.render(
                 report_id, window, subreport_id, site_id,
+                search_type=query.get("search_type", [None])[0],
                 include_decision_support=include_decision_support,
+                include_provider_comparisons=include_provider_comparisons,
             ), report
 
         def _geography_payload(self, query):
@@ -3309,7 +4685,16 @@ def handler_factory(config, store, credentials=None):
                 query, config.platform.default_timezone,
                 report.default_window_days, report.default_end_lag_days,
             )
-            return geography.render(report_id, window, source, site_id=site_id)
+            return geography.render(
+                report_id,
+                window,
+                source,
+                site_id=site_id,
+                search_type=(
+                    query.get("search_type", [None])[0]
+                    if source == "search-console" else None
+                ),
+            )
 
         def _geography_api(self, query):
             return self._send(
@@ -3326,6 +4711,7 @@ def handler_factory(config, store, credentials=None):
                 query,
                 force_overview=is_plot,
                 include_decision_support=False,
+                include_provider_comparisons=False,
             )
             candidates = tuple(
                 metric for metric in (definition.metric_ids if is_plot else self._active_metrics(definition, report))
@@ -3345,9 +4731,11 @@ def handler_factory(config, store, credentials=None):
             supported_sites = available_sites.get(source, set())
             if report["site_id"] is not None and report["site_id"] not in supported_sites:
                 raise ValueError("selected site is not configured for this series source")
-            style = query.get("style", ["line" if is_plot else "area"])[0]
+            style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
+            if metric in LOWER_IS_BETTER_METRICS and style != "line":
+                raise ValueError("lower-is-better metrics require line chart style")
             compare = _compare_flag(query)
 
             def selected(items):
@@ -3408,7 +4796,17 @@ def handler_factory(config, store, credentials=None):
                 else "unavailable"
             )
             warnings = []
-            if not raw_current and current and current_coverage["status"] == "complete":
+            availability_note = (
+                "Google does not define average position for Discover or Google News. Select clicks, impressions, or CTR for this surface."
+                if metric == "search.position"
+                and not search_console_metric_supported(
+                    metric, report.get("search_type")
+                )
+                else None
+            )
+            if availability_note:
+                warnings.append(availability_note)
+            elif not raw_current and current and current_coverage["status"] == "complete":
                 warnings.append(
                     "The provider query completed for this selection; displayed zeroes are query-proven quiet dates."
                 )
@@ -3431,6 +4829,14 @@ def handler_factory(config, store, credentials=None):
                 "source_label": _source_label(source),
                 "metric": metric,
                 "metric_label": _metric_label(metric) if metric else "Daily series",
+                "unit": METRICS[metric].unit if metric else "count",
+                "lower_is_better": metric in LOWER_IS_BETTER_METRICS,
+                "availability_note": availability_note,
+                "search_type": (
+                    report.get("search_type") if source == "search-console" else None
+                ),
+                "available_search_types": report.get("available_search_types", []),
+                "search_types_by_site": report.get("search_types_by_site", {}),
                 "style": style,
                 "compare": compare,
                 "comparison_available": comparison_available,
@@ -3502,12 +4908,16 @@ def handler_factory(config, store, credentials=None):
             is_plot = view == "plot"
             result, report = self._request(
                 query,
-                force_overview=is_plot,
+                force_overview=True,
                 include_decision_support=not is_plot,
+                include_provider_comparisons=not is_plot,
             )
             start = result["window"]["start"][:10]
             end = result["window"]["end"][:10]
             site_names = {site.id: site.name for site in config.sites}
+            selected_search_type = result.get("search_type")
+            available_search_types = result.get("available_search_types", [])
+            search_types_by_site = result.get("search_types_by_site", {})
             active_definition = next(
                 (item for item in report.subreports if item.id == result["subreport_id"]),
                 None,
@@ -3546,9 +4956,11 @@ def handler_factory(config, store, credentials=None):
                 (metric for metric in CHART_PRIORITY if metric in source_metrics),
                 source_metrics[0] if source_metrics else "",
             )
-            style = query.get("style", ["line" if is_plot else "area"])[0]
+            style = query.get("style", ["line"])[0]
             if style not in {"line", "area", "bar"}:
                 raise ValueError("invalid chart style")
+            if selected_metric in LOWER_IS_BETTER_METRICS and style != "line":
+                raise ValueError("lower-is-better metrics require line chart style")
             compare = _compare_flag(query)
             relevant_sources = {METRICS[metric].source for metric in expected_metrics}
             site_option_sources = set(represented_sources) if is_plot else relevant_sources
@@ -3585,6 +4997,8 @@ def handler_factory(config, store, credentials=None):
 
             def route(path="/", **overrides):
                 params = {"report": report.id, "start": start, "end": end}
+                if selected_search_type:
+                    params["search_type"] = selected_search_type
                 if is_plot:
                     params["view"] = "plot"
                     params["source"] = selected_source
@@ -3604,12 +5018,20 @@ def handler_factory(config, store, credentials=None):
                         params[key] = value
                 return path + "?" + urlencode(params)
 
+            def nav_attrs(active, class_name=""):
+                classes = " ".join(item for item in (class_name, "active" if active else "") if item)
+                class_attr = f' class="{classes}"' if classes else ""
+                return class_attr + (' aria-current="page"' if active else "")
+
             report_nav = "".join(
-                f'<a class="{"active" if not is_plot and item.id == report.id else ""}" href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
+                f'<a{nav_attrs(not is_plot and item.id == report.id)} href="{_e("/?" + urlencode({"report": item.id, "start": start, "end": end}))}">{_e(item.title)}</a>'
                 for item in config.reports
             )
-            plot_url = "/?" + urlencode({"report": report.id, "view": "plot", "start": start, "end": end})
-            report_nav += f'<a class="plot-mode {"active" if is_plot else ""}" href="{_e(plot_url)}">Plot Builder</a>'
+            plot_params = {"report": report.id, "view": "plot", "start": start, "end": end}
+            if selected_search_type:
+                plot_params["search_type"] = selected_search_type
+            plot_url = "/?" + urlencode(plot_params)
+            report_nav += f'<a{nav_attrs(is_plot, "plot-mode")} href="{_e(plot_url)}">Plot Builder</a>'
             report_nav += '<a href="/site-graph">Site Graph</a>'
             report_nav += '<a href="/route-observations">Route observations</a>'
             if is_plot:
@@ -3621,7 +5043,7 @@ def handler_factory(config, store, credentials=None):
                     for source in represented_sources
                 }
                 subnav = "".join(
-                    f'<a class="{"active" if source == selected_source else ""}" href="{_e(route(source=source, metric=source_defaults[source]))}">{_e(_source_label(source))}</a>'
+                    f'<a{nav_attrs(source == selected_source)} href="{_e(route(source=source, metric=source_defaults[source]))}">{_e(_source_label(source))}</a>'
                     for source in represented_sources
                 )
             else:
@@ -3629,17 +5051,18 @@ def handler_factory(config, store, credentials=None):
                     (metric for metric in CHART_PRIORITY if metric in report.metric_ids and METRICS[metric].aggregation != "window"),
                     next((metric for metric in report.metric_ids if METRICS[metric].aggregation != "window"), None),
                 )
-                subnav = f'<a class="{"active" if not result["subreport_id"] else ""}" href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
+                subnav = f'<a{nav_attrs(not result["subreport_id"])} href="{_e(route(subreport=None, metric=overview_metric))}">Overview</a>'
                 subnav += "".join(
-                    f'<a class="{"active" if item.id == result["subreport_id"] else ""}" href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
+                    f'<a{nav_attrs(item.id == result["subreport_id"])} href="{_e(route(subreport=item.id, metric=next((metric for metric in CHART_PRIORITY if metric in item.metric_ids and METRICS[metric].aggregation != "window"), next((metric for metric in item.metric_ids if METRICS[metric].aggregation != "window"), None))))}">{_e(item.title)}</a>'
                     for item in report.subreports
                 )
             all_selected = " selected" if result["site_id"] is None else ""
             site_options = f'<option value="all"{all_selected}>All sites</option>' + "".join(
                 (
                     f'<option value="{_e(site_id)}" data-sources="{_e(",".join(sorted(source for source in represented_sources if site_id in available_sites.get(source, set()))))}"'
-                    f'{" selected" if site_id == result["site_id"] else ""}'
-                    f'{"" if not selected_source or site_id in available_sites.get(selected_source, set()) else " hidden disabled"}>'
+                    f'{"" if _site_option_enabled(site_id, selected_source, selected_search_type, available_sites, search_types_by_site) else " hidden disabled"}'
+                    f' data-search-types="{_e(",".join(search_types_by_site.get(site_id, [])))}"'
+                    f'{" selected" if site_id == result["site_id"] else ""}>'
                     f'{_e(site_names.get(site_id, site_id))}</option>'
                 )
                 for site_id in form_site_ids
@@ -3647,12 +5070,20 @@ def handler_factory(config, store, credentials=None):
             metric_order = [metric for metric in CHART_PRIORITY if metric in available_metrics]
             metric_order += sorted(set(available_metrics) - set(metric_order))
             metric_options = "".join(
-                f'<option value="{_e(metric)}" data-source="{_e(METRICS[metric].source)}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
+                f'<option value="{_e(metric)}" data-source="{_e(METRICS[metric].source)}" data-lower-is-better="{str(metric in LOWER_IS_BETTER_METRICS).lower()}"{" selected" if metric == selected_metric else ""}>{_e(_metric_label(metric))}</option>'
                 for metric in metric_order
             ) or '<option value="">No daily series</option>'
             source_options = "".join(
                 f'<option value="{_e(source)}"{" selected" if source == selected_source else ""}>{_e(_source_label(source))}</option>'
                 for source in represented_sources
+            )
+            search_type_options = "".join(
+                f'<option value="{_e(search_type)}"{" selected" if search_type == selected_search_type else ""}>{_e(_search_type_label(search_type))}</option>'
+                for search_type in available_search_types
+            )
+            search_type_field = (
+                f'<label class="field"><span>Search Console surface</span><select name="search_type">{search_type_options}</select></label>'
+                if search_type_options else ""
             )
             hidden_subreport = (
                 f'<input type="hidden" name="subreport" value="{_e(result["subreport_id"])}">'
@@ -3673,6 +5104,8 @@ def handler_factory(config, store, credentials=None):
                 )
             presets = "".join(preset_links)
             export_params = {"report": report.id, "start": start, "end": end}
+            if selected_search_type:
+                export_params["search_type"] = selected_search_type
             if is_plot:
                 export_params.update({"view": "plot", "source": selected_source, "metric": selected_metric, "style": style})
                 if compare:
@@ -3687,12 +5120,15 @@ def handler_factory(config, store, credentials=None):
             export_name = "series" if is_plot else "report"
             quick_links = presets + f'<a href="{_e(csv_url)}">Download {export_name} CSV</a><a href="{_e(json_url)}">Load {export_name} JSON</a>'
             if is_plot:
-                full_report_url = "/api/v1/report?" + urlencode({"report": report.id, "start": start, "end": end})
+                full_report_params = {"report": report.id, "start": start, "end": end}
+                if selected_search_type:
+                    full_report_params["search_type"] = selected_search_type
+                full_report_url = "/api/v1/report?" + urlencode(full_report_params)
                 quick_links += f'<a href="{_e(full_report_url)}">Full report JSON</a>'
             window_end = end_date - timedelta(days=1)
             window_label = f'{datetime.fromisoformat(start).strftime("%b %d")}–{window_end.strftime("%b %d, %Y")}'
             description = METRICS[selected_metric].description if selected_metric else "No daily series is available."
-            freshness_count = len(result.get("source_health", []))
+            snapshot_status = _snapshot_status_text(result)
             page_title = "Time-series Plot Builder" if is_plot else result["title"]
             hero_copy = (
                 "Select a source, metric, site, exact date window, and chart style. Every plot is built from stored local snapshots."
@@ -3708,7 +5144,7 @@ def handler_factory(config, store, credentials=None):
             style_field = ""
             if is_plot:
                 style_options = "".join(
-                    f'<option value="{item}"{" selected" if item == style else ""}>{item.title()}</option>'
+                    f'<option value="{item}"{" selected" if item == style else ""}{" disabled" if selected_metric in LOWER_IS_BETTER_METRICS and item != "line" else ""}>{item.title()}</option>'
                     for item in ("line", "area", "bar")
                 )
                 checked = " checked" if compare else ""
@@ -3723,10 +5159,27 @@ def handler_factory(config, store, credentials=None):
             if compare:
                 series_params["compare"] = "1"
             series_url = "/api/v1/series?" + urlencode(series_params)
-            summary_html = "" if is_plot else _summary_cards(result, expected_metrics)
+            summary_html = "" if is_plot else _summary_cards(result, expected_metrics, site_names)
+            performance_html = "" if is_plot else _performance_by_site_html(
+                result,
+                {site_id: site_names.get(site_id, site_id) for site_id in report.site_ids},
+            )
+            index_coverage_html = "" if is_plot else _index_coverage_html(
+                result,
+                {site_id: site_names.get(site_id, site_id) for site_id in report.site_ids},
+            )
+            provider_comparison_html = (
+                "" if is_plot else _provider_comparisons_html(result, site_names)
+            )
             attention_html = (
                 "" if is_plot
                 else _decision_overview_html(result.get("decision_support"))
+            )
+            signal_html = (
+                "" if is_plot else _signal_strip_html(result.get("decision_support"))
+            )
+            visuals_html = (
+                "" if is_plot else _dashboard_visuals_html(result, site_names)
             )
             decision_html = (
                 "" if is_plot
@@ -3741,19 +5194,23 @@ def handler_factory(config, store, credentials=None):
                 )
             controls_open = " open" if is_plot else ""
             coverage_summary = _coverage_summary_html(result)
+            surface_context = (
+                f' · Search Console surface {_e(_search_type_label(selected_search_type))}'
+                if selected_search_type else ""
+            )
             chart_panel = (
                 '<section class="panel chart-panel"><div class="panel-heading"><div>'
-                f'<p class="eyebrow">Primary trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Daily trend"}</h2>'
-                f'<p class="metric-description">{_e(description)} Dates omitted by a provider are not imputed.</p></div>'
-                f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}</span></div>'
-                f'<div class="chart-stage"><div class="chart-status" id="chart-status" role="status">Loading stored series...</div><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
+                f'<p class="eyebrow">Daily trend</p><h2>{_e(_metric_label(selected_metric)) if selected_metric else "Attention over time"}</h2>'
+                f'<p class="metric-description">{_e(description)}</p></div>'
+                f'<span class="source-chip">{_e(_source_label(selected_source)) if selected_source else "Daily series"}{surface_context if selected_source == "search-console" else ""}</span></div>'
+                f'<div class="chart-stage"><div class="chart-status" id="chart-status">Loading stored series...</div><span class="sr-only" id="chart-live-status" role="status" aria-live="polite">Loading stored series...</span><canvas class="time-series-chart" id="time-series-chart" data-series-url="{_e(series_url)}" role="img" tabindex="0" aria-describedby="chart-live-status" aria-label="{_e(_metric_label(selected_metric)) if selected_metric else "Daily time series"}"></canvas></div>'
                 '<ul class="chart-legend" id="chart-legend" aria-label="Chart legend"></ul>'
-                '<p class="plot-note"><b>Local and read-only.</b> Missing dates remain missing; the dashboard never fills them with invented zeroes.</p>'
+                '<p class="plot-note">Missing provider dates remain blank.</p>'
                 f'<details class="chart-fallback"><summary>Accessible daily values and no-JavaScript fallback</summary>{_chart_html(result, selected_metric, site_names)}</details></section>'
             )
             primary_content = (
                 chart_panel if is_plot
-                else f'<div class="dashboard-primary">{chart_panel}{attention_html}</div>'
+                else f'{signal_html}<div class="dashboard-primary">{chart_panel}{attention_html}</div>{visuals_html}'
             )
             geography_html = ""
             if not is_plot:
@@ -3766,25 +5223,196 @@ def handler_factory(config, store, credentials=None):
                 geography_html = _geography_panel(
                     self._geography_payload(geography_query),
                     "/api/v1/geography?" + urlencode(geography_params),
+                    search_type=selected_search_type,
                 )
+
+            evidence_parts = (
+                supporting_html
+                if is_plot
+                else performance_html + index_coverage_html + provider_comparison_html + geography_html + decision_html + supporting_html
+            )
+            evidence_html = (
+                '<details class="panel evidence-panel evidence-bundle"><summary class="panel-heading">'
+                '<div><h2>Data quality &amp; detail</h2><p>Definitions, provider checks, geography, freshness, and row-level totals.</p></div>'
+                f'</summary><div class="evidence-body">{evidence_parts}</div></details>'
+                if evidence_parts else ""
+            )
+            scope_site_label = (
+                site_names.get(result["site_id"], result["site_id"])
+                if result.get("site_id") else "All configured sites"
+            )
+            scope_summary = (
+                '<p class="scope-summary">'
+                f'<span>Window: {_e(start)} to {_e(end)} (end exclusive)</span>'
+                f'<span>Scope: {_e(scope_site_label)}</span>'
+                f'<span>Primary chart: {_e(_metric_label(selected_metric)) if selected_metric else "none"}</span>'
+                + (f'<span>Search surface: {_e(_search_type_label(selected_search_type))}</span>' if selected_search_type else "")
+                + '</p>'
+            )
+
+            if not is_plot:
+                dashboard_site_options = (
+                    f'<option value="all"{" selected" if result["site_id"] is None else ""}>All properties</option>'
+                    + "".join(
+                        f'<option value="{_e(site_id)}"{" selected" if site_id == result["site_id"] else ""}>'
+                        f'{_e(site_names.get(site_id, site_id))}</option>'
+                        for site_id in report.site_ids
+                    )
+                )
+                scope_title = (
+                    site_names.get(result["site_id"], result["site_id"])
+                    if result.get("site_id") else "All properties"
+                )
+                core_coverage, core_coverage_state = _core_coverage_label(result)
+                updated_at = _updated_at_label(result)
+
+                base_scope_params = {
+                    "report": report.id,
+                    "start": start,
+                    "end": end,
+                }
+                if selected_search_type:
+                    base_scope_params["search_type"] = selected_search_type
+                if result.get("site_id"):
+                    base_scope_params["site"] = result["site_id"]
+
+                period_links = []
+                selected_days = (end_date - datetime.fromisoformat(start).date()).days
+                for days in (7, 30, 90):
+                    try:
+                        period_start = end_date - timedelta(days=days)
+                    except OverflowError:
+                        continue
+                    period_params = {
+                        **base_scope_params,
+                        "start": period_start.isoformat(),
+                    }
+                    active = " active" if selected_days == days else ""
+                    aria_current = ' aria-current="page"' if active else ""
+                    period_links.append(
+                        f'<a class="{active.strip()}" href="/?{_e(urlencode(period_params))}"'
+                        f'{aria_current}>{days}D</a>'
+                    )
+
+                def overview_series_url(metric, source):
+                    params = {
+                        "report": report.id,
+                        "start": start,
+                        "end": end,
+                        "metric": metric,
+                        "source": source,
+                        "style": "line",
+                    }
+                    if source == "search-console" and selected_search_type:
+                        params["search_type"] = selected_search_type
+                    if result.get("site_id"):
+                        params["site"] = result["site_id"]
+                    return "/api/v1/series?" + urlencode(params)
+
+                def series_panel(metric, source, title, source_label, *, primary=False):
+                    if metric not in available_metrics:
+                        return ""
+                    suffix = "traffic" if primary else "search"
+                    canvas_id = ' id="time-series-chart"' if primary else f' id="time-series-chart-{suffix}"'
+                    status_id = ' id="chart-status"' if primary else ""
+                    live_id = ' id="chart-live-status"' if primary else ""
+                    legend_id = ' id="chart-legend"' if primary else ""
+                    return (
+                        '<section class="panel series-panel">'
+                        f'<div class="compact-heading"><div><h2>{_e(title)}</h2><span>{_e(source_label)}</span></div></div>'
+                        '<div class="chart-stage">'
+                        f'<div class="chart-status" data-chart-status{status_id}>Loading series</div>'
+                        f'<span class="sr-only" data-chart-live-status{live_id} role="status" aria-live="polite">Loading series</span>'
+                        f'<canvas class="time-series-chart"{canvas_id} data-series-url="{_e(overview_series_url(metric, source))}" data-area-fill="true" '
+                        f'role="img" tabindex="0" aria-label="{_e(title)}"></canvas></div>'
+                        f'<ul class="chart-legend" data-chart-legend{legend_id} aria-label="Property legend"></ul>'
+                        f'<details class="chart-fallback"><summary>Daily values</summary>{_chart_html(result, metric, site_names)}</details>'
+                        '</section>'
+                    )
+
+                traffic_panel = series_panel(
+                    "umami.pageviews", "umami", "Page views over time", "Umami", primary=True,
+                )
+                search_panel = series_panel(
+                    "search.impressions", "search-console", "Search impressions over time",
+                    f'Google Search Console · {_search_type_label(selected_search_type)}' if selected_search_type else "Google Search Console",
+                )
+                trend_panels = "".join(item for item in (traffic_panel, search_panel) if item)
+                trend_html = f'<div class="trend-grid">{trend_panels}</div>' if trend_panels else ""
+
+                geography_params = {
+                    "report": report.id,
+                    "start": start,
+                    "end": end,
+                    "source": "umami",
+                }
+                if result.get("site_id"):
+                    geography_params["site"] = result["site_id"]
+                geography_payload = self._geography_payload(
+                    {key: [value] for key, value in geography_params.items()}
+                )
+                audience_html = _geography_summary_html(geography_payload)
+                visual_panels = _dashboard_visuals_html(result, site_names)
+                if audience_html:
+                    if visual_panels:
+                        visual_panels = visual_panels[:-6] + audience_html + "</div>"
+                    else:
+                        visual_panels = f'<div class="visual-grid">{audience_html}</div>'
+
+                metric_detail_html = (
+                    '<section class="panel table-panel"><div class="panel-heading"><div><h2>Metric detail</h2>'
+                    '<p>Stored totals by source and property.</p></div></div><div class="table-scroll"><table>'
+                    '<thead><tr><th>Metric</th><th>Property</th><th>Source</th><th>Current</th><th>Previous</th><th>Coverage</th><th>Change</th></tr></thead>'
+                    f'<tbody>{_metrics_table(result, site_names)}</tbody></table></div></section>'
+                )
+                data_details_parts = (
+                    _warnings_html(result["warnings"])
+                    + provider_comparison_html
+                    + _health_html(result, expected_metrics)
+                    + metric_detail_html
+                )
+
+                property_hidden = (
+                    f'<input type="hidden" name="site" value="{_e(result["site_id"])}">'
+                    if result.get("site_id") else ""
+                )
+                search_hidden = (
+                    f'<input type="hidden" name="search_type" value="{_e(selected_search_type)}">'
+                    if selected_search_type else ""
+                )
+                page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_e(scope_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body class="dashboard-app" data-theme="hyperpunk" data-page="overview"><a class="skip-link" href="#main">Skip to dashboard</a>
+{_app_header("overview", updated_at)}
+<main class="shell" id="main">
+<section class="dashboard-header"><div class="dashboard-title"><h1>{_e(scope_title)}</h1><div class="dashboard-meta"><span>{_e(window_label)}</span><span class="coverage-state" data-state="{_e(core_coverage_state)}">{_e(core_coverage)}</span></div></div>
+<div class="dashboard-controls"><form class="property-form" id="property-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}"><input type="hidden" name="start" value="{_e(start)}"><input type="hidden" name="end" value="{_e(end)}">{search_hidden}<label class="property-field"><span>Property</span><select id="property-selector" name="site">{dashboard_site_options}</select></label><noscript><button class="scope-apply" type="submit">Apply</button></noscript></form>
+<details class="tool-menu"><summary>Tools</summary><div class="tool-menu-items"><a href="{_e(plot_url)}">Plot builder</a><a href="/site-graph">Site graph</a><a href="/route-observations">Route observations</a><hr><a href="{_e(csv_url)}">Download CSV</a><a href="{_e(json_url)}">Open JSON</a></div></details></div></section>
+<section class="window-bar" aria-label="Date window"><strong>{_e(window_label)}</strong><nav class="window-links" aria-label="Quick date windows">{"".join(period_links)}</nav><details class="custom-window"><summary>Custom</summary><form class="custom-window-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{property_hidden}{search_hidden}<label class="field"><span>Start</span><input type="date" name="start" value="{_e(start)}" required></label><label class="field"><span>End boundary</span><input type="date" name="end" value="{_e(end)}" required></label><button type="submit">Apply</button></form></details></section>
+{_overview_cards_html(result)}{trend_html}{visual_panels}{_source_readings_html(result)}
+<details class="panel data-details"><summary>Data details</summary><div class="data-details-body">{data_details_parts}</div></details>
+</main></body></html>"""
+                self._send(200, "text/html; charset=utf-8", page)
+                return
 
             page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(page_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body><a class="skip-link" href="#main">Skip to dashboard</a>
-<header class="topbar"><div class="topbar-inner"><div class="brand"><span class="brand-mark">BA</span><div><strong>Boho Analytics</strong><span>Private portfolio command center</span></div></div><div class="live-state"><span class="live-dot"></span>Local snapshot - {freshness_count} sources reporting</div></div></header>
-<main class="shell" id="main"><div class="report-nav" aria-label="Saved reports">{report_nav}</div>
-<section class="hero"><div><p class="eyebrow">{_e(window_label)} - End date exclusive</p><h1>{_e(page_title)}</h1><p class="hero-copy">{_e(hero_copy)}</p></div>{coverage_summary}</section>
-<nav class="subnav" aria-label="Report sections">{subnav}</nav>
-<details class="panel control-panel"{controls_open}><summary class="panel-heading control-summary"><div><h2>{'Build a custom plot' if is_plot else 'Report tools'}</h2><p>{'Choose source, metric, scope, comparison, and chart style.' if is_plot else 'Change the window or site scope, or export the underlying evidence.'}</p></div></summary><div class="control-content">
+<body class="dashboard-app app-page plot-page" data-theme="hyperpunk"><a class="skip-link" href="#main">Skip to plot builder</a>
+{_app_header("plot", snapshot_status)}
+<main class="shell" id="main">
+<section class="hero"><div><p class="eyebrow">{_e(window_label)} · end exclusive</p><h1>Plot builder</h1><p class="hero-copy">Build a precise comparison from stored provider data. The chart always retains the provider's metric definition and unit.</p></div>{coverage_summary}</section>
+{primary_content}
+<details class="panel control-panel" open><summary class="panel-heading control-summary"><div><h2>Plot controls</h2><p>Source, metric, property, comparison, and chart style.</p>{scope_summary}</div></summary><div class="control-content">
 <form class="{form_class}" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{view_input}{hidden_subreport}
 <label class="field"><span>Start date</span><input type="date" name="start" value="{_e(start)}" required></label>
 <label class="field"><span>End date</span><input type="date" name="end" value="{_e(end)}" required></label>
-{source_field}<label class="field"><span>Metric</span><select name="metric">{metric_options}</select></label>
-<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
+{source_field}<label class="field"><span>{'Metric' if is_plot else 'Primary chart'}</span><select name="metric">{metric_options}</select></label>
+<label class="field"><span>Site scope</span><select name="site">{site_options}</select></label>{search_type_field}{style_field}<button type="submit">{'Plot selected data' if is_plot else 'Update dashboard'}</button></form>
 <div class="tools-row"><span class="tools-label">Quick tools</span><div class="quick-links">{quick_links}</div></div></div></details>
-{_warnings_html(result['warnings'])}{summary_html}{primary_content}{geography_html}{decision_html}{supporting_html}
-<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Read-only - loopback-first - no browser credentials</span></footer></main></body></html>"""
+{_warnings_html(result['warnings'])}{evidence_html}
+<footer class="footer"><span>Generated {_e(result['generated_at'])}</span><span>Stored data only · no browser-side provider access</span></footer></main></body></html>"""
             self._send(200, "text/html; charset=utf-8", page)
 
     return Handler

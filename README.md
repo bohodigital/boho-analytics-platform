@@ -1,8 +1,10 @@
 # Boho Analytics Platform
 
 Boho Analytics Platform is a lightweight, public-first website analytics dashboard for Umami,
-Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. It runs on
-Python 3.11+ with SQLite and a dependency-free server-rendered web interface.
+Cloudflare, Google Analytics, Google Search Console, and form-delivery monitoring. Its normalized
+reporting plane runs on Python 3.11+ with SQLite and a dependency-free server-rendered web
+interface. An optional POSIX-only Search Console bulk lane mirrors private BigQuery evidence to
+Parquet on separately verified storage.
 
 > **Status: v0.2.0 is the latest public source release.** Each installation must use
 account-specific least-privilege credentials, verify the configured provider resources, and treat
@@ -24,11 +26,18 @@ cannot be initiated from the browser.
 
 - Read-only connectors for self-hosted Umami, Cloudflare GraphQL traffic analytics, GA4 Data API,
   Search Console, Cloudflare D1 form state, and the existing comms-platform SQLite mail index.
+- An optional, separate `gsc-bulk` command mirrors both Search Console data tables, full successful
+  `ExportLog` history for each revision, and all exported query/URL dimensions to an immutable
+  private Parquet lake. It never writes those raw rows to SQLite or exposes them to the dashboard.
 - Configurable form monitoring that compares durable D1 submissions and notification state with
   independently observed inbox delivery counts. It never ingests form payloads or message bodies.
 - Strict schema-v2 TOML configuration with environment, systemd, and no-credential references.
 - SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
   retention, integrity checks, online backup, and guarded restore.
+- A privacy-bounded Search Console index census inventories each property's public sitemap tree,
+  stores URL fingerprints rather than URL text, advances within URL Inspection quotas, and reports
+  published pages, indexed pages, and indexed percentage only when the current inventory is fully
+  inspected.
 - Saved reports, form-specific dimension filters, reusable subreports, arbitrary absolute date
   windows, site-level scope, previous-period comparisons, JSON, and downloadable CSV.
 - A custom time-series Plot Builder with data-source, metric, site, exact-window, line/area/bar,
@@ -45,10 +54,10 @@ cannot be initiated from the browser.
   strongly connected components, Core 2.1 reconciliation coverage, and evidence-linked corrected
   findings. Complete coverage totals are independent of the SVG cap. It is structural evidence only
   and never presents link topology as visitor behavior.
-- A read-only `/route-observations` compatibility table for accepted GA4, Search Console, and Umami
-  route-dimensional aggregates. Providers, metric semantics, coverage, freshness, provider date
-  basis, and limitations remain separate; no raw queries, visitor/session identifiers, or full
-  external referrer URLs are exposed.
+- A read-only, summary-first `/route-observations` explorer for accepted GA4, Search Console, and
+  Umami route-dimensional aggregates, with bounded raw evidence available on demand. Providers,
+  metric semantics, coverage, freshness, provider date basis, and limitations remain separate; no
+  raw queries, visitor/session identifiers, or full external referrer URLs are exposed.
 - Loopback binding by default, Host validation, restrictive CSP, no permissive CORS, and optional
   Basic authentication.
 - Failure isolation: one unavailable provider does not erase successful results from another.
@@ -110,11 +119,13 @@ Then initialize, probe, and sync one connection at a time:
 boho-analytics --config /private/platform.toml db init
 boho-analytics --config /private/platform.toml probe --connection example-umami
 boho-analytics --config /private/platform.toml sync --connection example-umami --days 30
+boho-analytics --config /private/platform.toml index-coverage sync
+boho-analytics --config /private/platform.toml index-coverage status
 ```
 
 See [configuration](docs/configuration.md), [forms monitoring](docs/forms-monitoring.md),
-[provider behavior](docs/providers.md), and [deployment](docs/deployment.md) before connecting live
-data.
+[provider behavior](docs/providers.md), [deployment](docs/deployment.md), and the
+[Search Console BigQuery runbook](docs/gsc-bigquery-bulk-export.md) before connecting live data.
 
 ## Metric ownership
 
@@ -138,7 +149,9 @@ before exposing client data. Basic authentication is only a small deployment con
 replacement for HTTPS or an identity-aware proxy.
 
 Read [SECURITY.md](SECURITY.md) and the [threat model](docs/threat-model.md). Architecture and data
-contracts are documented under [docs](docs/architecture.md).
+contracts are documented under [docs](docs/architecture.md). The staged identity, authorization,
+hosting, and production acceptance plan is in
+[the production web application roadmap](docs/production-webapp-roadmap.md).
 
 ## Development
 

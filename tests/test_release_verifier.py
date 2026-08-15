@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.verify_release import verify_tree
+from scripts.verify_release import verify_git_identity, verify_tree
 
 
 class ReleaseVerifierTests(unittest.TestCase):
@@ -18,6 +20,111 @@ class ReleaseVerifierTests(unittest.TestCase):
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    def initialize_git_repository(self) -> str:
+        self.write("README.md", "reviewed bytes\n")
+        self.write("docs/guide.md", "nested reviewed bytes\n")
+        self.write("scripts/tool.sh", "#!/bin/sh\nexit 0\n")
+        (self.root / "scripts/tool.sh").chmod(0o755)
+        subprocess.run(
+            ["git", "init", "-q", "--initial-branch=main", os.fspath(self.root)],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", os.fspath(self.root), "config", "user.name", "Release Test"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", os.fspath(self.root), "config", "user.email", "release@example.invalid"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", os.fspath(self.root), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", os.fspath(self.root), "commit", "-q", "-m", "reviewed"],
+            check=True,
+        )
+        return subprocess.run(
+            ["git", "-C", os.fspath(self.root), "rev-parse", "HEAD^{tree}"],
+            check=True,
+            stdout=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+
+    def test_clean_git_checkout_is_bound_to_head_tree(self):
+        expected_tree = self.initialize_git_repository()
+
+        self.assertEqual(verify_git_identity(self.root), [])
+        self.assertEqual(verify_git_identity(self.root, expected_tree=expected_tree), [])
+
+    def test_modified_allowed_tracked_file_is_rejected(self):
+        self.initialize_git_repository()
+        self.write("README.md", "different bytes\n")
+
+        failures = verify_git_identity(self.root)
+
+        self.assertIn("Git checkout differs from reviewed HEAD", failures)
+        self.assertTrue(
+            any(failure.startswith("public filesystem Git tree mismatch:") for failure in failures)
+        )
+
+    def test_deleted_allowed_tracked_file_is_rejected(self):
+        self.initialize_git_repository()
+        (self.root / "README.md").unlink()
+
+        failures = verify_git_identity(self.root)
+
+        self.assertIn("Git checkout differs from reviewed HEAD", failures)
+        self.assertTrue(
+            any(failure.startswith("public filesystem Git tree mismatch:") for failure in failures)
+        )
+
+    def test_additional_allowlisted_untracked_file_is_rejected(self):
+        self.initialize_git_repository()
+        self.write("docs/additional.md", "unreviewed bytes\n")
+
+        failures = verify_git_identity(self.root)
+
+        self.assertIn("Git checkout differs from reviewed HEAD", failures)
+        self.assertTrue(
+            any(failure.startswith("public filesystem Git tree mismatch:") for failure in failures)
+        )
+
+    def test_exported_tree_requires_and_matches_explicit_reviewed_tree(self):
+        expected_tree = self.initialize_git_repository()
+        export_root = Path(self.temporary.name) / "export"
+        export_root.mkdir()
+        shutil.copy2(self.root / "README.md", export_root / "README.md")
+        shutil.copytree(self.root / "docs", export_root / "docs", copy_function=shutil.copy2)
+        shutil.copytree(self.root / "scripts", export_root / "scripts", copy_function=shutil.copy2)
+
+        self.assertEqual(
+            verify_git_identity(export_root),
+            ["exported release tree requires --expected-tree"],
+        )
+        self.assertEqual(
+            verify_git_identity(export_root, expected_tree=expected_tree),
+            [],
+        )
+        self.write("export/README.md", "tampered archive bytes\n")
+        self.assertTrue(
+            any(
+                failure.startswith("public filesystem Git tree mismatch:")
+                for failure in verify_git_identity(export_root, expected_tree=expected_tree)
+            )
+        )
+
+    def test_invalid_or_mismatched_expected_tree_is_rejected(self):
+        expected_tree = self.initialize_git_repository()
+
+        self.assertEqual(
+            verify_git_identity(self.root, expected_tree="bad"),
+            ["expected Git tree must be exactly 40 lowercase hexadecimal characters"],
+        )
+        failures = verify_git_identity(self.root, expected_tree="0" * 40)
+        self.assertIn(
+            f"reviewed HEAD Git tree mismatch: expected {'0' * 40}, found {expected_tree}",
+            failures,
+        )
 
     def test_exact_site_graph_directories_are_allowed(self):
         self.write("docs/site-graph/architecture.md")
