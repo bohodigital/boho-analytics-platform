@@ -46,6 +46,7 @@ class PackagingTests(unittest.TestCase):
     def test_ci_and_release_workflows_execute_the_tracked_test_suite(self):
         quality = (ROOT / ".github" / "workflows" / "quality.yml").read_text(encoding="utf-8")
         publish = (ROOT / ".github" / "workflows" / "pypi.yml").read_text(encoding="utf-8")
+        self.assertIn('--editable ".[bigquery]"', quality)
         for workflow in (quality, publish):
             self.assertIn("python -m unittest discover -s tests -v", workflow)
             self.assertIn("python scripts/verify_release.py", workflow)

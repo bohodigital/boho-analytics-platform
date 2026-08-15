@@ -1514,8 +1514,12 @@ def _app_header(active: str, status: str) -> str:
         ("routes", "/route-observations", "Routes"),
     )
     nav = "".join(
-        f'<a class="{"active" if key == active else ""}"'
-        f'{" aria-current=\"page\"" if key == active else ""} href="{href}">{label}</a>'
+        '<a class="{class_name}"{aria_current} href="{href}">{label}</a>'.format(
+            class_name="active" if key == active else "",
+            aria_current=' aria-current="page"' if key == active else "",
+            href=href,
+            label=label,
+        )
         for key, href, label in nav_items
     )
     return (
@@ -5284,9 +5288,10 @@ def handler_factory(config, store, credentials=None):
                         "start": period_start.isoformat(),
                     }
                     active = " active" if selected_days == days else ""
+                    aria_current = ' aria-current="page"' if active else ""
                     period_links.append(
                         f'<a class="{active.strip()}" href="/?{_e(urlencode(period_params))}"'
-                        f'{" aria-current=\"page\"" if active else ""}>{days}D</a>'
+                        f'{aria_current}>{days}D</a>'
                     )
 
                 def overview_series_url(metric, source):
