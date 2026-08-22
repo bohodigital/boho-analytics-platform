@@ -640,7 +640,7 @@ class DefinitionRegistryTests(unittest.TestCase):
             },
             {"description": "SELECT email FROM users"},
             {"description": "/Users/operator/private/config.toml"},
-            {"description": "prefix=/srv/" + "local1/private"},
+            {"description": "prefix=/srv/" + "private/analytics"},
             {"description": '[reports]\nmetric = "google.pageviews"'},
             {"description": '"title" = "friendly"'},
             {"description": "safe label # private operator note"},
@@ -1197,15 +1197,11 @@ class DefinitionRegistryTests(unittest.TestCase):
                             DefinitionIntegrityError, "semantic validation failed"
                         ):
                             operation()
-                backup = store.backup(
-                    Path(self.temporary.name) / f"semantic-regression-{index}-backup.db"
-                )
-                restore_target = SQLiteMetricStore(
-                    Path(self.temporary.name) / f"semantic-regression-{index}-restore.db"
-                )
                 with self.assertRaisesRegex(ValueError, "definition integrity"):
-                    restore_target.restore(backup, confirmed=True)
-                self.assertFalse(restore_target.path.exists())
+                    store.backup(
+                        Path(self.temporary.name)
+                        / f"semantic-regression-{index}-backup.db"
+                    )
 
     def test_subscription_derives_keyed_digest_only_from_recipient_inputs(
         self,
@@ -1464,15 +1460,10 @@ class DefinitionRegistryTests(unittest.TestCase):
                     "overlaps or is non-monotonic",
                 ):
                     operation()
-        backup = self.store.backup(
-            Path(self.temporary.name) / "overlapping-history-backup.db"
-        )
-        restore_target = SQLiteMetricStore(
-            Path(self.temporary.name) / "overlapping-history-restore.db"
-        )
         with self.assertRaisesRegex(ValueError, "definition integrity"):
-            restore_target.restore(backup, confirmed=True)
-        self.assertFalse(restore_target.path.exists())
+            self.store.backup(
+                Path(self.temporary.name) / "overlapping-history-backup.db"
+            )
 
     def test_embedded_references_are_authority_invariants(self) -> None:
         goal_change = self.store.apply_definition_package(
@@ -1543,15 +1534,10 @@ class DefinitionRegistryTests(unittest.TestCase):
                 [referenced_alert],
                 transaction_time=BASE_TIME + timedelta(minutes=2),
             )
-        backup = self.store.backup(
-            Path(self.temporary.name) / "dangling-reference-backup.db"
-        )
-        restore_target = SQLiteMetricStore(
-            Path(self.temporary.name) / "dangling-reference-restore.db"
-        )
         with self.assertRaisesRegex(ValueError, "definition integrity"):
-            restore_target.restore(backup, confirmed=True)
-        self.assertFalse(restore_target.path.exists())
+            self.store.backup(
+                Path(self.temporary.name) / "dangling-reference-backup.db"
+            )
 
     def test_definition_integrity_pins_every_schema_enforcement_object(
         self,
@@ -1571,15 +1557,10 @@ class DefinitionRegistryTests(unittest.TestCase):
             DefinitionIntegrityError, "schema enforcement"
         ):
             self.store.verify_definition_integrity()
-        backup = self.store.backup(
-            Path(self.temporary.name) / "missing-enforcement-backup.db"
-        )
-        restore_target = SQLiteMetricStore(
-            Path(self.temporary.name) / "missing-enforcement-restore.db"
-        )
         with self.assertRaisesRegex(ValueError, "definition integrity"):
-            restore_target.restore(backup, confirmed=True)
-        self.assertFalse(restore_target.path.exists())
+            self.store.backup(
+                Path(self.temporary.name) / "missing-enforcement-backup.db"
+            )
 
     def test_restore_copies_the_single_snapshot_that_was_validated(self) -> None:
         source_store = SQLiteMetricStore(
@@ -1877,15 +1858,10 @@ class DefinitionRegistryTests(unittest.TestCase):
                     DefinitionIntegrityError, "retirement integrity failed"
                 ):
                     operation()
-        backup = self.store.backup(
-            Path(self.temporary.name) / "retirement-tampered-backup.db"
-        )
-        restore_target = SQLiteMetricStore(
-            Path(self.temporary.name) / "retirement-restore-target.db"
-        )
         with self.assertRaisesRegex(ValueError, "definition integrity"):
-            restore_target.restore(backup, confirmed=True)
-        self.assertFalse(restore_target.path.exists())
+            self.store.backup(
+                Path(self.temporary.name) / "retirement-tampered-backup.db"
+            )
 
     def test_duplicate_scoped_keys_and_conflicting_retirement_are_rejected(self) -> None:
         identity = DefinitionIdentity(

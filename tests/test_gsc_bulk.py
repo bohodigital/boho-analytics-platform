@@ -29,7 +29,7 @@ from boho_analytics_platform.bulk_export.contracts import (
     PartitionTotals,
 )
 from boho_analytics_platform.bulk_export.engine import BulkExportEngine
-from boho_analytics_platform.bulk_export.lake import BulkLakeError, SeagateBulkLake
+from boho_analytics_platform.bulk_export.lake import BulkLake, BulkLakeError
 from boho_analytics_platform.cli import _bulk_window, main
 
 
@@ -94,7 +94,7 @@ class BulkManifestTests(unittest.TestCase):
     def test_storage_root_must_be_strictly_beneath_mount(self):
         with self.assertRaisesRegex(BulkExportConfigError, "strictly beneath"):
             self.load(lambda value: value.replace(
-                f"  root: {self.root / 'lake'}", "  root: /tmp/not-the-seagate"
+                f"  root: {self.root / 'lake'}", "  root: /tmp/not-the-mounted-lake"
             ))
 
     def test_each_property_requires_a_distinct_searchconsole_dataset(self):
@@ -152,7 +152,7 @@ class BulkManifestTests(unittest.TestCase):
                         return_value=manifest,
                     ),
                     patch(
-                        "boho_analytics_platform.bulk_export.lake.SeagateBulkLake",
+                        "boho_analytics_platform.bulk_export.lake.BulkLake",
                         return_value=lake,
                     ),
                     redirect_stdout(io.StringIO()),
@@ -763,7 +763,7 @@ class BulkEngineTests(unittest.TestCase):
             engine.sync(date(2025, 1, 1), date(2026, 2, 1))
 
 
-class _TestLake(SeagateBulkLake):
+class _TestLake(BulkLake):
     def preflight(self, *, create=False):
         if create:
             self.config.root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -952,11 +952,11 @@ class BulkLakeTests(unittest.TestCase):
         marker = self.root / self.manifest.storage.identity_marker_name
         marker.touch(mode=0o600)
         with self.assertRaisesRegex(BulkLakeError, "not mounted"):
-            SeagateBulkLake(self.manifest).preflight(create=True)
+            BulkLake(self.manifest).preflight(create=True)
         self.assertFalse(self.manifest.storage.root.exists())
 
     def test_preflight_requires_exact_uuid_marker_and_free_space(self):
-        lake = SeagateBulkLake(self.manifest)
+        lake = BulkLake(self.manifest)
         with self.simulated_mount():
             self.assertTrue(lake.preflight(create=True)["ok"])
 
@@ -988,7 +988,7 @@ class BulkLakeTests(unittest.TestCase):
         self.manifest.storage.root.symlink_to(target, target_is_directory=True)
         with self.simulated_mount():
             with self.assertRaisesRegex(BulkLakeError, "symlinks"):
-                SeagateBulkLake(self.manifest).preflight(create=True)
+                BulkLake(self.manifest).preflight(create=True)
 
     def test_partition_paths_reject_unconfigured_or_unsafe_source_identity(self):
         lake = _TestLake(self.manifest)

@@ -4,6 +4,7 @@ import csv
 import http.client
 import io
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -18,6 +19,7 @@ from boho_analytics_platform.config import load_config
 from boho_analytics_platform.connectors.common import total_point
 from boho_analytics_platform.engine import SyncEngine
 from boho_analytics_platform.models import CapabilitySnapshot, Completeness, MetricPoint, QueryWindow, TimeGrain
+from boho_analytics_platform.page_intelligence import PageIntelligenceService
 from boho_analytics_platform.reporting import ReportService
 from boho_analytics_platform.storage import SQLiteMetricStore
 from boho_analytics_platform.web import (
@@ -206,6 +208,77 @@ class WebTests(unittest.TestCase):
         self.assertIn("No exact-window total stored", body)
         self.assertIn('name="search_type"', body)
         self.assertNotIn("source=umami&amp;search_type=", body)
+
+    def test_page_intelligence_api_and_dashboard_share_materialized_calculations(self):
+        dimensions = {
+            "route": "/news/example",
+            "observation_scope": "page",
+            "provider_date": "2026-07-01",
+            "provider_timezone": "America/Los_Angeles",
+            "search_type": "web",
+            "data_state": "final",
+        }
+        common = {
+            "client_id": "example-client",
+            "site_id": "example-site",
+            "source": "search-console",
+            "start": datetime(2026, 7, 1, tzinfo=UTC),
+            "end": datetime(2026, 7, 2, tzinfo=UTC),
+            "dimensions": dimensions,
+            "observed_at": datetime(2026, 7, 3, tzinfo=UTC),
+            "completeness": Completeness.UNKNOWN,
+        }
+        self.store.upsert([
+            total_point(metric="search.route-clicks", unit="count", value=4, **common),
+            total_point(metric="search.route-impressions", unit="count", value=200, **common),
+            total_point(metric="search.route-position", unit="position", value=3.5, **common),
+        ])
+        service = PageIntelligenceService(self.config, self.store)
+        service.materialize()
+        direct = service.properties("2026-07-01", "2026-07-02")
+
+        status, _, body = self.request(
+            "/api/v1/page-intelligence/properties?start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        api = json.loads(body)
+        self.assertEqual(api["data"], direct["data"])
+        self.assertEqual(api["data"]["properties"][0]["gsc_ctr"], 0.02)
+
+        status, _, body = self.request(
+            "/?report=summary&start=2026-07-01&end=2026-07-02"
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("Page intelligence", body)
+        self.assertIn("/news/example", body)
+        self.assertIn('id="scheme-selector" name="scheme"', body)
+
+        status, _, body = self.request(
+            "/api/v1/page-intelligence/pages?start=2026-07-01&end=2026-07-02&limit=501"
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "invalid page intelligence request")
+
+    def test_page_intelligence_api_returns_retryable_503_for_storage_contention(self):
+        with patch.object(
+            PageIntelligenceService,
+            "properties",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            status, headers, body = self.request(
+                "/api/v1/page-intelligence/properties?start=2026-07-01&end=2026-07-02"
+            )
+
+        self.assertEqual(status, 503)
+        self.assertEqual(headers["Retry-After"], "5")
+        self.assertEqual(
+            json.loads(body),
+            {
+                "error": "analytics data temporarily unavailable",
+                "retryable": True,
+            },
+        )
+        self.assertNotIn("database", body)
 
     def test_dashboard_visuals_state_exact_metric_definitions(self):
         result = {
@@ -625,7 +698,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["version"], "0.2.0")
+        self.assertEqual(payload["version"], "0.3.0")
         self.assertIn("build_commit", payload)
         self.assertIn("build_tree", payload)
         self.assertGreaterEqual(payload["database_schema"], 2)

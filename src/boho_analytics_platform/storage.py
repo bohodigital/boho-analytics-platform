@@ -49,7 +49,7 @@ from .models import (
 )
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 MIGRATIONS = {
     1: "001_initial.sql",
     2: "002_site_graph.sql",
@@ -58,6 +58,7 @@ MIGRATIONS = {
     5: "005_analytics_definitions.sql",
     6: "006_acquisition_provenance.sql",
     7: "007_index_coverage.sql",
+    8: "008_page_intelligence.sql",
 }
 CURRENT_IDENTITY_VERSIONS = {
     "cloudflare-forms": 3,
@@ -228,6 +229,10 @@ class DefinitionIntegrityError(RuntimeError):
 
 
 class AcquisitionIntegrityError(RuntimeError):
+    pass
+
+
+class PageIntelligenceIntegrityError(RuntimeError):
     pass
 
 
@@ -2171,15 +2176,128 @@ class SQLiteMetricStore:
                     self._verify_definition_integrity_connection(db)
                 if schema_version >= 6:
                     self._verify_acquisition_integrity_connection(db)
-            except (AcquisitionIntegrityError, DefinitionIntegrityError):
+                if schema_version >= 8:
+                    self._verify_page_intelligence_integrity_connection(db)
+            except (
+                AcquisitionIntegrityError,
+                DefinitionIntegrityError,
+                PageIntelligenceIntegrityError,
+            ):
                 return "application-integrity-error"
             return "ok"
 
+    @staticmethod
+    def _verify_page_intelligence_integrity_connection(
+        db: sqlite3.Connection,
+    ) -> dict[str, int]:
+        pages = db.execute(
+            "SELECT page_id,site_id,route FROM page_catalog ORDER BY page_id"
+        ).fetchall()
+        for row in pages:
+            expected = hashlib.sha256(
+                f"page-v1\0{row['site_id']}\0{row['route']}".encode("utf-8")
+            ).hexdigest()
+            if row["page_id"] != expected:
+                raise PageIntelligenceIntegrityError("page catalog identity mismatch")
+        versions = db.execute(
+            """SELECT version_id,scheme_id,definition_json,definition_hash
+                 FROM page_scheme_versions ORDER BY version_id"""
+        ).fetchall()
+        modes: dict[str, str] = {}
+        for row in versions:
+            try:
+                definition = json.loads(row["definition_json"])
+                canonical = json.dumps(
+                    definition,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                )
+                mode = str(definition["mode"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise PageIntelligenceIntegrityError(
+                    "page scheme definition is invalid"
+                ) from exc
+            definition_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            version_id = hashlib.sha256(
+                f"scheme-v1\0{row['scheme_id']}\0{definition_hash}".encode("utf-8")
+            ).hexdigest()
+            if (
+                canonical != row["definition_json"]
+                or definition_hash != row["definition_hash"]
+                or version_id != row["version_id"]
+                or mode not in {"exclusive", "multilabel"}
+            ):
+                raise PageIntelligenceIntegrityError("page scheme identity mismatch")
+            modes[str(row["version_id"])] = mode
+        mismatch = db.execute(
+            """SELECT 1 FROM page_scheme_activations AS a
+                 JOIN page_scheme_versions AS v ON v.version_id=a.version_id
+                WHERE a.scheme_id!=v.scheme_id LIMIT 1"""
+        ).fetchone()
+        if mismatch:
+            raise PageIntelligenceIntegrityError("page scheme activation mismatch")
+        for row in db.execute(
+            """SELECT version_id,page_id,COUNT(*) AS assignments
+                 FROM page_scheme_assignments
+                GROUP BY version_id,page_id HAVING COUNT(*)>1"""
+        ).fetchall():
+            if modes.get(str(row["version_id"])) == "exclusive":
+                raise PageIntelligenceIntegrityError(
+                    "exclusive page scheme has overlapping assignments"
+                )
+        mismatch = db.execute(
+            """SELECT 1 FROM page_catalog_index_links AS l
+                 JOIN page_catalog AS p ON p.page_id=l.page_id
+                WHERE l.site_id!=p.site_id LIMIT 1"""
+        ).fetchone()
+        if mismatch:
+            raise PageIntelligenceIntegrityError("page index link site mismatch")
+        return {
+            "pages": len(pages),
+            "scheme_versions": len(versions),
+            "daily_cells": int(db.execute("SELECT COUNT(*) FROM page_daily").fetchone()[0]),
+        }
+
+    def verify_page_intelligence_integrity(self) -> dict[str, int]:
+        with self.connect(readonly=True) as db:
+            return self._verify_page_intelligence_integrity_connection(db)
+
     def backup(self, destination: str | Path) -> Path:
-        target = Path(destination); target.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect(readonly=True) as source, closing(sqlite3.connect(target)) as output:
-            source.backup(output)
-        return target
+        target = Path(destination)
+        if target.resolve() == self.path.resolve():
+            raise ValueError("backup source and target must be different paths")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.name}.backup-",
+            suffix=".db",
+            dir=target.parent,
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            with self.connect(readonly=True) as source:
+                source.execute("BEGIN")
+                schema_row = source.execute(
+                    "SELECT version FROM schema_meta LIMIT 1"
+                ).fetchone()
+                if schema_row is None:
+                    raise ValueError("backup source schema marker is missing")
+                source_schema = int(schema_row[0])
+                with closing(sqlite3.connect(temporary_path)) as output:
+                    source.backup(output)
+                    output.commit()
+            self._validate_restored_path(temporary_path, source_schema)
+            os.chmod(temporary_path, 0o600)
+            os.replace(temporary_path, target)
+            return target
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+            for suffix in ("-wal", "-shm", "-journal"):
+                temporary_sidecar = Path(f"{temporary_path}{suffix}")
+                if temporary_sidecar.exists():
+                    temporary_sidecar.unlink()
 
     @staticmethod
     def _validate_restore_connection(db: sqlite3.Connection) -> int:
@@ -2209,6 +2327,13 @@ class SQLiteMetricStore:
                 SQLiteMetricStore._verify_acquisition_integrity_connection(db)
             except AcquisitionIntegrityError as exc:
                 raise ValueError("backup acquisition integrity check failed") from exc
+        if source_schema >= 8:
+            try:
+                SQLiteMetricStore._verify_page_intelligence_integrity_connection(db)
+            except PageIntelligenceIntegrityError as exc:
+                raise ValueError(
+                    "backup page intelligence integrity check failed"
+                ) from exc
         return source_schema
 
     @staticmethod

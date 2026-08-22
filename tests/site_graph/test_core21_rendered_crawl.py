@@ -39,7 +39,7 @@ def _capture(url: str, *, mobile: bool = False) -> BrowserCapture:
         schema_types=("WebSite", "Organization"),
         dom_html="<main><h1>Welcome</h1></main>",
         anchors=(RawAnchor(
-            "/about", "About us", "About Boho", "navigation", True, True, ()
+            "/about", "About us", "About Example Company", "navigation", True, True, ()
         ),),
         forms=() if mobile else (RawForm(
             "/contact/save", "Send", "Send message", "main", True, False
@@ -344,7 +344,7 @@ class RenderedCrawlTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--owner-authorized", result.stdout)
+        self.assertIn("--confirm-target", result.stdout)
 
     def test_capture_script_replays_without_network(self) -> None:
         repository = Path(__file__).parents[2]
@@ -354,7 +354,7 @@ class RenderedCrawlTests(unittest.TestCase):
                 [
                     sys.executable,
                     "scripts/capture_site_graph_evidence.py",
-                    "--owner-authorized",
+                    "--confirm-target",
                     "--target-origin", "https://example.test",
                     "--expected-revision", REVISION,
                     "--observed-revision", REVISION,

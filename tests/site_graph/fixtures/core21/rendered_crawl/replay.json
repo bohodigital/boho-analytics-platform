@@ -14,7 +14,7 @@
         {
           "href": "/about",
           "text": "About us",
-          "accessible_name": "About Boho",
+          "accessible_name": "About Example Company",
           "landmark": "navigation",
           "visible": true,
           "in_viewport": true,
@@ -61,7 +61,7 @@
         {
           "href": "/about",
           "text": "About us",
-          "accessible_name": "About Boho",
+          "accessible_name": "About Example Company",
           "landmark": "navigation",
           "visible": true,
           "in_viewport": true,

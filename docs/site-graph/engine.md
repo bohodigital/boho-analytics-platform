@@ -8,7 +8,7 @@ views that are safe for a loopback dashboard.
 
 This document describes the engine as a public, reusable component. Examples use placeholder paths,
 repository names, and site identifiers. Keep account-specific manifests, database files, credentials,
-resource IDs, private repository paths, and operational runbooks outside the public repository.
+resource IDs, and non-public deployment records outside the public repository.
 
 ## Design goals
 
@@ -298,7 +298,7 @@ Public source code and documentation must not contain:
 - private hostnames or IP addresses;
 - SSH key paths;
 - service unit names from a specific deployment;
-- work-order identifiers;
+- private coordination identifiers;
 - tunnel identifiers;
 - account-specific resource IDs;
 - private manifest files;
@@ -331,7 +331,7 @@ git diff --check
 ```
 
 For a release candidate, also inspect the committed diff for public-safety issues. Search for
-organization-specific filesystem roots, hostnames, IP addresses, work-order names, tunnel details,
+organization-specific filesystem roots, hostnames, IP addresses, private coordination names, tunnel details,
 private-key material, credential values, and real account identifiers. Matches in code that reject
 secret-shaped fields or document placeholder credential names are expected. Matches containing real
 operational values are release blockers.

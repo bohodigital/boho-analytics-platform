@@ -1,6 +1,6 @@
 # Artifact Analysis Core 2.1
 
-The artifact adapter extracts deterministic evidence from owner-authorized
+The artifact adapter extracts deterministic evidence from explicitly selected
 generated output without executing the target project.
 
 Supported evidence:

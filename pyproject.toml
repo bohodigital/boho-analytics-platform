@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "boho-analytics-platform"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lightweight, auditable multi-source website analytics platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Boho Analytics Platform contributors"}]
-maintainers = [{name = "Boho Digital Services"}]
+maintainers = [{name = "Project maintainers"}]
 keywords = ["analytics", "umami", "cloudflare", "google-analytics", "search-console"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",

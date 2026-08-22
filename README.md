@@ -6,7 +6,7 @@ reporting plane runs on Python 3.11+ with SQLite and a dependency-free server-re
 interface. An optional POSIX-only Search Console bulk lane mirrors private BigQuery evidence to
 Parquet on separately verified storage.
 
-> **Status: v0.2.0 is the latest public source release.** Each installation must use
+> **Status: v0.3.0 is the latest public source release.** Each installation must use
 account-specific least-privilege credentials, verify the configured provider resources, and treat
 incomplete coverage as incomplete rather than zero.
 
@@ -22,16 +22,19 @@ The dashboard is designed for private loopback operation; this release does not 
 hosted analytics instance. Ingestion remains an operator-triggered CLI or scheduled server task and
 cannot be initiated from the browser.
 
-## V1 capabilities
+## Capabilities
 
 - Read-only connectors for self-hosted Umami, Cloudflare GraphQL traffic analytics, GA4 Data API,
-  Search Console, Cloudflare D1 form state, and the existing comms-platform SQLite mail index.
+  Search Console, Cloudflare D1 form state, and a read-only SQLite mail index.
 - An optional, separate `gsc-bulk` command mirrors both Search Console data tables, full successful
   `ExportLog` history for each revision, and all exported query/URL dimensions to an immutable
   private Parquet lake. It never writes those raw rows to SQLite or exposes them to the dashboard.
 - Configurable form monitoring that compares durable D1 submissions and notification state with
   independently observed inbox delivery counts. It never ingests form payloads or message bodies.
 - Strict schema-v2 TOML configuration with environment, systemd, and no-credential references.
+- Privacy-bounded Page Intelligence: one canonical internal-route catalog,
+  provider-separated daily page facts, immutable path-only clustering schemes,
+  and one evidence API shared by the dashboard and MCP agents.
 - SQLite WAL storage with migrations, idempotent upserts, sync ledgers, watermarks, lease locks,
   retention, integrity checks, online backup, and guarded restore.
 - A privacy-bounded Search Console index census inventories each property's public sitemap tree,
@@ -149,9 +152,7 @@ before exposing client data. Basic authentication is only a small deployment con
 replacement for HTTPS or an identity-aware proxy.
 
 Read [SECURITY.md](SECURITY.md) and the [threat model](docs/threat-model.md). Architecture and data
-contracts are documented under [docs](docs/architecture.md). The staged identity, authorization,
-hosting, and production acceptance plan is in
-[the production web application roadmap](docs/production-webapp-roadmap.md).
+contracts are documented under [docs](docs/architecture.md).
 
 ## Development
 

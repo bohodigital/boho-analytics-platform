@@ -42,7 +42,7 @@ class StorageTests(unittest.TestCase):
     def test_initialize_enables_wal_and_integrity(self):
         with self.store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
-            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 7)
+            self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], 8)
             self.assertEqual(db.execute("SELECT version FROM schema_meta").fetchone()[0], SCHEMA_VERSION)
             self.assertEqual(
                 db.execute(
@@ -652,7 +652,7 @@ class StorageTests(unittest.TestCase):
 
     def test_forms_v3_schema_marker_blocks_schema_v3_runtime_rollback(self):
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 3):
-            with self.assertRaisesRegex(RuntimeError, "database schema 7 is newer than supported 3"):
+            with self.assertRaisesRegex(RuntimeError, "database schema 8 is newer than supported 3"):
                 SQLiteMetricStore(self.store.path).initialize()
 
     def test_active_lock_fails_and_stale_lock_is_recovered(self):
@@ -668,6 +668,44 @@ class StorageTests(unittest.TestCase):
         self.store.restore(backup, confirmed=True)
         window = QueryWindow(datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 7, 2, tzinfo=UTC), "UTC")
         self.assertEqual(self.store.query(client_id="client", site_ids=["site"], metric_ids=["test.views"], window=window)[0].value, Decimal("4"))
+
+    def test_backup_is_validated_before_atomic_publication(self):
+        self.store.upsert([point("4")])
+        backup = Path(self.temporary.name) / "backup.db"
+
+        with patch.object(
+            SQLiteMetricStore,
+            "_validate_restored_path",
+            side_effect=ValueError("injected validation failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "injected validation failure"):
+                self.store.backup(backup)
+
+        self.assertFalse(backup.exists())
+        self.assertEqual(
+            list(backup.parent.glob(f".{backup.name}.backup-*")), []
+        )
+
+    def test_failed_backup_does_not_replace_an_existing_verified_backup(self):
+        backup = Path(self.temporary.name) / "backup.db"
+        self.store.upsert([point("4")])
+        self.store.backup(backup)
+        original = backup.read_bytes()
+        self.store.upsert([point("8")])
+
+        with patch.object(
+            SQLiteMetricStore,
+            "_validate_restored_path",
+            side_effect=ValueError("injected validation failure"),
+        ):
+            with self.assertRaisesRegex(ValueError, "injected validation failure"):
+                self.store.backup(backup)
+
+        self.assertEqual(backup.read_bytes(), original)
+
+    def test_backup_refuses_to_overwrite_live_state(self):
+        with self.assertRaisesRegex(ValueError, "different paths"):
+            self.store.backup(self.store.path)
 
     def test_retention_deletes_old_daily_points(self):
         self.store.upsert([point()]); self.assertEqual(self.store.enforce_retention(hourly_days=1, daily_days=1), 1)

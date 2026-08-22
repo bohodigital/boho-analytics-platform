@@ -1,7 +1,7 @@
 # Graph Evidence Core 2.1 rendered crawl
 
 `site_graph.adapters.rendered_crawl` supplies a narrow rendered-evidence adapter without making
-rendered evidence a global dependency. It is designed for exact owner-authorized targets and
+rendered evidence a global dependency. It is designed for exact, explicitly selected targets and
 revision-bound snapshots.
 
 ## Lane-local contract
@@ -45,7 +45,7 @@ policy on every browser request. Navigation returns a bounded `BrowserCapture`; 
 objects never cross the adapter boundary.
 
 The repository includes `scripts/capture_site_graph_evidence.py` for deterministic JSON replay. The
-script requires `--owner-authorized`, exact target and revision arguments, a route array, and a
+script requires `--confirm-target`, exact target and revision arguments, a route array, and a
 replay document. It intentionally cannot launch a live browser. Run `--help` for the complete
 interface.
 
