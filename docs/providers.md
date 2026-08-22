@@ -221,7 +221,7 @@ sync request contains only completed site-local days strictly newer than the ret
 
 ## Forms inbox
 
-The adapter is local, not an external API. It opens the existing comms-platform SQLite index in
+The adapter is local, not an external API. It opens the configured SQLite mail index in
 read-only/query-only mode, applies configured mailbox/sender/subject filters, and emits daily delivery
 and unread counts. It counts distinct message identities, may exclude configured synthetic subject
 markers, and emits quiet-day zeroes only from a configured trustworthy `observation_start`. Without

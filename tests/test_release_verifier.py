@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+from unittest.mock import patch
 
 from scripts.verify_release import verify_git_identity, verify_tree
 
@@ -131,6 +134,12 @@ class ReleaseVerifierTests(unittest.TestCase):
         self.write("examples/site-graph/static-site.yaml")
         self.write("src/boho_analytics_platform/site_graph/__init__.py")
         self.write("tests/site_graph/test_manifest.py")
+
+        self.assertEqual(verify_tree(self.root), [])
+
+    def test_exact_runtime_safety_scripts_are_allowed(self):
+        self.write("scripts/sync_runtime_by_site.sh")
+        self.write("scripts/verify_runtime_storage.py")
 
         self.assertEqual(verify_tree(self.root), [])
 
@@ -327,13 +336,12 @@ class ReleaseVerifierTests(unittest.TestCase):
             "Slack token": "xox" + "b-" + "abcdefghijklmnopqrst",
             "Windows user path": "C:" + r"\Users\person\secret.txt",
             "POSIX user path": "/Users/" + "person/private/secret.txt",
-            "private deployment path": "/srv/" + "local1/private",
+            "private deployment path": "/srv/" + "private/analytics",
             "credentialed URL": "https://operator:" + "password@internal.invalid/repo",
             "password-bearing SSH URL": (
                 "ssh://operator:" + "password@internal.invalid/repo"
             ),
             "credentialed remote target": "ssh -i key " + "operator" + "@" + "internal.invalid",
-            "internal coordination identifier": "W" + "O-2026-07-18-PRIVATE-001",
         }
         paths = (
             "tests/site_graph/fixtures/core21/source_semantic/src/navigation.ts",
@@ -401,14 +409,34 @@ class ReleaseVerifierTests(unittest.TestCase):
         relative = Path("docs") / "site-graph" / "unsafe.md"
         self.assertIn(f"GitHub token pattern found: {relative}", failures)
 
-    def test_internal_work_order_identifiers_are_rejected(self):
-        marker = "W" + "O-2026-07-18-PRIVATE-001"
+    def test_internal_planning_document_names_are_rejected(self):
+        for relative in (
+            "docs/production-roadmap.md",
+            "docs/data-migration-plan.md",
+            "docs/internal-notes.md",
+            "docs/private-release-checklist.md",
+        ):
+            with self.subTest(relative=relative):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("safe fixture\n", encoding="utf-8")
+                    self.assertIn(
+                        f"internal planning document is not allowed: {path.relative_to(root)}",
+                        verify_tree(root),
+                    )
+
+    def test_organization_specific_terms_are_hash_screened(self):
+        marker = "Private Brand"
+        digest = hashlib.sha256("privatebrand".encode("utf-8")).hexdigest()
         self.write("docs/site-graph/unsafe.md", marker + "\n")
 
-        failures = verify_tree(self.root)
+        with patch("scripts.verify_release.ORGANIZATION_TERM_HASHES", frozenset({digest})):
+            failures = verify_tree(self.root)
 
         relative = Path("docs") / "site-graph" / "unsafe.md"
-        self.assertIn(f"internal coordination identifier pattern found: {relative}", failures)
+        self.assertIn(f"organization-specific term found: {relative}", failures)
 
     def test_credentialed_remote_targets_are_rejected_without_named_hosts(self):
         marker = "ssh -i key " + "operator" + "@" + "internal.invalid"

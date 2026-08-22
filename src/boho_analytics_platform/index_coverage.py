@@ -310,6 +310,13 @@ class IndexCoverageEngine:
                     self.store.begin_index_coverage_inventory(
                         site.id, inventory_hash, tuple(by_hash), observed_at
                     )
+                    # Join sitemap membership to normalized internal routes only.
+                    # Full public URL text remains in memory for the provider call.
+                    from .page_intelligence import PageIntelligenceService
+
+                    PageIntelligenceService(self.config, self.store).record_sitemap_inventory(
+                        site.id, urls, inventory_hash, observed_at
+                    )
                     pending = self.store.pending_index_coverage_hashes(
                         site.id,
                         inventory_hash,

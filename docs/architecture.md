@@ -110,7 +110,7 @@ provider-specific mappings and fail when a predicate cannot be honored. Future w
 remain CLI or scheduler operations under the global writer lease.
 
 See [`analytics-operations-contracts.md`](analytics-operations-contracts.md) and
-[`analytics-operations-migration-plan.md`](analytics-operations-migration-plan.md).
+[`analytics-operations-compatibility.md`](analytics-operations-compatibility.md).
 
 ### Web and API
 

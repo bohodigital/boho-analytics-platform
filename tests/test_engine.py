@@ -300,6 +300,98 @@ path = "unused.json"
             with self.assertRaisesRegex(ValueError, "unknown connection"):
                 engine.probe({"typo"})
 
+    def test_site_selection_is_validated_and_restricts_bindings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "fixture.json"
+            fixture.write_text(
+                '{"points":['
+                '{"resource_id":"demo","date":"2026-07-01",'
+                '"metric":"umami.pageviews","value":1},'
+                '{"resource_id":"second","date":"2026-07-01",'
+                '"metric":"umami.pageviews","value":2}]}',
+                encoding="utf-8",
+            )
+            text = config_text(root / "state.db", fixture)
+            text = text.replace(
+                "[[connections]]",
+                '''[[sites]]
+id = "second-site"
+client_id = "example-client"
+name = "Second Site"
+canonical_url = "https://second.example.com"
+timezone = "UTC"
+[[connections]]''',
+                1,
+            )
+            text = text.replace(
+                "[[reports]]",
+                '''[[bindings]]
+site_id = "second-site"
+connection_id = "example-connection"
+resource_type = "website"
+resource_id = "second"
+metric_groups = ["traffic"]
+[[reports]]''',
+                1,
+            )
+            path = root / "platform.toml"
+            path.write_text(text, encoding="utf-8")
+            config = load_config(path)
+            store = SQLiteMetricStore(root / "state.db")
+            store.initialize()
+            engine = SyncEngine(config, store)
+            window = QueryWindow(
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                "UTC",
+            )
+
+            result = engine.sync(window, site_ids={"second-site"})
+
+            self.assertEqual(
+                [(item.site_id, item.status, item.points) for item in result],
+                [("second-site", "success", 1)],
+            )
+            with self.assertRaisesRegex(ValueError, "unknown site"):
+                engine.sync(window, site_ids={"typo"})
+
+    def test_combined_site_and_connection_selection_rejects_unbound_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = root / "fixture.json"
+            write_fixture(fixture)
+            text = config_text(root / "state.db", fixture)
+            text = text.replace(
+                "[[bindings]]",
+                '''[[connections]]
+id = "unused-connection"
+provider = "fixture"
+credential_ref = "none:test"
+[connections.options]
+path = "unused.json"
+[[bindings]]''',
+                1,
+            )
+            path = root / "platform.toml"
+            path.write_text(text, encoding="utf-8")
+            config = load_config(path)
+            store = SQLiteMetricStore(root / "state.db")
+            store.initialize()
+            engine = SyncEngine(config, store)
+            window = QueryWindow(
+                datetime(2026, 7, 1, tzinfo=UTC),
+                datetime(2026, 7, 2, tzinfo=UTC),
+                "UTC",
+            )
+
+            with self.assertRaisesRegex(ValueError, "no configured bindings"):
+                engine.sync(
+                    window,
+                    connection_ids={"unused-connection"},
+                    site_ids={"example-site"},
+                )
+
     def test_nonempty_sync_watermark_tracks_data_through_not_requested_end(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); fixture = root / "fixture.json"; write_fixture(fixture)

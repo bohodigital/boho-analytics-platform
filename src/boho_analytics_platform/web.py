@@ -10,6 +10,7 @@ import html
 import io
 import json
 import math
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -20,6 +21,7 @@ from .catalog import METRICS, SOURCE_SEMANTICS, search_console_metric_supported
 from .credentials import ReferenceCredentialProvider, require_text
 from .geography import GeographyService, SOURCE_CONFIG
 from .models import QueryWindow
+from .page_intelligence import PageIntelligenceService
 from .reporting import ReportService, to_csv, to_series_csv
 from .site_graph.reporting import SiteGraphDisplayReportService
 from .site_graph.storage import SiteGraphStore
@@ -490,7 +492,12 @@ PRODUCTION_UI_CSS = """
 @media(max-width:980px){.app-topbar-inner{align-items:flex-start;flex-wrap:wrap}.app-nav{order:3;width:100%;overflow-x:auto}.app-header-actions{margin-left:auto}.app-page .graph-form{grid-template-columns:repeat(2,minmax(0,1fr))}.observation-source-grid{grid-template-columns:1fr}}
 @media(max-width:650px){.app-header-actions .live-state{display:none}.theme-field span{display:none}.app-nav{padding-bottom:2px}.app-page .graph-form{grid-template-columns:1fr}.app-page .hero{display:block}.app-page .coverage-badge{margin-top:10px}}
 """
-CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + PRODUCTION_UI_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
+PAGE_INTELLIGENCE_CSS = """
+.page-intelligence{margin-top:12px}.page-intelligence-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px}.page-intelligence-panel{padding:17px}.cluster-bars{display:grid;gap:10px}.cluster-row{display:grid;grid-template-columns:minmax(110px,.8fr) minmax(140px,1.4fr) auto;gap:10px;align-items:center}.cluster-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800}.cluster-track{height:10px;overflow:hidden;border-radius:999px;background:var(--app-surface-2)}.cluster-track i{display:block;height:100%;border-radius:inherit;background:var(--series-2)}.cluster-value{text-align:right;font-size:11px;font-weight:850}.cluster-value small{display:block;color:var(--app-muted);font-size:9px}.opportunity-plot{width:100%;height:auto;min-height:250px}.opportunity-plot .plot-frame{fill:var(--app-control);stroke:var(--app-line)}.opportunity-plot .plot-grid{stroke:var(--chart-grid);stroke-width:1}.opportunity-plot .plot-axis-label{fill:var(--app-muted);font-size:9px}.opportunity-plot .plot-dot{fill:var(--series-1);stroke:var(--app-bg);stroke-width:1.5;opacity:.86}.opportunity-plot .plot-dot:hover,.opportunity-plot .plot-dot:focus{fill:var(--series-2);opacity:1;outline:none}.page-route{display:block;max-width:430px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}.index-state{display:inline-flex;padding:3px 7px;border-radius:999px;background:var(--app-surface-2);font-size:9px;font-weight:850}.index-state.yes{color:var(--app-good)}.index-state.no{color:var(--app-warn)}.pi-definition{margin:8px 0 0;color:var(--app-muted);font-size:10px}.property-form{flex-wrap:wrap}.property-field.scheme-field select{width:min(28vw,230px)}
+@media(max-width:940px){.page-intelligence-grid{grid-template-columns:1fr}.property-field.scheme-field select{width:min(64vw,320px)}}
+@media(max-width:650px){.cluster-row{grid-template-columns:minmax(90px,.8fr) minmax(100px,1.2fr) auto}.page-intelligence-panel{padding:13px}}
+"""
+CSS = BASE_CSS + VISUAL_REFRESH_CSS + GEOGRAPHY_CSS + INDEX_COVERAGE_CSS + DASHBOARD_VISUAL_CSS + ALL_IN_ONE_CSS + HYPERPUNK_CSS + PRODUCTION_UI_CSS + PAGE_INTELLIGENCE_CSS + HEIGHT_CLASSES + WIDTH_CLASSES + HEATMAP_CLASSES
 
 JS = r"""
 (() => {
@@ -1473,6 +1480,10 @@ JS = r"""
   const propertySelector = document.getElementById("property-selector");
   if (propertySelector) {
     propertySelector.addEventListener("change", () => propertySelector.form?.requestSubmit());
+  }
+  const schemeSelector = document.getElementById("scheme-selector");
+  if (schemeSelector) {
+    schemeSelector.addEventListener("change", () => schemeSelector.form?.requestSubmit());
   }
   const themeSelector = document.getElementById("theme-selector");
   if (themeSelector) {
@@ -2691,6 +2702,137 @@ def _dashboard_visuals_html(result, site_names):
         traffic = ""
     panels = [item for item in (traffic, search, index) if item]
     return f'<div class="visual-grid">{"".join(panels)}</div>' if panels else ""
+
+
+def _page_intelligence_html(properties, clusters, opportunities, pages):
+    """Render the same evidence envelopes exposed through the read-only API."""
+
+    property_rows = (properties or {}).get("data", {}).get("properties", [])
+    cluster_data = (clusters or {}).get("data", {})
+    cluster_rows = cluster_data.get("clusters", [])
+    opportunity_rows = (opportunities or {}).get("data", {}).get("opportunities", [])
+    page_rows = (pages or {}).get("data", {}).get("pages", [])
+    if not property_rows and not cluster_rows and not page_rows:
+        return (
+            '<section class="panel page-intelligence-panel page-intelligence">'
+            '<div class="compact-heading"><div><h2>Page intelligence</h2>'
+            '<span>No materialized page evidence for this window</span></div></div></section>'
+        )
+
+    total_impressions = sum(int(item.get("gsc_impressions") or 0) for item in cluster_rows)
+    cluster_bars = []
+    for item in cluster_rows[:12]:
+        impressions = int(item.get("gsc_impressions") or 0)
+        share = impressions / total_impressions if total_impressions else 0
+        width = max(1, min(100, round(share * 100))) if impressions else 0
+        clicks = int(item.get("gsc_clicks") or 0)
+        cluster_bars.append(
+            '<div class="cluster-row">'
+            f'<span class="cluster-name" title="{_e(item.get("label", item.get("cluster_id", "")))}">{_e(item.get("label", item.get("cluster_id", "")))}</span>'
+            f'<span class="cluster-track" role="img" aria-label="{impressions:,} search impressions"><i class="p-{width}"></i></span>'
+            f'<span class="cluster-value">{impressions:,}<small>{clicks:,} clicks</small></span></div>'
+        )
+    if cluster_bars:
+        share_note = (
+            "Exclusive scheme; impression shares reconcile to the selected scope."
+            if cluster_data.get("shares_available")
+            else "Multilabel scheme; clusters overlap, so shares are withheld."
+        )
+        clusters_html = (
+            '<section class="panel page-intelligence-panel"><div class="compact-heading"><div>'
+            '<h2>Search attention by cluster</h2><span>GSC page-scope impressions and clicks</span>'
+            f'</div></div><div class="cluster-bars">{"".join(cluster_bars)}</div>'
+            f'<p class="pi-definition">{_e(share_note)}</p></section>'
+        )
+    else:
+        clusters_html = (
+            '<section class="panel page-intelligence-panel"><div class="compact-heading"><div>'
+            '<h2>Search attention by cluster</h2><span>No GSC page-scope rows in this window</span>'
+            '</div></div></section>'
+        )
+
+    plotted = [
+        item for item in opportunity_rows[:40]
+        if item.get("gsc_impressions") is not None and item.get("gsc_ctr") is not None
+    ]
+    if plotted:
+        max_impressions = max(int(item["gsc_impressions"]) for item in plotted) or 1
+        max_ctr = max(float(item["gsc_ctr"]) for item in plotted) or 0.01
+        max_ctr = max(max_ctr, 0.01)
+        points = []
+        for item in plotted:
+            impressions = int(item["gsc_impressions"])
+            clicks = int(item.get("gsc_clicks") or 0)
+            ctr = float(item["gsc_ctr"])
+            x = 54 + (math.log1p(impressions) / math.log1p(max_impressions)) * 542
+            y = 220 - (ctr / max_ctr) * 180
+            route = str(item.get("route") or "")
+            points.append(
+                f'<circle class="plot-dot" tabindex="0" cx="{x:.1f}" cy="{y:.1f}" r="5">'
+                f'<title>{_e(route)} — {impressions:,} impressions; {clicks:,} clicks; {ctr * 100:.2f}% CTR</title></circle>'
+            )
+        opportunity_svg = (
+            '<svg class="opportunity-plot" viewBox="0 0 620 260" role="img" '
+            'aria-label="Low click-through candidate pages plotted by search impressions and click-through rate">'
+            '<rect class="plot-frame" x="48" y="28" width="554" height="198" rx="8"></rect>'
+            '<line class="plot-grid" x1="48" y1="127" x2="602" y2="127"></line>'
+            '<text class="plot-axis-label" x="48" y="244">0 impressions</text>'
+            f'<text class="plot-axis-label" x="602" y="244" text-anchor="end">{max_impressions:,} impressions</text>'
+            '<text class="plot-axis-label" x="40" y="225" text-anchor="end">0%</text>'
+            f'<text class="plot-axis-label" x="40" y="34" text-anchor="end">{max_ctr * 100:.1f}%</text>'
+            + "".join(points) + '</svg>'
+        )
+    else:
+        opportunity_svg = '<div class="empty-state">No pages meet the current low-CTR candidate rule.</div>'
+    opportunities_html = (
+        '<section class="panel page-intelligence-panel"><div class="compact-heading"><div>'
+        '<h2>High-impression, low-CTR pages</h2><span>Hover or focus a point for exact route metrics</span>'
+        f'</div></div>{opportunity_svg}<p class="pi-definition">Diagnostic ranking only; it does not forecast uplift or prove why a page performs.</p></section>'
+    )
+
+    table_rows = []
+    for item in page_rows[:40]:
+        clusters_label = ", ".join(
+            str(cluster.get("label") or cluster.get("cluster_id"))
+            for cluster in item.get("clusters", [])
+        ) or "Unassigned"
+        impressions = item.get("gsc_impressions")
+        clicks = item.get("gsc_clicks")
+        ctr = item.get("gsc_ctr")
+        position = item.get("gsc_position")
+        views = item.get("umami_pageviews")
+        visits = item.get("umami_visits")
+        indexed = item.get("indexed")
+        index_class = "yes" if indexed is True else "no" if indexed is False else ""
+        index_label = "Indexed" if indexed is True else "Not indexed" if indexed is False else "Not mapped"
+        impression_cell = f'{int(impressions):,}' if impressions is not None else "—"
+        click_cell = f'{int(clicks):,}' if clicks is not None else "—"
+        ctr_cell = f'{float(ctr) * 100:.2f}%' if ctr is not None else "—"
+        position_cell = f'{float(position):.1f}' if position is not None else "—"
+        view_cell = f'{int(views):,}' if views is not None else "—"
+        visit_cell = f'{int(visits):,}' if visits is not None else "—"
+        table_rows.append(
+            '<tr>'
+            f'<td><span class="page-route" title="{_e(item.get("route", ""))}">{_e(item.get("route", ""))}</span></td>'
+            f'<td>{_e(clusters_label)}</td>'
+            f'<td>{impression_cell}</td><td>{click_cell}</td><td>{ctr_cell}</td>'
+            f'<td>{position_cell}</td><td>{view_cell}</td><td>{visit_cell}</td>'
+            f'<td><span class="index-state {index_class}">{index_label}</span></td></tr>'
+        )
+    page_table = (
+        '<section class="panel table-panel"><div class="panel-heading"><div>'
+        '<h2>Page performance</h2><p>Provider-separated page metrics, sorted by GSC impressions.</p>'
+        '</div></div><div class="table-scroll"><table><thead><tr><th>Route</th><th>Cluster</th>'
+        '<th>GSC impressions</th><th>GSC clicks</th><th>GSC CTR</th><th>GSC position</th>'
+        '<th>Umami views</th><th>Umami visits</th><th>Index state</th></tr></thead>'
+        f'<tbody>{"".join(table_rows) or "<tr><td colspan=\"9\">No page rows in this window.</td></tr>"}</tbody></table></div></section>'
+    )
+    return (
+        '<section class="page-intelligence" aria-labelledby="page-intelligence-title">'
+        '<div class="compact-heading"><div><h2 id="page-intelligence-title">Page intelligence</h2>'
+        '<span>One catalog, one calculation layer, provider-specific meanings</span></div></div>'
+        f'<div class="page-intelligence-grid">{clusters_html}{opportunities_html}</div>{page_table}</section>'
+    )
 
 
 CORE_DASHBOARD_METRICS = (
@@ -4163,6 +4305,7 @@ def handler_factory(config, store, credentials=None):
     reports = ReportService(config, store)
     geography = GeographyService(config, store)
     graph_reports = SiteGraphDisplayReportService(SiteGraphStore(store.path))
+    page_intelligence = PageIntelligenceService(config, store)
     credential_provider = credentials or ReferenceCredentialProvider()
     password = None
     if config.web.auth_mode == "basic":
@@ -4247,6 +4390,7 @@ def handler_factory(config, store, credentials=None):
                     "report", "subreport", "start", "end", "site", "metric",
                     "source", "style", "compare", "view", "search_type",
                 }
+                dashboard_fields = analytics_fields | {"scheme"}
                 report_fields = {
                     "report", "subreport", "start", "end", "site", "search_type",
                 }
@@ -4260,8 +4404,12 @@ def handler_factory(config, store, credentials=None):
                 route_observation_fields = {
                     "report", "start", "end", "site", "source", "metric", "route",
                 }
+                page_intelligence_fields = {
+                    "start", "end", "site", "search_type", "scheme", "limit",
+                    "cursor", "sort", "minimum_impressions", "maximum_ctr",
+                }
                 if parsed.path == "/":
-                    allowed = analytics_fields
+                    allowed = dashboard_fields
                     repeatable = set()
                 elif parsed.path in {"/api/v1/report", "/api/v1/report.csv"}:
                     allowed = report_fields
@@ -4283,6 +4431,9 @@ def handler_factory(config, store, credentials=None):
                 }:
                     allowed = route_observation_fields
                     repeatable = set()
+                elif parsed.path.startswith("/api/v1/page-intelligence/"):
+                    allowed = page_intelligence_fields
+                    repeatable = {"site"}
                 else:
                     allowed = set()
                     repeatable = set()
@@ -4320,6 +4471,8 @@ def handler_factory(config, store, credentials=None):
                     return self._route_observations_csv(query)
                 if parsed.path == "/api/v1/geography":
                     return self._geography_api(query)
+                if parsed.path.startswith("/api/v1/page-intelligence/"):
+                    return self._page_intelligence_api(parsed.path, query)
                 if parsed.path in {
                     "/api/v1/report", "/api/v1/report.csv", "/api/v1/series", "/api/v1/series.csv"
                 }:
@@ -4331,8 +4484,85 @@ def handler_factory(config, store, credentials=None):
                 } else "invalid route observation request" if parsed.path in {
                     "/route-observations", "/api/v1/route-observations",
                     "/api/v1/route-observations.csv",
-                } else "invalid report request"
+                } else "invalid page intelligence request" if parsed.path.startswith(
+                    "/api/v1/page-intelligence/"
+                ) else "invalid report request"
                 self._send(400, "application/json", json.dumps({"error": message}, sort_keys=True))
+            except sqlite3.OperationalError:
+                headers = {"Retry-After": "5"}
+                if parsed.path.startswith("/api/"):
+                    body = json.dumps(
+                        {
+                            "error": "analytics data temporarily unavailable",
+                            "retryable": True,
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    self._send(503, "application/json", body, headers)
+                else:
+                    self._send(
+                        503,
+                        "text/plain; charset=utf-8",
+                        "Analytics data is updating. Retry shortly.\n",
+                        headers,
+                    )
+
+        @staticmethod
+        def _page_intelligence_window(query):
+            end = query.get("end", [datetime.now(UTC).date().isoformat()])[0]
+            default_start = (datetime.fromisoformat(end).date() - timedelta(days=30)).isoformat()
+            return query.get("start", [default_start])[0], end
+
+        def _page_intelligence_api(self, path, query):
+            start, end = self._page_intelligence_window(query)
+            sites = tuple(
+                item for item in query.get("site", []) if item and item != "all"
+            ) or None
+            search_type = query.get("search_type", ["web"])[0]
+            scheme = query.get("scheme", ["path-sections"])[0]
+            suffix = path.removeprefix("/api/v1/page-intelligence/")
+            if suffix == "properties":
+                payload = page_intelligence.properties(
+                    start, end, site_ids=sites, search_type=search_type
+                )
+            elif suffix == "pages":
+                payload = page_intelligence.pages(
+                    start, end, site_ids=sites, search_type=search_type,
+                    scheme_id=scheme,
+                    limit=int(query.get("limit", ["100"])[0]),
+                    cursor=query.get("cursor", [None])[0],
+                    sort=query.get("sort", ["impressions"])[0],
+                    minimum_impressions=int(
+                        query.get("minimum_impressions", ["0"])[0]
+                    ),
+                )
+            elif suffix == "clusters":
+                payload = page_intelligence.clusters(
+                    start, end, site_ids=sites, search_type=search_type,
+                    scheme_id=scheme,
+                )
+            elif suffix == "opportunities":
+                payload = page_intelligence.opportunities(
+                    start, end, site_ids=sites, search_type=search_type,
+                    scheme_id=scheme,
+                    minimum_impressions=int(
+                        query.get("minimum_impressions", ["25"])[0]
+                    ),
+                    maximum_ctr=float(query.get("maximum_ctr", ["0.05"])[0]),
+                    limit=int(query.get("limit", ["100"])[0]),
+                )
+            elif suffix == "schemes":
+                if set(query) - {"site"}:
+                    raise ValueError("schemes endpoint does not accept analytical filters")
+                payload = page_intelligence.schemes()
+            else:
+                self.send_error(404)
+                return
+            return self._send(
+                200, "application/json",
+                json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            )
 
         def _route_observation_payload(self, query):
             report_id = query.get("report", [config.reports[0].id])[0]
@@ -4916,6 +5146,7 @@ def handler_factory(config, store, credentials=None):
             end = result["window"]["end"][:10]
             site_names = {site.id: site.name for site in config.sites}
             selected_search_type = result.get("search_type")
+            selected_scheme = query.get("scheme", ["path-sections"])[0]
             available_search_types = result.get("available_search_types", [])
             search_types_by_site = result.get("search_types_by_site", {})
             active_definition = next(
@@ -5251,6 +5482,43 @@ def handler_factory(config, store, credentials=None):
             )
 
             if not is_plot:
+                schemes_payload = page_intelligence.schemes()
+                active_schemes = schemes_payload.get("data", {}).get("schemes", [])
+                active_scheme_ids = {item["scheme_id"] for item in active_schemes}
+                if "scheme" in query and selected_scheme not in active_scheme_ids:
+                    raise ValueError("unknown page clustering scheme")
+                if selected_scheme not in active_scheme_ids and active_schemes:
+                    selected_scheme = active_schemes[0]["scheme_id"]
+                pi_scope = (result["site_id"],) if result.get("site_id") else report.site_ids
+                if active_schemes:
+                    pi_properties = page_intelligence.properties(
+                        start, end, site_ids=pi_scope,
+                        search_type=selected_search_type or "web",
+                    )
+                    pi_clusters = page_intelligence.clusters(
+                        start, end, site_ids=pi_scope,
+                        search_type=selected_search_type or "web",
+                        scheme_id=selected_scheme,
+                    )
+                    pi_opportunities = page_intelligence.opportunities(
+                        start, end, site_ids=pi_scope,
+                        search_type=selected_search_type or "web",
+                        scheme_id=selected_scheme,
+                        minimum_impressions=25,
+                        maximum_ctr=0.05,
+                        limit=100,
+                    )
+                    pi_pages = page_intelligence.pages(
+                        start, end, site_ids=pi_scope,
+                        search_type=selected_search_type or "web",
+                        scheme_id=selected_scheme,
+                        limit=100,
+                    )
+                else:
+                    pi_properties = pi_clusters = pi_opportunities = pi_pages = None
+                page_intelligence_html = _page_intelligence_html(
+                    pi_properties, pi_clusters, pi_opportunities, pi_pages
+                )
                 dashboard_site_options = (
                     f'<option value="all"{" selected" if result["site_id"] is None else ""}>All properties</option>'
                     + "".join(
@@ -5271,6 +5539,8 @@ def handler_factory(config, store, credentials=None):
                     "start": start,
                     "end": end,
                 }
+                if active_schemes:
+                    base_scope_params["scheme"] = selected_scheme
                 if selected_search_type:
                     base_scope_params["search_type"] = selected_search_type
                 if result.get("site_id"):
@@ -5380,6 +5650,21 @@ def handler_factory(config, store, credentials=None):
                     f'<input type="hidden" name="search_type" value="{_e(selected_search_type)}">'
                     if selected_search_type else ""
                 )
+                scheme_hidden = (
+                    f'<input type="hidden" name="scheme" value="{_e(selected_scheme)}">'
+                    if active_schemes else ""
+                )
+                scheme_options = "".join(
+                    f'<option value="{_e(item["scheme_id"])}"'
+                    f'{" selected" if item["scheme_id"] == selected_scheme else ""}>'
+                    f'{_e(item["name"])} · v{int(item["version_number"])}</option>'
+                    for item in active_schemes
+                )
+                scheme_field = (
+                    '<label class="property-field scheme-field"><span>Page scheme</span>'
+                    f'<select id="scheme-selector" name="scheme">{scheme_options}</select></label>'
+                    if scheme_options else ""
+                )
                 page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{_e(scope_title)} - Boho Analytics</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
@@ -5387,10 +5672,10 @@ def handler_factory(config, store, credentials=None):
 {_app_header("overview", updated_at)}
 <main class="shell" id="main">
 <section class="dashboard-header"><div class="dashboard-title"><h1>{_e(scope_title)}</h1><div class="dashboard-meta"><span>{_e(window_label)}</span><span class="coverage-state" data-state="{_e(core_coverage_state)}">{_e(core_coverage)}</span></div></div>
-<div class="dashboard-controls"><form class="property-form" id="property-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}"><input type="hidden" name="start" value="{_e(start)}"><input type="hidden" name="end" value="{_e(end)}">{search_hidden}<label class="property-field"><span>Property</span><select id="property-selector" name="site">{dashboard_site_options}</select></label><noscript><button class="scope-apply" type="submit">Apply</button></noscript></form>
+<div class="dashboard-controls"><form class="property-form" id="property-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}"><input type="hidden" name="start" value="{_e(start)}"><input type="hidden" name="end" value="{_e(end)}">{search_hidden}<label class="property-field"><span>Property</span><select id="property-selector" name="site">{dashboard_site_options}</select></label>{scheme_field}<noscript><button class="scope-apply" type="submit">Apply</button></noscript></form>
 <details class="tool-menu"><summary>Tools</summary><div class="tool-menu-items"><a href="{_e(plot_url)}">Plot builder</a><a href="/site-graph">Site graph</a><a href="/route-observations">Route observations</a><hr><a href="{_e(csv_url)}">Download CSV</a><a href="{_e(json_url)}">Open JSON</a></div></details></div></section>
-<section class="window-bar" aria-label="Date window"><strong>{_e(window_label)}</strong><nav class="window-links" aria-label="Quick date windows">{"".join(period_links)}</nav><details class="custom-window"><summary>Custom</summary><form class="custom-window-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{property_hidden}{search_hidden}<label class="field"><span>Start</span><input type="date" name="start" value="{_e(start)}" required></label><label class="field"><span>End boundary</span><input type="date" name="end" value="{_e(end)}" required></label><button type="submit">Apply</button></form></details></section>
-{_overview_cards_html(result)}{trend_html}{visual_panels}{_source_readings_html(result)}
+<section class="window-bar" aria-label="Date window"><strong>{_e(window_label)}</strong><nav class="window-links" aria-label="Quick date windows">{"".join(period_links)}</nav><details class="custom-window"><summary>Custom</summary><form class="custom-window-form" method="get" action="/"><input type="hidden" name="report" value="{_e(report.id)}">{property_hidden}{search_hidden}{scheme_hidden}<label class="field"><span>Start</span><input type="date" name="start" value="{_e(start)}" required></label><label class="field"><span>End boundary</span><input type="date" name="end" value="{_e(end)}" required></label><button type="submit">Apply</button></form></details></section>
+{_overview_cards_html(result)}{trend_html}{visual_panels}{page_intelligence_html}{_source_readings_html(result)}
 <details class="panel data-details"><summary>Data details</summary><div class="data-details-body">{data_details_parts}</div></details>
 </main></body></html>"""
                 self._send(200, "text/html; charset=utf-8", page)

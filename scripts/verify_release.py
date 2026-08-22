@@ -103,7 +103,9 @@ ALLOWED_SCRIPT_FILES = {
     ("scripts", "capture_dashboard_headless.py"),
     ("scripts", "capture_dashboard_headless.sh"),
     ("scripts", "capture_site_graph_evidence.py"),
+    ("scripts", "sync_runtime_by_site.sh"),
     ("scripts", "verify_release.py"),
+    ("scripts", "verify_runtime_storage.py"),
     ("scripts", "verify_site_graph_browser.py"),
 }
 SCOPED_TEXT_SUFFIX_TREES = {
@@ -139,6 +141,14 @@ GENERATED_NAMES = {
     "node_modules",
     "out",
 }
+FORBIDDEN_PATH_FRAGMENTS = {
+    "current-state",
+    "internal-procedure",
+    "internal-notes",
+    "migration-plan",
+    "private-release",
+    "roadmap",
+}
 MAX_FILE_BYTES = 1_000_000
 SECRET_PATTERNS = {
     "private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
@@ -148,7 +158,7 @@ SECRET_PATTERNS = {
     "Google client secret": re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}\b"),
     "Slack token": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b"),
     "Windows user path": re.compile(r"[A-Z]:\\Users\\[^\r\n]+", re.IGNORECASE),
-    "private deployment path": re.compile(re.escape("/srv/" + "local1/")),
+    "private deployment path": re.compile(re.escape("/srv/" + "private/")),
     "credentialed remote target": re.compile(
         r"(?:\b(?:ssh|sftp)://[A-Za-z_][A-Za-z0-9._-]*@"
         r"(?!(?:github|gitlab|bitbucket)\.com(?=[:/\s]|$))|"
@@ -157,7 +167,6 @@ SECRET_PATTERNS = {
         r"[A-Za-z0-9.-]+\b)",
         re.IGNORECASE,
     ),
-    "internal coordination identifier": re.compile(r"\b(?:W" + r"O|C" + r"R)-\d{4}-[A-Z0-9-]+\b"),
 }
 SCOPED_TEXT_SECRET_PATTERNS = {
     "POSIX user path": re.compile(r"(?:/Users|/home)/[A-Za-z0-9._-]+/"),
@@ -168,6 +177,20 @@ SCOPED_TEXT_SECRET_PATTERNS = {
     ),
 }
 GIT_TREE_SHA1 = re.compile(r"\A[0-9a-f]{40}\Z")
+WORD_TOKEN = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+ORGANIZATION_TERM_HASHES = frozenset(
+    {
+        "b75f54035c33cdcfafd9bf0f899dea66a76d6b8d06d194d03231e44c0e695e17",
+        "0f980d50a5e2f8caf93cd7769cff990a41b2691487119d36c381a62d7f6e8d5f",
+        "0b7090060449c6be09fcf10904db252d8fe034aa36c0e76e6cb8ebd17e5970cb",
+        "359f46cd674f3c4763e6f95a44e73ae9c58d9a67cf0c9af868092379bb8d0b22",
+        "1edc7f394848a7557d8cfe134b4558f82d2e09d8bedf7f28a1d1bca5f453143c",
+        "f4709afdbe0a3cc15a22868dc6c5523b605b26ef8068169c4d77779183ed6d83",
+        "289129e14fd94d392514af59c5b19952b98d80ff82022208250ea077e8f258c1",
+        "c925b831f8723ddf323897cb7db312ee25a2bdbab8124072ab460311ace588a7",
+        "53873b8b960eb2fead9ce01c857bdafda50f62e76105e035bcfe3dfa945b7c99",
+    }
+)
 
 
 def _is_within(parts: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
@@ -181,6 +204,20 @@ def _is_allowed_directory(parts: tuple[str, ...]) -> bool:
 def _is_allowed_scoped_text_file(relative: Path) -> bool:
     prefixes = SCOPED_TEXT_SUFFIX_TREES.get(relative.suffix, set())
     return any(_is_within(relative.parts, prefix) for prefix in prefixes)
+
+
+def _contains_organization_term(text: str) -> bool:
+    """Detect configured organization terms without publishing their literal values."""
+
+    tokens = [match.group(0).casefold() for match in WORD_TOKEN.finditer(text)]
+    for start in range(len(tokens)):
+        candidate = ""
+        for token in tokens[start : start + 3]:
+            candidate += token
+            digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+            if digest in ORGANIZATION_TERM_HASHES:
+                return True
+    return False
 
 
 def _git_object_id(kind: str, payload: bytes) -> bytes:
@@ -321,6 +358,11 @@ def verify_tree(root: Path) -> list[str]:
         if path.is_symlink():
             failures.append(f"symbolic link is not allowed: {relative}")
             continue
+        relative_text = relative.as_posix().casefold()
+        if any(fragment in relative_text for fragment in FORBIDDEN_PATH_FRAGMENTS):
+            failures.append(f"internal planning document is not allowed: {relative}")
+            if path.is_dir():
+                continue
         if path.is_dir():
             if path.name in GENERATED_NAMES or path.name.endswith(".egg-info"):
                 failures.append(f"generated/private directory is not allowed: {relative}")
@@ -380,6 +422,8 @@ def verify_tree(root: Path) -> list[str]:
         for label, pattern in SECRET_PATTERNS.items():
             if pattern.search(text):
                 failures.append(f"{label} pattern found: {relative}")
+        if _contains_organization_term(text):
+            failures.append(f"organization-specific term found: {relative}")
         if (
             allowed_scoped_text_file
             or allowed_extensionless_file

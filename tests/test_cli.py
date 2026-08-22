@@ -23,7 +23,7 @@ class CliTests(unittest.TestCase):
         with redirect_stdout(output): status = main(["--config", str(self.config), *args])
         return status, output.getvalue()
 
-    def test_version_is_stable(self): self.assertEqual(__version__, "0.2.0")
+    def test_version_is_stable(self): self.assertEqual(__version__, "0.3.0")
 
     def test_version_output_includes_build_provenance(self):
         output = io.StringIO()
@@ -31,7 +31,7 @@ class CliTests(unittest.TestCase):
             main(["--version"])
         self.assertEqual(raised.exception.code, 0)
         rendered = output.getvalue()
-        self.assertIn("0.2.0", rendered)
+        self.assertIn("0.3.0", rendered)
         self.assertIn("commit=", rendered)
         self.assertIn("tree=", rendered)
 
@@ -52,6 +52,17 @@ class CliTests(unittest.TestCase):
         status, output = self.call("sync", "--days", "30")
         self.assertEqual(status, 0)
         self.assertIn('"status": "success"', output)
+
+    def test_sync_accepts_a_valid_site_selector(self):
+        status, output = self.call(
+            "sync", "--site", "example-site", "--days", "1"
+        )
+        self.assertEqual(status, 0)
+        self.assertIn('"site_id": "example-site"', output)
+
+    def test_sync_rejects_an_unknown_site_selector(self):
+        status, _ = self.call("sync", "--site", "unknown-site", "--days", "1")
+        self.assertEqual(status, 2)
 
 
 if __name__ == "__main__": unittest.main()

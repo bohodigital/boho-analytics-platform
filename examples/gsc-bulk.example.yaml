@@ -13,8 +13,8 @@ warehouse:
 
 storage:
   # Raw queries and URLs are private bulk data and must remain outside the source repository.
-  root: /srv/analytics-data/boho-analytics-platform/bigquery
-  required_mountpoint: /srv/analytics-data
+  root: /mnt/analytics-data/bigquery
+  required_mountpoint: /mnt/analytics-data
   # The application also requires a private marker named
   # .boho-storage-<this UUID> on the mounted filesystem.
   required_filesystem_uuid: 00000000-0000-0000-0000-000000000000

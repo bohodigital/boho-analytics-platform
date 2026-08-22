@@ -11,6 +11,7 @@ class BackupScriptTests(unittest.TestCase):
         self.assertIn('destination="$scheduled_dir/analytics-$timestamp.sqlite3"', script)
         self.assertIn('find "$scheduled_dir"', script)
         self.assertNotIn('find "$BOHO_ANALYTICS_BACKUP_DIR"', script)
+        self.assertIn("-name '.analytics-*.sqlite3.backup-*.db'", script)
 
 
 if __name__ == "__main__":

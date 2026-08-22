@@ -262,8 +262,8 @@ class FormsConnectorTests(unittest.TestCase):
               CREATE TABLE messages(id INTEGER PRIMARY KEY,received_at TEXT,from_address TEXT,subject TEXT,direction TEXT);
               CREATE TABLE mailbox_locations(mailbox_id INTEGER,message_id INTEGER,flags_json TEXT);
               INSERT INTO mailboxes VALUES(1,'forms');
-              INSERT INTO messages VALUES(1,'2026-07-01T10:00:00Z','forms@example.invalid','[Boho form] Project inquiry - Boho Forms Live Canary 2026-07-15','inbound');
-              INSERT INTO messages VALUES(2,'2026-07-01T11:00:00Z','forms@example.invalid','[Boho form] Project inquiry - Boho Digital','inbound');
+              INSERT INTO messages VALUES(1,'2026-07-01T10:00:00Z','forms@example.invalid','[Example form] Project inquiry - Synthetic Canary 2026-07-15','inbound');
+              INSERT INTO messages VALUES(2,'2026-07-01T11:00:00Z','forms@example.invalid','[Example form] Project inquiry - Customer Website','inbound');
               INSERT INTO mailbox_locations VALUES(1,1,'[]');
               INSERT INTO mailbox_locations VALUES(1,2,'["\\Seen"]');
               INSERT INTO mailbox_locations VALUES(1,2,'["\\Seen"]');""")
@@ -272,8 +272,8 @@ class FormsConnectorTests(unittest.TestCase):
         text = text.replace(
             'resource_id = "demo"',
             'resource_id = "forms"\n[bindings.options]\nmailbox_key = "forms"\n'
-            'subject_contains = "[Boho form] Project inquiry"\n'
-            'subject_excludes = ["project inquiry - boho forms live canary"]',
+            'subject_contains = "[Example form] Project inquiry"\n'
+            'subject_excludes = ["project inquiry - synthetic canary"]',
         )
         path = self.root / "config.toml"; path.write_text(text, encoding="utf-8"); config = load_config(path)
         points = list(FormsInboxConnector(config, None).collect(

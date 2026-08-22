@@ -90,7 +90,7 @@ make a decision input complete; a window entirely before the boundary remains
 unknown. Existing rows are retained as lineage.
 
 `cloudflare-forms.source_retention_days` is required and must match the forms Worker's verified D1
-retention policy; the Boho deployment uses `90`. Values above 90 are rejected. Sync windows must use
+retention policy. Values above 90 are rejected. Sync windows must use
 complete site-local days, end no later than the current site-local day, and start after the local
 retention cutoff day. The connector fails closed instead of manufacturing zeroes outside that
 trustworthy horizon.
@@ -104,8 +104,8 @@ stable synthetic-notification markers explicitly, for example:
 [bindings.options]
 mailbox_key = "forms"
 sender_contains = "forms-sender.example"
-subject_contains = "[Boho form] Project inquiry"
-subject_excludes = ["Project inquiry - Boho Forms Live Canary"]
+subject_contains = "[Example form] Project inquiry"
+subject_excludes = ["Project inquiry - Synthetic Canary"]
 observation_start = "2026-07-13"
 ```
 

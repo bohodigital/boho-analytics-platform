@@ -71,7 +71,7 @@ SECRET_PATTERNS = {
 }
 PRIVATE_PATTERNS = {
     "Windows user path": re.compile(r"[A-Z]:\\Users\\", re.IGNORECASE),
-    "private deployment path": re.compile(re.escape("/srv/" + "local1/")),
+    "private deployment path": re.compile(re.escape("/srv/" + "private/")),
     "private host login": re.compile(r"[a-z][a-z0-9_-]*@(?:internal|private)\.invalid"),
     "home directory": re.compile(r"/Users/[^/]+/"),
 }

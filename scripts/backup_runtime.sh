@@ -25,6 +25,11 @@ destination="$scheduled_dir/analytics-$timestamp.sqlite3"
 "$BOHO_ANALYTICS_CLI" --config "$BOHO_ANALYTICS_CONFIG" db backup "$destination"
 chmod 600 "$destination"
 
+# An interrupted pre-atomic backup can leave only a private hidden temporary
+# file. Remove such files after a full day; never match published backups.
+find "$scheduled_dir" -maxdepth 1 -type f \
+  -name '.analytics-*.sqlite3.backup-*.db' -mtime +1 -delete
+
 # Retention is physically confined to the scheduled subdirectory. Manual,
 # pre-migration, preview, and rollback evidence remain outside it and are preserved.
 find "$scheduled_dir" -maxdepth 1 -type f \

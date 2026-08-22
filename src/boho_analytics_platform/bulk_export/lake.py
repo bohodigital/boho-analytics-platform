@@ -69,7 +69,7 @@ def _decimal(value: object) -> Decimal:
     return candidate
 
 
-class SeagateBulkLake:
+class BulkLake:
     """Store immutable bulk partitions only on the verified external filesystem."""
 
     def __init__(self, manifest: BulkExportManifest) -> None:

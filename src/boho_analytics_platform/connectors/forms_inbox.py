@@ -1,4 +1,4 @@
-"""Read-only aggregate delivery-evidence adapter for comms-platform SQLite."""
+"""Read-only aggregate delivery-evidence adapter for a SQLite mail index."""
 
 from __future__ import annotations
 

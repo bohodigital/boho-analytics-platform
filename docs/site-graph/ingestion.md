@@ -33,7 +33,7 @@ existing immutable fact tables.
 ## Safe workflow
 
 1. Copy `examples/site-graph/vinext-site.yaml` or `static-site.yaml` to a private path.
-2. Replace placeholders with an owner-authorized absolute repository path, the exact origin URL,
+2. Replace placeholders with a reviewed absolute repository path, the exact origin URL,
    ref, and full commit. Keep credentials and provider tokens out of the manifest.
 3. Run `manifest validate` and `inspect-repo`.
 4. Back up the analytics database, then run `ingest` with its explicit database path.

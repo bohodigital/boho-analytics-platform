@@ -142,12 +142,12 @@ class MigrationTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def test_empty_database_runs_ordered_migrations_through_schema7(self) -> None:
+    def test_empty_database_runs_ordered_migrations_through_schema8(self) -> None:
         path = self.root / "empty.db"
         store = SQLiteMetricStore(path)
         store.initialize()
-        self.assertEqual(SCHEMA_VERSION, 7)
-        self.assertEqual(schema_version(path), 7)
+        self.assertEqual(SCHEMA_VERSION, 8)
+        self.assertEqual(schema_version(path), 8)
         self.assertEqual(store.integrity_check(), "ok")
         with store.connect(readonly=True) as db:
             self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -190,7 +190,7 @@ class MigrationTests(unittest.TestCase):
 
         store.initialize()
 
-        self.assertEqual(schema_version(path), 7)
+        self.assertEqual(schema_version(path), 8)
         after = table_fingerprints(path)
         self.assertEqual({name: after[name] for name in before}, before)
         self.assertEqual(store.integrity_check(), "ok")
@@ -250,7 +250,7 @@ class MigrationTests(unittest.TestCase):
 
         store.initialize()
 
-        self.assertEqual(schema_version(path), 7)
+        self.assertEqual(schema_version(path), 8)
         after = table_fingerprints(path)
         self.assertEqual({name: after[name] for name in before}, before)
         with store.connect() as db:
@@ -359,7 +359,7 @@ class MigrationTests(unittest.TestCase):
         )
         with patch("boho_analytics_platform.storage.SCHEMA_VERSION", 4):
             with self.assertRaisesRegex(
-                RuntimeError, "database schema 7 is newer than supported 4"
+                RuntimeError, "database schema 8 is newer than supported 4"
             ):
                 copied_store.initialize()
 

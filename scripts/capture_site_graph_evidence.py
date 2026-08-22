@@ -30,7 +30,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Capture deterministic rendered Site Graph evidence without live-site access."
     )
-    parser.add_argument("--owner-authorized", action="store_true", help="confirm the target and revision are owner-authorized")
+    parser.add_argument(
+        "--confirm-target",
+        action="store_true",
+        help="confirm that the exact target and revision were reviewed before capture",
+    )
     parser.add_argument("--target-origin", required=True, help="exact authorized HTTP(S) origin")
     parser.add_argument(
         "--expected-canonical-origin",
@@ -138,8 +142,8 @@ class _ReplayFactory:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    if not args.owner_authorized:
-        parser.error("--owner-authorized is required; capture targets may not be inferred")
+    if not args.confirm_target:
+        parser.error("--confirm-target is required; capture targets may not be inferred")
     routes = _bounded_json(args.routes, 2 * 1024 * 1024)
     replay = _bounded_json(args.replay, 16 * 1024 * 1024)
     if not isinstance(routes, list) or not all(isinstance(item, str) for item in routes):

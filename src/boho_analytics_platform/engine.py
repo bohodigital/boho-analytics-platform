@@ -48,6 +48,15 @@ class SyncEngine:
             raise ValueError(f"unknown connection id(s): {', '.join(unknown)}")
         return set(connection_ids)
 
+    def _selected_site_ids(self, site_ids: set[str] | None) -> set[str]:
+        configured = {item.id for item in self.config.sites}
+        if not site_ids:
+            return configured
+        unknown = sorted(site_ids - configured)
+        if unknown:
+            raise ValueError(f"unknown site id(s): {', '.join(unknown)}")
+        return set(site_ids)
+
     def probe(self, connection_ids: set[str] | None = None) -> list[SyncResult]:
         selected = self._selected_connection_ids(connection_ids)
         results = []
@@ -81,13 +90,26 @@ class SyncEngine:
             window.completeness,
         )
 
-    def sync(self, window: QueryWindow, connection_ids: set[str] | None = None) -> list[SyncResult]:
+    def sync(
+        self,
+        window: QueryWindow,
+        connection_ids: set[str] | None = None,
+        site_ids: set[str] | None = None,
+    ) -> list[SyncResult]:
         selected = self._selected_connection_ids(connection_ids)
+        selected_sites = self._selected_site_ids(site_ids)
         selected_bindings = [
             binding for binding in self.config.bindings
-            if binding.connection_id in selected
+            if (
+                binding.connection_id in selected
+                and binding.site_id in selected_sites
+            )
         ]
         if not selected_bindings:
+            if site_ids:
+                raise ValueError(
+                    "selected connection(s) and site(s) have no configured bindings"
+                )
             raise ValueError("selected connection(s) have no configured bindings")
         owner = uuid.uuid4().hex; self.store.acquire_lock("global-sync", owner)
         results: list[SyncResult] = []

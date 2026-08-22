@@ -1,4 +1,4 @@
-"""Owner-authorized, read-only rendered evidence capture.
+"""Explicitly scoped, read-only rendered evidence capture.
 
 This module deliberately does not select or install a browser implementation.
 Callers inject a disposable ``BrowserFactory`` that must apply ``RequestPolicy``

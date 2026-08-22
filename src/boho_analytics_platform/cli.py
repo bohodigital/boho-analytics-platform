@@ -37,7 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backup = db_commands.add_parser("backup"); backup.add_argument("destination")
     restore = db_commands.add_parser("restore"); restore.add_argument("source"); restore.add_argument("--confirm", action="store_true")
     probe = commands.add_parser("probe", help="test configured read-only capabilities"); probe.add_argument("--connection", action="append")
-    sync = commands.add_parser("sync", help="collect a bounded window"); _window_args(sync); sync.add_argument("--connection", action="append")
+    sync = commands.add_parser("sync", help="collect a bounded window"); _window_args(sync); sync.add_argument("--connection", action="append"); sync.add_argument("--site", action="append")
     index_coverage = commands.add_parser(
         "index-coverage", help="census sitemap pages with Google URL Inspection"
     )
@@ -113,6 +113,32 @@ def _build_parser() -> argparse.ArgumentParser:
         "verify", help="verify every completed local bulk partition"
     )
     bulk_verify.add_argument("--manifest", required=True)
+    page_intelligence = commands.add_parser(
+        "page-intelligence", help="materialize and manage privacy-bounded page evidence"
+    )
+    page_commands = page_intelligence.add_subparsers(dest="page_intelligence_command")
+    page_materialize = page_commands.add_parser(
+        "materialize", help="rebuild the canonical page catalog and daily facts"
+    )
+    page_materialize.add_argument("--site", action="append")
+    page_schemes = page_commands.add_parser(
+        "scheme", help="validate and version declarative page clustering schemes"
+    )
+    scheme_commands = page_schemes.add_subparsers(dest="scheme_command")
+    scheme_commands.add_parser("list", help="list active schemes")
+    scheme_validate = scheme_commands.add_parser("validate", help="validate a JSON scheme")
+    scheme_validate.add_argument("--file", required=True)
+    scheme_preview = scheme_commands.add_parser("preview", help="preview assignments without writes")
+    scheme_preview.add_argument("--file", required=True)
+    scheme_preview.add_argument("--site")
+    scheme_preview.add_argument("--limit", type=int, default=100)
+    scheme_apply = scheme_commands.add_parser("apply", help="store and activate an immutable scheme version")
+    scheme_apply.add_argument("--file", required=True)
+    scheme_apply.add_argument("--reason", default="operator apply")
+    scheme_activate = scheme_commands.add_parser("activate", help="activate or roll back to a stored version")
+    scheme_activate.add_argument("--scheme", required=True)
+    scheme_activate.add_argument("--version", required=True, type=int)
+    scheme_activate.add_argument("--reason", required=True)
     return parser
 
 
@@ -248,14 +274,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             try:
                 from .bulk_export.bigquery import BigQueryBulkSource
                 from .bulk_export.engine import BulkExportEngine
-                from .bulk_export.lake import SeagateBulkLake
+                from .bulk_export.lake import BulkLake
             except ModuleNotFoundError as exc:
                 if exc.name == "fcntl":
                     raise RuntimeError(
                         "gsc-bulk requires a POSIX host with file-lock support"
                     ) from exc
                 raise
-            lake = SeagateBulkLake(manifest)
+            lake = BulkLake(manifest)
             if args.gsc_bulk_command == "status":
                 with lake.lock():
                     payload = lake.status()
@@ -299,6 +325,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.db_command == "restore": store.restore(args.source, confirmed=args.confirm); _emit({"ok": True}); return 0
             return 2
         store.initialize()
+        if args.command == "page-intelligence":
+            from .page_intelligence import PageIntelligenceService, load_scheme
+
+            service = PageIntelligenceService(config, store)
+            if args.page_intelligence_command == "materialize":
+                _emit(service.materialize(args.site))
+                return 0
+            if args.page_intelligence_command == "scheme":
+                if args.scheme_command == "list":
+                    _emit(service.schemes())
+                    return 0
+                if args.scheme_command == "validate":
+                    definition = load_scheme(args.file)
+                    _emit({"ok": True, "definition": definition})
+                    return 0
+                if args.scheme_command == "preview":
+                    _emit(service.preview_scheme(
+                        load_scheme(args.file), site_id=args.site, limit=args.limit
+                    ))
+                    return 0
+                if args.scheme_command == "apply":
+                    _emit(service.apply_scheme(load_scheme(args.file), reason=args.reason))
+                    return 0
+                if args.scheme_command == "activate":
+                    _emit(service.activate_scheme_version(
+                        args.scheme, args.version, reason=args.reason
+                    ))
+                    return 0
+            return 2
         if args.command == "index-coverage":
             configured_sites = {item.id for item in config.sites}
             selected = set(args.site or [])
@@ -335,7 +390,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0 if all(item.status == "success" for item in results) else 1
         if args.command == "sync":
             window = _window(args, config.platform.default_timezone, config.platform.default_sync_days)
-            results = SyncEngine(config, store).sync(window, set(args.connection or [])); _emit([{"connection_id": r.connection_id, "site_id": r.site_id, "status": r.status, "points": r.points, "error_category": r.error_category} for r in results])
+            results = SyncEngine(config, store).sync(
+                window,
+                set(args.connection or []),
+                set(args.site or []),
+            )
+            if all(item.status == "success" for item in results):
+                from .page_intelligence import PageIntelligenceService
+
+                PageIntelligenceService(config, store).materialize(
+                    set(args.site or []) or None
+                )
+            _emit([{"connection_id": r.connection_id, "site_id": r.site_id, "status": r.status, "points": r.points, "error_category": r.error_category} for r in results])
             return 0 if all(item.status == "success" for item in results) else 1
         if args.command == "report":
             definition, _, _, _ = ReportService(config, store).definition(args.report_id, args.subreport)

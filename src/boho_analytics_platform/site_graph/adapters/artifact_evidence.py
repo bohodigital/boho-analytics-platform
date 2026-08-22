@@ -1,4 +1,4 @@
-"""Bounded, read-only evidence extraction from owner-authorized build artifacts.
+"""Bounded, read-only evidence extraction from explicitly selected build artifacts.
 
 The adapter never imports target code, runs a build, or writes to a provider.  Its
 lane-local result is intentionally serializable so the reconciliation layer can

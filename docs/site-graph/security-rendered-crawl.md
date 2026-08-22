@@ -1,6 +1,6 @@
 # Rendered crawl security boundary
 
-The Core 2.1 rendered adapter is an optional, owner-authorized evidence collector. It does not
+The Core 2.1 rendered adapter is an optional, explicitly scoped evidence collector. It does not
 bundle, launch, or choose a browser. A reviewed caller must inject a browser implementation that
 creates a new context from the adapter-provided temporary profile and applies `RequestPolicy`
 before every navigation, redirect, subresource, fetch, and service-worker request.

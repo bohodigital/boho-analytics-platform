@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from .config import BulkExportManifest, SearchConsolePropertyConfig
 from .contracts import SEARCHDATA_TABLES, ExportRevision, SearchConsoleBulkSource
-from .lake import BulkLakeError, SeagateBulkLake
+from .lake import BulkLake, BulkLakeError
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,11 +39,11 @@ class BulkExportEngine:
         self,
         manifest: BulkExportManifest,
         source: SearchConsoleBulkSource,
-        lake: SeagateBulkLake | None = None,
+        lake: BulkLake | None = None,
     ) -> None:
         self.manifest = manifest
         self.source = source
-        self.lake = lake or SeagateBulkLake(manifest)
+        self.lake = lake or BulkLake(manifest)
 
     def _properties(
         self, selected_site_ids: set[str] | None
