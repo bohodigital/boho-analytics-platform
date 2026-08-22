@@ -2819,13 +2819,14 @@ def _page_intelligence_html(properties, clusters, opportunities, pages):
             f'<td>{position_cell}</td><td>{view_cell}</td><td>{visit_cell}</td>'
             f'<td><span class="index-state {index_class}">{index_label}</span></td></tr>'
         )
+    page_table_body = "".join(table_rows) or '<tr><td colspan="9">No page rows in this window.</td></tr>'
     page_table = (
         '<section class="panel table-panel"><div class="panel-heading"><div>'
         '<h2>Page performance</h2><p>Provider-separated page metrics, sorted by GSC impressions.</p>'
         '</div></div><div class="table-scroll"><table><thead><tr><th>Route</th><th>Cluster</th>'
         '<th>GSC impressions</th><th>GSC clicks</th><th>GSC CTR</th><th>GSC position</th>'
         '<th>Umami views</th><th>Umami visits</th><th>Index state</th></tr></thead>'
-        f'<tbody>{"".join(table_rows) or "<tr><td colspan=\"9\">No page rows in this window.</td></tr>"}</tbody></table></div></section>'
+        f'<tbody>{page_table_body}</tbody></table></div></section>'
     )
     return (
         '<section class="page-intelligence" aria-labelledby="page-intelligence-title">'
